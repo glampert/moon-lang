@@ -1,0 +1,290 @@
+
+%option c++
+%option warn
+%option noyywrap
+%option nounistd
+%option yylineno
+
+%{
+
+/* +-------------------------------------------------+ *
+ * | Prologue section, copied to output source file: | *
+ * +-------------------------------------------------+ */
+
+/*
+ * NOTE: Flex version 2.5.39 recommended!
+ */
+
+#define INC_LEXER 1
+#include "common.hpp"
+#undef  INC_LEXER
+
+namespace moon
+{
+
+// ========================================================
+// Miscellaneous macros used by the generated code:
+// ========================================================
+
+// Note that these logging macros capture the current context,
+// so they can only be called from within the FlexLexer class.
+// Enabling these can be useful for debugging the lexer.
+#if MOON_DUMP_LEXER_TOKENS
+    #ifndef MOON_LEXER_LOG_STREAM
+        #define MOON_LEXER_LOG_STREAM stdout
+    #endif // MOON_LEXER_LOG_STREAM
+    #define LEX_LOG_COMMENT(msg)  std::fprintf(MOON_LEXER_LOG_STREAM, "[LEX_CM](%02i): '%s'\n", (ctx)->lexer->get_yylineno(), (msg))
+    #define LEX_LOG_TOKEN(token)  std::fprintf(MOON_LEXER_LOG_STREAM, "[LEX_TK](%02i): '%s'\n", (yylineno), (token))
+    #define LEX_LOG_TYPE(type)    std::fprintf(MOON_LEXER_LOG_STREAM, "[LEX_TP](%02i): '%s'\n", (yylineno), (type))
+    #define LEX_LOG_KEYW(keyword) std::fprintf(MOON_LEXER_LOG_STREAM, "[LEX_KW](%02i): '%s'\n", (yylineno), (keyword))
+    #define LEX_LOG_IDENT()       std::fprintf(MOON_LEXER_LOG_STREAM, "[LEX_ID](%02i): '%s'\n", (yylineno), (yytext))
+    #define LEX_LOG_LIT(type)     std::fprintf(MOON_LEXER_LOG_STREAM, "[LEX_LI](%02i): '%s' (%s)\n", (yylineno), (yytext), (type))
+#else // !MOON_DUMP_LEXER_TOKENS
+    #define LEX_LOG_COMMENT(msg)
+    #define LEX_LOG_TOKEN(token)
+    #define LEX_LOG_TYPE(type)
+    #define LEX_LOG_KEYW(keyword)
+    #define LEX_LOG_IDENT()
+    #define LEX_LOG_LIT(type)
+#endif // MOON_DUMP_LEXER_TOKENS
+
+// Overwritten so we can capture the input to
+// remember the current line for error printing.
+#define YY_INPUT(buf, result, maxSize)                     \
+    do                                                     \
+    {                                                      \
+        char * bufferPtr = (char *)buf;                    \
+        if ((result = LexerInput(bufferPtr, maxSize)) < 0) \
+        {                                                  \
+            YY_FATAL_ERROR("lexer input failed");          \
+        }                                                  \
+        MOON_ASSERT(ctx != nullptr);                       \
+        if (ctx->currText != nullptr && result > 0)        \
+        {                                                  \
+            ctx->currText->append(bufferPtr, result);      \
+        }                                                  \
+    } while (0)
+
+// Calls our custom error handler (called by FlexLexer).
+#define YY_FATAL_ERROR(msg) moon::lexOnError(ctx, msg)
+
+// ========================================================
+// lexOnError():
+// ========================================================
+
+static void lexOnError(ParseContext * ctx, const char * message)
+{
+    MOON_ASSERT(ctx != nullptr);
+    MOON_ASSERT(ctx->lexer != nullptr);
+
+    const std::string filename = (ctx->srcFile != nullptr) ? *ctx->srcFile : "???";
+    compilerError(message, filename, ctx->lexer->get_yylineno(), ctx->currText);
+    throw LexerException{ "Lexer error" };
+}
+
+// ========================================================
+// lexOnSingleLineComment():
+// ========================================================
+
+static void lexOnSingleLineComment(ParseContext * ctx)
+{
+    MOON_ASSERT(ctx != nullptr);
+    MOON_ASSERT(ctx->lexer != nullptr);
+
+    int ch;
+    LEX_LOG_COMMENT("Skipping single-line comment");
+    while ((ch = ctx->lexer->yyinput()) != '\n' && ch != YY_NULL) { }
+}
+
+// ========================================================
+// lexOnMultiLineComment():
+// ========================================================
+
+static void lexOnMultiLineComment(ParseContext * ctx)
+{
+    MOON_ASSERT(ctx != nullptr);
+    MOON_ASSERT(ctx->lexer != nullptr);
+
+    LEX_LOG_COMMENT("Skipping multi-line comment");
+    for (int ch;;)
+    {
+        while ((ch = ctx->lexer->yyinput()) != '*' && ch != YY_NULL)
+        {
+            // Skip chars until the next '*' or EOF.
+        }
+        if (ch == '*')
+        {
+            while ((ch = ctx->lexer->yyinput()) == '*')
+            {
+                // Eat up any '*' that follow the first one.
+            }
+            if (ch == '/')
+            {
+                break; // Found the comment's end.
+            }
+        }
+        if (ch == YY_NULL)
+        {
+            YY_FATAL_ERROR("unexpected end-of-file while scanning multi-line comment");
+            break;
+        }
+    }
+}
+
+// ========================================================
+// lexOnNewLine():
+// ========================================================
+
+static void lexOnNewLine(ParseContext * ctx)
+{
+    MOON_ASSERT(ctx != nullptr);
+    if (ctx->currText != nullptr)
+    {
+        ctx->currText->clear();
+    }
+}
+
+// ========================================================
+// Symbol/token handlers:
+// ========================================================
+
+#define LEX_DEFINE_SYMBOL_HANDLER(handlerName, findMethod, addMethod)   \
+    static void handlerName(ParseContext * ctx)                         \
+    {                                                                   \
+        MOON_ASSERT(ctx           != nullptr);                          \
+        MOON_ASSERT(ctx->symTable != nullptr);                          \
+        MOON_ASSERT(ctx->lexer    != nullptr);                          \
+        MOON_ASSERT(ctx->yylval   != nullptr);                          \
+        auto sym = ctx->symTable->findMethod(ctx->lexer->get_yytext()); \
+        if (sym == nullptr)                                             \
+        {                                                               \
+            sym = ctx->symTable->addMethod(ctx->lexer->get_yytext(),    \
+                                           ctx->lexer->get_yylineno()); \
+        }                                                               \
+        ctx->yylval->asSymbol = sym;                                    \
+    }
+
+LEX_DEFINE_SYMBOL_HANDLER( lexOnIdentifier,   findSymbol,       addIdentifier   );
+LEX_DEFINE_SYMBOL_HANDLER( lexOnStrLiteral,   findStrLiteral,   addStrLiteral   );
+LEX_DEFINE_SYMBOL_HANDLER( lexOnIntLiteral,   findIntLiteral,   addIntLiteral   );
+LEX_DEFINE_SYMBOL_HANDLER( lexOnFloatLiteral, findFloatLiteral, addFloatLiteral );
+LEX_DEFINE_SYMBOL_HANDLER( lexOnBoolLiteral,  findBoolLiteral,  addBoolLiteral  );
+#undef LEX_DEFINE_SYMBOL_HANDLER
+
+} // namespace moon {}
+
+%}
+
+/* +-------------------------------------------------+ *
+ * | Macros used by the rules (regular expressions): | *
+ * +-------------------------------------------------+ */
+
+LETTER        [a-z_A-Z]
+DIGIT         [0-9]
+HEXA_PREFIX   ("0x"|"0X")
+HEXA_CHAR     [a-fA-F]
+EXPONENT      [eE][+-]?{DIGIT}+
+FRACT         "."{DIGIT}+
+INT_LITERAL   -?({DIGIT}|{HEXA_PREFIX})({DIGIT}|{HEXA_CHAR})*
+FLT_LITERAL   -?{DIGIT}+{FRACT}{EXPONENT}?
+BOOL_LITERAL  ("true"|"false")
+STR_LITERAL   \"[^\"]*\"
+IDENTIFIER    {LETTER}({LETTER}|{DIGIT}|".")*
+WHITE_SPACE   [ \t\f\v]
+NEW_LINE      [\n\r]
+
+/* +-------------------------------------------------+ *
+ * | The lexer rules (language tokens / leaf nodes): | *
+ * +-------------------------------------------------+ */
+
+%%
+
+    /* ---- Comments and whitespace: ---- */
+{WHITE_SPACE}    { }                                    /* Whitespace ignored                               */
+{NEW_LINE}       { moon::lexOnNewLine(ctx);           } /* Keep track of the latest line for error printing */
+"//"             { moon::lexOnSingleLineComment(ctx); } /* C++ style single line comment                    */
+"/*"             { moon::lexOnMultiLineComment(ctx);  } /* C-style multi-line comment block                 */
+"*/"             { YY_FATAL_ERROR("unmatched end of multi-line comment block"); }
+
+    /* ---- Miscellaneous tokens and operators: ---- */
+"("              { LEX_LOG_TOKEN( "("   ); return moon::Parser::token::OPEN_PAR;             }
+")"              { LEX_LOG_TOKEN( ")"   ); return moon::Parser::token::CLOSE_PAR;            }
+"{"              { LEX_LOG_TOKEN( "{"   ); return moon::Parser::token::OPEN_CBRAC;           }
+"}"              { LEX_LOG_TOKEN( "}"   ); return moon::Parser::token::CLOSE_CBRAC;          }
+"["              { LEX_LOG_TOKEN( "["   ); return moon::Parser::token::OPEN_BRAC;            }
+"]"              { LEX_LOG_TOKEN( "]"   ); return moon::Parser::token::CLOSE_BRAC;           }
+","              { LEX_LOG_TOKEN( ","   ); return moon::Parser::token::COMMA;                }
+";"              { LEX_LOG_TOKEN( ";"   ); return moon::Parser::token::SEMICOLON;            }
+":"              { LEX_LOG_TOKEN( ":"   ); return moon::Parser::token::COLON;                }
+".."             { LEX_LOG_TOKEN( ".."  ); return moon::Parser::token::RANGE;                }
+"..."            { LEX_LOG_TOKEN( "..." ); return moon::Parser::token::VARARGS;              }
+"->"             { LEX_LOG_TOKEN( "->"  ); return moon::Parser::token::ARROW;                }
+"="              { LEX_LOG_TOKEN( "="   ); return moon::Parser::token::OP_ASSIGN;            }
+"+"              { LEX_LOG_TOKEN( "+"   ); return moon::Parser::token::OP_PLUS;              }
+"-"              { LEX_LOG_TOKEN( "-"   ); return moon::Parser::token::OP_MINUS;             }
+"*"              { LEX_LOG_TOKEN( "*"   ); return moon::Parser::token::OP_MULTIPLY;          }
+"/"              { LEX_LOG_TOKEN( "/"   ); return moon::Parser::token::OP_DIVIDE;            }
+"%"              { LEX_LOG_TOKEN( "%"   ); return moon::Parser::token::OP_MODULO;            }
+"+="             { LEX_LOG_TOKEN( "+="  ); return moon::Parser::token::OP_PLUS_EQUAL;        }
+"-="             { LEX_LOG_TOKEN( "-="  ); return moon::Parser::token::OP_MINUS_EQUAL;       }
+"*="             { LEX_LOG_TOKEN( "*="  ); return moon::Parser::token::OP_MULTIPLY_EQUAL;    }
+"/="             { LEX_LOG_TOKEN( "/="  ); return moon::Parser::token::OP_DIVIDE_EQUAL;      }
+"%="             { LEX_LOG_TOKEN( "%="  ); return moon::Parser::token::OP_MODULO_EQUAL;      }
+">"              { LEX_LOG_TOKEN( ">"   ); return moon::Parser::token::OP_CMP_GREATER_THAN;  }
+"<"              { LEX_LOG_TOKEN( "<"   ); return moon::Parser::token::OP_CMP_LESS_THAN;     }
+">="             { LEX_LOG_TOKEN( ">="  ); return moon::Parser::token::OP_CMP_GREATER_EQUAL; }
+"<="             { LEX_LOG_TOKEN( "<="  ); return moon::Parser::token::OP_CMP_LESS_EQUAL;    }
+"=="             { LEX_LOG_TOKEN( "=="  ); return moon::Parser::token::OP_CMP_EQUAL;         }
+"!="             { LEX_LOG_TOKEN( "!="  ); return moon::Parser::token::OP_CMP_NOT_EQUAL;     }
+"and"            { LEX_LOG_TOKEN( "and" ); return moon::Parser::token::OP_LOGIC_AND;         }
+"or"             { LEX_LOG_TOKEN( "or"  ); return moon::Parser::token::OP_LOGIC_OR;          }
+"not"            { LEX_LOG_TOKEN( "not" ); return moon::Parser::token::OP_LOGIC_NOT;         }
+
+    /* ---- Built-in types: ---- */
+"int"            { LEX_LOG_TYPE( "int"      ); return moon::Parser::token::TID_INT;          }
+"long"           { LEX_LOG_TYPE( "long"     ); return moon::Parser::token::TID_LONG;         }
+"float"          { LEX_LOG_TYPE( "float"    ); return moon::Parser::token::TID_FLT;          }
+"bool"           { LEX_LOG_TYPE( "bool"     ); return moon::Parser::token::TID_BOOL;         }
+"string"         { LEX_LOG_TYPE( "string"   ); return moon::Parser::token::TID_STR;          }
+"array"          { LEX_LOG_TYPE( "array"    ); return moon::Parser::token::TID_ARRAY;        }
+"range"          { LEX_LOG_TYPE( "range"    ); return moon::Parser::token::TID_RANGE;        }
+"any"            { LEX_LOG_TYPE( "any"      ); return moon::Parser::token::TID_ANY;          }
+
+    /* ---- Language keywords: ---- */
+"if"             { LEX_LOG_KEYW( "if"       ); return moon::Parser::token::KW_IF;            }
+"then"           { LEX_LOG_KEYW( "then"     ); return moon::Parser::token::KW_THEN;          }
+"else"           { LEX_LOG_KEYW( "else"     ); return moon::Parser::token::KW_ELSE;          }
+"elseif"         { LEX_LOG_KEYW( "elseif"   ); return moon::Parser::token::KW_ELSEIF;        }
+"end"            { LEX_LOG_KEYW( "end"      ); return moon::Parser::token::KW_END;           }
+"return"         { LEX_LOG_KEYW( "return"   ); return moon::Parser::token::KW_RETURN;        }
+"let"            { LEX_LOG_KEYW( "let"      ); return moon::Parser::token::KW_LET;           }
+"func"           { LEX_LOG_KEYW( "func"     ); return moon::Parser::token::KW_FUNC;          }
+"match"          { LEX_LOG_KEYW( "match"    ); return moon::Parser::token::KW_MATCH;         }
+"with"           { LEX_LOG_KEYW( "with"     ); return moon::Parser::token::KW_WITH;          }
+"case"           { LEX_LOG_KEYW( "case"     ); return moon::Parser::token::KW_CASE;          }
+"default"        { LEX_LOG_KEYW( "default"  ); return moon::Parser::token::KW_DEFAULT;       }
+"in"             { LEX_LOG_KEYW( "in"       ); return moon::Parser::token::KW_IN;            }
+"do"             { LEX_LOG_KEYW( "do"       ); return moon::Parser::token::KW_DO;            }
+"for"            { LEX_LOG_KEYW( "for"      ); return moon::Parser::token::KW_FOR;           }
+"while"          { LEX_LOG_KEYW( "while"    ); return moon::Parser::token::KW_WHILE;         }
+"loop"           { LEX_LOG_KEYW( "loop"     ); return moon::Parser::token::KW_LOOP;          }
+"break"          { LEX_LOG_KEYW( "break"    ); return moon::Parser::token::KW_BREAK;         }
+"continue"       { LEX_LOG_KEYW( "continue" ); return moon::Parser::token::KW_CONTINUE;      }
+"type"           { LEX_LOG_KEYW( "type"     ); return moon::Parser::token::KW_TYPE;          }
+"enum"           { LEX_LOG_KEYW( "enum"     ); return moon::Parser::token::KW_ENUM;          }
+"struct"         { LEX_LOG_KEYW( "struct"   ); return moon::Parser::token::KW_STRUCT;        }
+"module"         { LEX_LOG_KEYW( "module"   ); return moon::Parser::token::KW_MODULE;        }
+
+    /* ---- Literal constants: ---- */
+{INT_LITERAL}    { LEX_LOG_LIT( "int-literal"     ); moon::lexOnIntLiteral(ctx);   return moon::Parser::token::INT_LITERAL;  }
+{FLT_LITERAL}    { LEX_LOG_LIT( "float-literal"   ); moon::lexOnFloatLiteral(ctx); return moon::Parser::token::FLT_LITERAL;  }
+{BOOL_LITERAL}   { LEX_LOG_LIT( "boolean-literal" ); moon::lexOnBoolLiteral(ctx);  return moon::Parser::token::BOOL_LITERAL; }
+{STR_LITERAL}    { LEX_LOG_LIT( "string-literal"  ); moon::lexOnStrLiteral(ctx);   return moon::Parser::token::STR_LITERAL;  }
+
+    /* ---- Identifies/names: ---- */
+{IDENTIFIER}     { LEX_LOG_IDENT(); moon::lexOnIdentifier(ctx); return moon::Parser::token::IDENTIFIER; }
+
+    /* ---- Anything not listed above is an error, handled by the special '.' rule: ---- */
+.                { YY_FATAL_ERROR("invalid token"); }
+
+%%
