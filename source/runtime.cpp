@@ -64,7 +64,7 @@ std::string toString(const Variant v)
 
 std::string toString(const Variant::Type type)
 {
-    static const std::string typeNames[] =
+    static const std::string typeNames[]
     {
         color::red()    + std::string("null")   + color::restore(),
         color::blue()   + std::string("int")    + color::restore(),

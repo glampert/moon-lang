@@ -75,7 +75,7 @@ public:
 union SemanticVal
 {
     const Symbol   * asSymbol;
-    SyntaxTreeNode * asAstNode;
+    SyntaxTreeNode * asSTNode;
 };
 
 struct ParseContext final

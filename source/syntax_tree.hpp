@@ -222,7 +222,7 @@ private:
     // Nodes allocated from pool. For our purposes, the tree size.
     std::size_t nodeCount;
 
-    // All nodes are sequentially stored in this pool.
+    // All nodes are sourced from this pool.
     ObjectPool<SyntaxTreeNode, MOON_AST_NODE_POOL_GRANULARITY> nodePool;
 };
 

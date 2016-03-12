@@ -42,6 +42,9 @@ public:
     void resetProgram(DataVector && data, CodeVector && code);
     void executeProgram();
 
+    // Prints the current Program counter, data vector and stack.
+    void print(std::ostream & os = std::cout) const;
+
 private:
 
     void setProgCounter(int target);
@@ -58,9 +61,28 @@ private:
     FunctionTable progFunctions;
 };
 
-// Debug printing:
+// ========================================================
+// Debug printing helpers:
+// ========================================================
+
 void printDataVector(const VM::DataVector & progData, std::ostream & os = std::cout);
 void printCodeVector(const VM::CodeVector & progCode, std::ostream & os = std::cout);
+
+inline std::ostream & operator << (std::ostream & os, const VM::DataVector & progData)
+{
+    printDataVector(progData, os);
+    return os;
+}
+inline std::ostream & operator << (std::ostream & os, const VM::CodeVector & progCode)
+{
+    printCodeVector(progCode, os);
+    return os;
+}
+inline std::ostream & operator << (std::ostream & os, const VM & vm)
+{
+    vm.print(os);
+    return os;
+}
 
 } // namespace moon {}
 

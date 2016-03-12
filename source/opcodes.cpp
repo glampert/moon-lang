@@ -15,7 +15,7 @@ namespace moon
 // OpCode to printable string:
 std::string toString(const OpCode op)
 {
-    static const std::string opCodeNames[] =
+    static const std::string opCodeNames[]
     {
         "NOOP",
         "MODULE_START",
@@ -23,7 +23,38 @@ std::string toString(const OpCode op)
         "JMP_IF_TRUE",
         "JMP_IF_FALSE",
         "CALL",
-        "CALL_NATIVE",
+//        "CALL_NATIVE",
+
+        "LOAD",
+        "STORE",
+
+        "CMP_NOT_EQUAL",
+        "CMP_EQUAL",
+        "CMP_GREATER_EQUAL",
+        "CMP_GREATER",
+        "CMP_LESS_EQUAL",
+        "CMP_LESS",
+
+        "LOGIC_OR",
+        "LOGIC_AND",
+        "LOGIC_NOT",
+
+        "SUB",
+        "ADD",
+        "MOD",
+        "DIV",
+        "MUL",
+
+        "SUB_ASSIGN",
+        "ADD_ASSIGN",
+        "MOD_ASSIGN",
+        "DIV_ASSIGN",
+        "MUL_ASSIGN",
+
+        "NEGATE",
+        "PLUS"
+
+        /*FIXME tidy
         "INT_NEW",
         "INT_LOAD",
         "INT_STORE",
@@ -38,6 +69,7 @@ std::string toString(const OpCode op)
         "INT_MOD",
         "INT_DIV",
         "INT_MUL"
+        */
     };
     static_assert(arrayLength(opCodeNames) == unsigned(OpCode::Count),
                   "Keep this array in sync with the enum declaration!");

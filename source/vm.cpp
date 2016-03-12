@@ -39,10 +39,10 @@ void Native_Print(VM & vm, Stack::Slice args)
     (void)vm;
 
     std::string str;
-    for (auto v = args.first(); v != nullptr; v = args.next())
+    for (auto var = args.first(); var != nullptr; var = args.next())
     {
         str += " ";
-        str += toString(*v);
+        str += toString(*var);
     }
     std::cout << "Native_Print: " << str << std::endl;
 }
@@ -103,13 +103,16 @@ void VM::executeProgram()
     }
 
     /////FIXME temp
-    printDataVector(progData);
+    //printDataVector(progData);
 
     MOON_ASSERT(progStack.isEmpty());
 }
 
 void VM::executeSingleInstruction(const OpCode op, const std::uint32_t operandIndex)
 {
+    (void)op;
+    (void)operandIndex;
+#if 0
     switch (op)
     {
     //
@@ -211,11 +214,21 @@ void VM::executeSingleInstruction(const OpCode op, const std::uint32_t operandIn
         //TODO
         break;
     } // switch (op)
+#endif //0
 }
 
 // ========================================================
 // Debug printing helpers:
 // ========================================================
+
+static void dumpVariant(const Variant var, const int index, std::ostream & os)
+{
+    os << color::cyan() << "[ " << std::setw(3) << std::setfill(' ') << index << " ] "
+       << color::yellow() << "0x" << std::hex << std::setw(16) << std::setfill('0')
+       << reinterpret_cast<std::uintptr_t>(var.value.asVoidPtr) << color::restore() << " ("
+       << color::red() << std::dec << toString(var) << color::restore() << ") => "
+       << toString(var.type) << "\n";
+}
 
 void printCodeVector(const VM::CodeVector & progCode, std::ostream & os)
 {
@@ -223,7 +236,7 @@ void printCodeVector(const VM::CodeVector & progCode, std::ostream & os)
     std::uint32_t operandIndex = 0;
     std::uint32_t instrIndex   = 0;
 
-    os << color::white() << "[[ code vector dump ]]" << color::restore() << "\n";
+    os << color::white() << "[[ begin code vector dump ]]" << color::restore() << "\n";
 
     for (auto instr : progCode)
     {
@@ -240,21 +253,38 @@ void printCodeVector(const VM::CodeVector & progCode, std::ostream & os)
 
 void printDataVector(const VM::DataVector & progData, std::ostream & os)
 {
-    os << color::white() << "[[ data vector dump ]]" << color::restore() << "\n";
+    os << color::white() << "[[ begin data vector dump ]]" << color::restore() << "\n";
 
-    std::uint32_t instrIndex = 0;
+    int index = 0;
     for (auto var : progData)
     {
-        os << color::cyan() << "[ " << std::setw(3) << std::setfill(' ') << instrIndex << " ] "
-           << color::yellow() << "0x" << std::hex << std::setw(16) << std::setfill('0')
-           << reinterpret_cast<std::uintptr_t>(var.value.asVoidPtr) << color::restore() << " ("
-           << color::red() << std::dec << toString(var) << color::restore() << ") => "
-           << toString(var.type) << "\n";
-
-        ++instrIndex;
+        dumpVariant(var, index++, os);
     }
 
     os << color::white() << "[[ printed " << progData.size() << " variants ]]" << color::restore() << "\n";
+}
+
+void VM::print(std::ostream & os) const
+{
+    os << color::white() << "[[ ---- VM state dump ---- ]]" << color::restore() << "\n";
+    os << color::red() << "PC = " << color::restore() << pc << "\n";
+
+    os << "\n";
+    printDataVector(progData, os);
+    os << "\n";
+
+    os << color::white() << "[[ VM stack ]]" << color::restore() << "\n";
+    if (!progStack.isEmpty())
+    {
+        int index = 0;
+        auto stack = progStack.slice(0, progStack.getCurrSize());
+        for (auto var = stack.first(); var != nullptr; var = stack.next())
+        {
+            dumpVariant(*var, index++, os);
+        }
+    }
+    os << color::white() << "[[ printed " << progStack.getCurrSize() << " variants ]]" << color::restore() << "\n";
+    os << color::white() << "\n[[ ----------------------- ]]" << color::restore() << "\n";
 }
 
 } // namespace moon {}

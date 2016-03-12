@@ -46,8 +46,9 @@ namespace color
 
 inline bool colorPrintEnabled() noexcept
 {
+// Only attempt color print if none of the streams we use were redirected.
 #ifdef MOON_PRINT_USE_ANSI_COLOR_CODES
-    return isatty(fileno(stdout));
+    return isatty(fileno(stdout)) && isatty(fileno(stderr));
 #else // !MOON_PRINT_USE_ANSI_COLOR_CODES
     return false;
 #endif // MOON_PRINT_USE_ANSI_COLOR_CODES

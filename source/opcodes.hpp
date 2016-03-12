@@ -22,6 +22,8 @@ namespace moon
 enum class OpCode : std::uint8_t
 {
     NoOp = 0,
+
+    // Nothing right now. In the future we might use it for global initialization.
     ModuleStart,
 
     // Unconditional jump to target instruction.
@@ -36,20 +38,50 @@ enum class OpCode : std::uint8_t
     // Pops 1 value from the VM stack.
     JmpIfFalse,
 
-    // Calls a function. The callee pops arguments from the VM stack.
+    // Call a script function.
     Call,
 
-    // Call external C function.
-    CallNative,
+    // Call external C/C++ function.
+//    CallNative, probably won't need, can do with just Call
 
-    //FIXME
-    // might not need multiple instruction types after all.
-    // the VM always works in terms of Variants, so we probably won't need the typing at this level...
+// new universal instructions:
+
+    Load,
+    Store,
+
+    CmpNotEqual,
+    CmpEqual,
+    CmpGreaterEqual,
+    CmpGreater,
+    CmpLessEqual,
+    CmpLess,
+
+    LogicOr,
+    LogicAnd,
+    LogicNot,
+
+    Sub,
+    Add,
+    Mod,
+    Div,
+    Mul,
+
+    SubAssign,
+    AddAssign,
+    ModAssign,
+    DivAssign,
+    MulAssign,
+
+    Negate,
+    Plus,
+
+    /*
+    //FIXME REMOVE; THE FOLLOWING INSTRUCTIONS ARE DEPRECATED
     //
     // Integer instructions and arithmetics:
-    IntNew,             // let int a = ... / let a = <int expr> ...
-    IntLoad,            // move from memory to VM stack (pushes 1 value)
-    IntStore,           // a =  b write back from stack to memory (pops 1 value)
+    IntNew,   // let int a = ... / let a = <int expr> ...
+    IntLoad,  // move from memory to VM stack (pushes 1 value)
+    IntStore, // a =  b write back from stack to memory (pops 1 value)
 
     IntCmpNotEq,        // a != b (pops 2, pushes the result)
     IntCmpEq,           // a == b (pops 2, pushes the result)
@@ -58,11 +90,12 @@ enum class OpCode : std::uint8_t
     IntCmpLessEqual,    // a <= b (pops 2, pushes the result)
     IntCmpLess,         // a <  b (pops 2, pushes the result)
 
-    IntSub,             // a -  b (pops 2, pushes the result)
-    IntAdd,             // a +  b (pops 2, pushes the result)
-    IntMod,             // a %  b (pops 2, pushes the result)
-    IntDiv,             // a /  b (pops 2, pushes the result)
-    IntMul,             // a *  b (pops 2, pushes the result)
+    IntSub, // a -  b (pops 2, pushes the result)
+    IntAdd, // a +  b (pops 2, pushes the result)
+    IntMod, // a %  b (pops 2, pushes the result)
+    IntDiv, // a /  b (pops 2, pushes the result)
+    IntMul, // a *  b (pops 2, pushes the result)
+    */
 
     // Number of op-codes. Internal use.
     Count
@@ -79,7 +112,7 @@ inline bool isJumpInstruction(const OpCode op) noexcept
 }
 inline bool isCallInstruction(const OpCode op) noexcept
 {
-    return op == OpCode::Call || op == OpCode::CallNative;
+    return op == OpCode::Call;
 }
 
 // Return a printable string for debug dumping or disassembly.

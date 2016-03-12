@@ -18,7 +18,7 @@ namespace moon
 
 std::string toString(const SyntaxTreeNode::Type nodeType)
 {
-    static const std::string typeNames[] =
+    static const std::string typeNames[]
     {
         color::magenta() + std::string("TRANSLATION_UNIT")          + color::restore(),
         color::magenta() + std::string("MODULE_DEFINITION")         + color::restore(),
@@ -79,7 +79,7 @@ std::string toString(const SyntaxTreeNode::Type nodeType)
 
 std::string toString(const SyntaxTreeNode::Eval evalType)
 {
-    static const std::string typeNames[] =
+    static const std::string typeNames[]
     {
         color::yellow() + std::string("EVAL_UNDEF")   + color::restore(),
         color::yellow() + std::string("EVAL_VOID")    + color::restore(),

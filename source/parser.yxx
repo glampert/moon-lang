@@ -36,38 +36,58 @@
  * Good place for forwad declaration and types used in the yylval union. */
 %code requires
 {
-    #define INC_PARSER 1
-    #include "common.hpp"
-    #undef  INC_PARSER
 
-    #include "symbol_table.hpp"
-    #include "syntax_tree.hpp"
-}
+#define INC_PARSER 1
+#include "common.hpp"
+#undef  INC_PARSER
+
+#include "symbol_table.hpp"
+#include "syntax_tree.hpp"
+
+} /* %code requires */
 
 /* The unqualified code section is added to the implementation file, after
  * the parser header is included, which is the right place for these. */
 %code
 {
-    /* Shorthand aliases: */
-    using AstNode = moon::SyntaxTreeNode::Type;
-    using AstEval = moon::SyntaxTreeNode::Eval;
 
-    static moon::SyntaxTreeNode * newTypeIdNode(moon::ParseContext & ctx, const AstEval tid,
-                                                const moon::Symbol * symbol = nullptr)
-    {
-        if (symbol == nullptr)
-        {
-            symbol = moon::symbolFromEval(*ctx.symTable, tid);
-        }
-        return ctx.syntTree->newNodeWithEval(AstNode::ExprTypeIdent, symbol, tid);
-    }
+using STNode = moon::SyntaxTreeNode::Type;
+using STEval = moon::SyntaxTreeNode::Eval;
 
-    static moon::SyntaxTreeNode * newLiteralNode(moon::ParseContext & ctx, const AstEval tid,
-                                                 const moon::Symbol * symbol)
-    {
-        return ctx.syntTree->newNodeWithEval(AstNode::ExprLiteralConst, symbol, tid);
-    }
+static moon::SyntaxTreeNode * newLiteralNode(moon::ParseContext & ctx, const STEval tid,
+                                             const moon::Symbol * symbol)
+{
+    return ctx.syntTree->newNodeWithEval(STNode::ExprLiteralConst, symbol, tid);
 }
+
+static moon::SyntaxTreeNode * newTypeIdNode(moon::ParseContext & ctx, const STEval tid,
+                                            const moon::Symbol * symbol = nullptr)
+{
+    if (symbol == nullptr)
+    {
+        symbol = moon::symbolFromEval(*ctx.symTable, tid);
+    }
+    return ctx.syntTree->newNodeWithEval(STNode::ExprTypeIdent, symbol, tid);
+}
+
+static moon::SyntaxTreeNode * newCompareNode(moon::ParseContext & ctx, const STNode type,
+                                             const moon::SyntaxTreeNode * child0,
+                                             const moon::SyntaxTreeNode * child1,
+                                             const moon::SyntaxTreeNode * child2)
+{
+    /* Special 'if X then' case: */
+    if (child0->getType() == STNode::ExprNameIdent)
+    {
+        /* Turn it into a compare against zero/null/false expression: */
+        auto zeroNode = newLiteralNode(ctx, STEval::Long, ctx.symTable->findOrDefineValue(0));
+        auto compNode = ctx.syntTree->newNode(STNode::ExprCmpNotEqual, child0, zeroNode);
+        return ctx.syntTree->newNode(type, compNode, child1, child2);
+    }
+    /* Normal 'if X comp Y then' case: */
+    return ctx.syntTree->newNode(type, child0, child1, child2);
+}
+
+} /* %code */
 
 /* +-------------------------------------------------+ *
  * | Tokens read by the Lexer (terminal symbols):    | *
@@ -197,22 +217,22 @@
  * Types referenced inside the rules by the '$' signs.
  * E.g.: if you reference a '$' in rule `type_identifier`
  * it will be a variable of type `SyntaxTreeNode`, as defined
- * in the SemanticVal union by the `asAstNode` field.
+ * in the SemanticVal union by the `asSTNode` field.
  */
 
-%type <asAstNode> type_identifier builtin_type optional_return_type
-%type <asAstNode> literal_const_expression identifier_expression
-%type <asAstNode> expression array_expression array_subscript_expression object_constructor_expression
-%type <asAstNode> translation_unit module_declaration statement statement_list optional_statement_list
-%type <asAstNode> for_statement while_statement loop_statement break_statement continue_statement
-%type <asAstNode> if_statement elseif_statement else_statement elseif_or_else_or_end
-%type <asAstNode> enum_declaration enum_constant enum_constant_list
-%type <asAstNode> struct_declaration struct_member_list
-%type <asAstNode> func_call_expression func_declaration func_parameter_list_declaration parameter_list return_statement
-%type <asAstNode> match_statement match_case match_case_list
-%type <asAstNode> range_expression range_param range_or_array_or_ident_or_call
-%type <asAstNode> let_var_declaration typed_var_declaration
-%type <asAstNode> type_alias_declaration
+%type <asSTNode> type_identifier builtin_type optional_return_type
+%type <asSTNode> literal_const_expression identifier_expression
+%type <asSTNode> expression array_expression array_subscript_expression object_constructor_expression
+%type <asSTNode> translation_unit module_declaration statement statement_list optional_statement_list
+%type <asSTNode> for_statement while_statement loop_statement break_statement continue_statement
+%type <asSTNode> if_statement elseif_statement else_statement elseif_or_else_or_end
+%type <asSTNode> enum_declaration enum_constant enum_constant_list
+%type <asSTNode> struct_declaration struct_member_list
+%type <asSTNode> func_call_expression func_declaration func_parameter_list_declaration parameter_list return_statement
+%type <asSTNode> match_statement match_case match_case_list
+%type <asSTNode> range_expression range_param range_or_array_or_ident_or_call
+%type <asSTNode> let_var_declaration typed_var_declaration
+%type <asSTNode> type_alias_declaration
 
 /* +-------------------------------------------------+ *
  * | Yacc/Bison grammar rules:                       | *
@@ -257,11 +277,11 @@
  * i.e., it is the same as $$ = $1;
  */
 translation_unit
-    : statement_list { ctx.syntTree->setRoot(ctx.syntTree->newNode(AstNode::TranslationUnit, $1)); }
+    : statement_list { ctx.syntTree->setRoot(ctx.syntTree->newNode(STNode::TranslationUnit, $1)); }
     ;
 
 statement_list
-    : statement_list statement { $$ = ctx.syntTree->newNode(AstNode::Statement, $1, $2); }
+    : statement_list statement { $$ = ctx.syntTree->newNode(STNode::Statement, $1, $2); }
     | %empty                   { $$ = nullptr; }
     ;
 
@@ -294,34 +314,34 @@ optional_semicolon
     ;
 
 literal_const_expression
-    : INT_LITERAL  { $$ = newLiteralNode(ctx, AstEval::Long,   $1); }
-    | FLT_LITERAL  { $$ = newLiteralNode(ctx, AstEval::Float,  $1); }
-    | BOOL_LITERAL { $$ = newLiteralNode(ctx, AstEval::Bool,   $1); }
-    | STR_LITERAL  { $$ = newLiteralNode(ctx, AstEval::String, $1); }
+    : INT_LITERAL  { $$ = newLiteralNode(ctx, STEval::Long,   $1); }
+    | FLT_LITERAL  { $$ = newLiteralNode(ctx, STEval::Float,  $1); }
+    | BOOL_LITERAL { $$ = newLiteralNode(ctx, STEval::Bool,   $1); }
+    | STR_LITERAL  { $$ = newLiteralNode(ctx, STEval::String, $1); }
     ;
 
 builtin_type
-    : TID_INT   { $$ = newTypeIdNode(ctx, AstEval::Int);     }
-    | TID_LONG  { $$ = newTypeIdNode(ctx, AstEval::Long);    }
-    | TID_FLT   { $$ = newTypeIdNode(ctx, AstEval::Float);   }
-    | TID_BOOL  { $$ = newTypeIdNode(ctx, AstEval::Bool);    }
-    | TID_STR   { $$ = newTypeIdNode(ctx, AstEval::String);  }
-    | TID_ARRAY { $$ = newTypeIdNode(ctx, AstEval::Array);   }
-    | TID_RANGE { $$ = newTypeIdNode(ctx, AstEval::Range);   }
-    | TID_ANY   { $$ = newTypeIdNode(ctx, AstEval::Any);     }
+    : TID_INT   { $$ = newTypeIdNode(ctx, STEval::Int);    }
+    | TID_LONG  { $$ = newTypeIdNode(ctx, STEval::Long);   }
+    | TID_FLT   { $$ = newTypeIdNode(ctx, STEval::Float);  }
+    | TID_BOOL  { $$ = newTypeIdNode(ctx, STEval::Bool);   }
+    | TID_STR   { $$ = newTypeIdNode(ctx, STEval::String); }
+    | TID_ARRAY { $$ = newTypeIdNode(ctx, STEval::Array);  }
+    | TID_RANGE { $$ = newTypeIdNode(ctx, STEval::Range);  }
+    | TID_ANY   { $$ = newTypeIdNode(ctx, STEval::Any);    }
     ;
 
 type_identifier
     : builtin_type
-    | IDENTIFIER { $$ = newTypeIdNode(ctx, AstEval::UDT, $1); }
+    | IDENTIFIER { $$ = newTypeIdNode(ctx, STEval::UDT, $1); }
     ;
 
 identifier_expression
-    : IDENTIFIER { $$ = ctx.syntTree->newNodeWithSymbol(AstNode::ExprNameIdent, $1); }
+    : IDENTIFIER { $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprNameIdent, $1); }
     ;
 
 module_declaration
-    : "module" IDENTIFIER ";" { $$ = ctx.syntTree->newNodeWithSymbol(AstNode::ModuleDefinition, $2); }
+    : "module" IDENTIFIER ";" { $$ = ctx.syntTree->newNodeWithSymbol(STNode::ModuleDefinition, $2); }
     ;
 
 /*
@@ -338,28 +358,28 @@ expression
     | array_expression
     | range_expression
     | object_constructor_expression
-    | expression[L] "%="  expression[R] { $$ = ctx.syntTree->newNode(AstNode::ExprModAssign,       $L, $R); }
-    | expression[L] "/="  expression[R] { $$ = ctx.syntTree->newNode(AstNode::ExprDivAssign,       $L, $R); }
-    | expression[L] "*="  expression[R] { $$ = ctx.syntTree->newNode(AstNode::ExprMulAssign,       $L, $R); }
-    | expression[L] "-="  expression[R] { $$ = ctx.syntTree->newNode(AstNode::ExprSubAssign,       $L, $R); }
-    | expression[L] "+="  expression[R] { $$ = ctx.syntTree->newNode(AstNode::ExprAddAssign,       $L, $R); }
-    | expression[L] "="   expression[R] { $$ = ctx.syntTree->newNode(AstNode::ExprAssign,          $L, $R); }
-    | expression[L] "or"  expression[R] { $$ = ctx.syntTree->newNode(AstNode::ExprLogicOr,         $L, $R); }
-    | expression[L] "and" expression[R] { $$ = ctx.syntTree->newNode(AstNode::ExprLogicAnd,        $L, $R); }
-    | expression[L] "!="  expression[R] { $$ = ctx.syntTree->newNode(AstNode::ExprCmpNotEqual,     $L, $R); }
-    | expression[L] "=="  expression[R] { $$ = ctx.syntTree->newNode(AstNode::ExprCmpEqual,        $L, $R); }
-    | expression[L] ">="  expression[R] { $$ = ctx.syntTree->newNode(AstNode::ExprCmpGreaterEqual, $L, $R); }
-    | expression[L] ">"   expression[R] { $$ = ctx.syntTree->newNode(AstNode::ExprCmpGreaterThan,  $L, $R); }
-    | expression[L] "<="  expression[R] { $$ = ctx.syntTree->newNode(AstNode::ExprCmpLessEqual,    $L, $R); }
-    | expression[L] "<"   expression[R] { $$ = ctx.syntTree->newNode(AstNode::ExprCmpLessThan,     $L, $R); }
-    | expression[L] "-"   expression[R] { $$ = ctx.syntTree->newNode(AstNode::ExprSubtract,        $L, $R); }
-    | expression[L] "+"   expression[R] { $$ = ctx.syntTree->newNode(AstNode::ExprAdd,             $L, $R); }
-    | expression[L] "%"   expression[R] { $$ = ctx.syntTree->newNode(AstNode::ExprModulo,          $L, $R); }
-    | expression[L] "/"   expression[R] { $$ = ctx.syntTree->newNode(AstNode::ExprDivide,          $L, $R); }
-    | expression[L] "*"   expression[R] { $$ = ctx.syntTree->newNode(AstNode::ExprMultiply,        $L, $R); }
-    | "not" expression[R]               { $$ = ctx.syntTree->newNode(AstNode::ExprLogicNot,            $R); }
-    | "-"   expression[R]               { $$ = ctx.syntTree->newNode(AstNode::ExprUnaryMinus,          $R); }
-    | "+"   expression[R]               { $$ = ctx.syntTree->newNode(AstNode::ExprUnaryPlus,           $R); }
+    | expression[L] "%="  expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprModAssign,       $L, $R); }
+    | expression[L] "/="  expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprDivAssign,       $L, $R); }
+    | expression[L] "*="  expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprMulAssign,       $L, $R); }
+    | expression[L] "-="  expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprSubAssign,       $L, $R); }
+    | expression[L] "+="  expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprAddAssign,       $L, $R); }
+    | expression[L] "="   expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprAssign,          $L, $R); }
+    | expression[L] "or"  expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprLogicOr,         $L, $R); }
+    | expression[L] "and" expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprLogicAnd,        $L, $R); }
+    | expression[L] "!="  expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprCmpNotEqual,     $L, $R); }
+    | expression[L] "=="  expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprCmpEqual,        $L, $R); }
+    | expression[L] ">="  expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprCmpGreaterEqual, $L, $R); }
+    | expression[L] ">"   expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprCmpGreaterThan,  $L, $R); }
+    | expression[L] "<="  expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprCmpLessEqual,    $L, $R); }
+    | expression[L] "<"   expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprCmpLessThan,     $L, $R); }
+    | expression[L] "-"   expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprSubtract,        $L, $R); }
+    | expression[L] "+"   expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprAdd,             $L, $R); }
+    | expression[L] "%"   expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprModulo,          $L, $R); }
+    | expression[L] "/"   expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprDivide,          $L, $R); }
+    | expression[L] "*"   expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprMultiply,        $L, $R); }
+    | "not" expression[R]               { $$ = ctx.syntTree->newNode(STNode::ExprLogicNot,            $R); }
+    | "-"   expression[R]               { $$ = ctx.syntTree->newNode(STNode::ExprUnaryMinus,          $R); }
+    | "+"   expression[R]               { $$ = ctx.syntTree->newNode(STNode::ExprUnaryPlus,           $R); }
     | array_subscript_expression
     | func_call_expression
     | "(" expression ")"
@@ -373,7 +393,7 @@ expression
 func_call_expression
     : IDENTIFIER "(" parameter_list ")"
         {
-            $$ = ctx.syntTree->newNodeWithSymbol(AstNode::ExprFuncCall, $1, $3);
+            $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprFuncCall, $1, $3);
         }
     ;
 
@@ -396,7 +416,7 @@ func_declaration
             /* child[0] = parameter list
              * child[1] = function body
              * child[2] = return type */
-            $$ = ctx.syntTree->newNodeWithSymbol(AstNode::FuncDeclStatement, $2, $4, $7, $6, $6->getEval());
+            $$ = ctx.syntTree->newNodeWithSymbol(STNode::FuncDeclStatement, $2, $4, $7, $6, $6->getEval());
         }
     ;
 
@@ -409,9 +429,9 @@ func_parameter_list_declaration
         }
     | IDENTIFIER "..."
         {
-            auto varArgsNode = newTypeIdNode(ctx, AstEval::VarArgs);
-            $$ = ctx.syntTree->newNodeWithSymbol(AstNode::VarDeclStatement, $1,
-                        varArgsNode, nullptr, nullptr, varArgsNode->getEval());
+            auto varArgsNode = newTypeIdNode(ctx, STEval::VarArgs);
+            $$ = ctx.syntTree->newNodeWithSymbol(STNode::VarDeclStatement, $1,
+                       varArgsNode, nullptr, nullptr, varArgsNode->getEval());
         }
     | %empty
         {
@@ -426,7 +446,7 @@ optional_return_type
         }
     | %empty
         {
-            $$ = newTypeIdNode(ctx, AstEval::Void);
+            $$ = newTypeIdNode(ctx, STEval::Void);
         }
     ;
 
@@ -434,7 +454,7 @@ array_expression
     : "[" parameter_list "]"
         {
             /* First child reserved for parameter_list chains */
-            $$ = ctx.syntTree->newNode(AstNode::ExprArrayLiteral, nullptr, $2, nullptr, AstEval::Array);
+            $$ = ctx.syntTree->newNode(STNode::ExprArrayLiteral, nullptr, $2, nullptr, STEval::Array);
         }
     ;
 
@@ -442,7 +462,7 @@ array_subscript_expression
     : IDENTIFIER "[" expression "]"
         {
             /* First child reserved for parameter_list chains */
-            $$ = ctx.syntTree->newNodeWithSymbol(AstNode::ExprArraySubscript, $1, nullptr, $3, nullptr);
+            $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprArraySubscript, $1, nullptr, $3, nullptr);
         }
     ;
 
@@ -450,8 +470,8 @@ object_constructor_expression
     : type_identifier "{" parameter_list "}"
         {
             /* First child reserved for parameter_list chains */
-            $$ = ctx.syntTree->newNodeWithSymbol(AstNode::ExprObjectConstructor, $1->getSymbol(),
-                                                 nullptr, $1, $3, $1->getEval());
+            $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprObjectConstructor, $1->getSymbol(),
+                                                                nullptr, $1, $3, $1->getEval());
         }
     ;
 
@@ -459,8 +479,8 @@ object_constructor_expression
 typed_var_declaration
     : IDENTIFIER ":" type_identifier
         {
-            $$ = ctx.syntTree->newNodeWithSymbol(AstNode::VarDeclStatement,
-                                  $1, nullptr, $3, nullptr, $3->getEval());
+            $$ = ctx.syntTree->newNodeWithSymbol(STNode::VarDeclStatement,
+                                 $1, nullptr, $3, nullptr, $3->getEval());
         }
     ;
 
@@ -468,41 +488,41 @@ typed_var_declaration
 let_var_declaration
     : "let" IDENTIFIER ":" type_identifier "=" expression ";"
         {
-            $$ = ctx.syntTree->newNodeWithSymbol(AstNode::VarDeclStatement,
-                                       $2, $6, $4, nullptr, $4->getEval());
+            $$ = ctx.syntTree->newNodeWithSymbol(STNode::VarDeclStatement,
+                                      $2, $6, $4, nullptr, $4->getEval());
         }
     | "let" IDENTIFIER ":" type_identifier ";"
         {
-            $$ = ctx.syntTree->newNodeWithSymbol(AstNode::VarDeclStatement,
-                                  $2, nullptr, $4, nullptr, $4->getEval());
+            $$ = ctx.syntTree->newNodeWithSymbol(STNode::VarDeclStatement,
+                                 $2, nullptr, $4, nullptr, $4->getEval());
         }
     | "let" IDENTIFIER "=" expression ";"
         {
             /* Eval Type unspecified; inferred from the expression */
-            $$ = ctx.syntTree->newNodeWithSymbol(AstNode::VarDeclStatement,
-                                  $2, $4, nullptr, nullptr, $4->getEval());
+            $$ = ctx.syntTree->newNodeWithSymbol(STNode::VarDeclStatement,
+                                 $2, $4, nullptr, nullptr, $4->getEval());
         }
     ;
 
 if_statement
     : "if" expression "then" optional_statement_list end_statement
         {
-            $$ = ctx.syntTree->newNode(AstNode::IfThenStatement, $2, $4);
+            $$ = newCompareNode(ctx, STNode::IfThenStatement, $2, $4, nullptr);
         }
     | "if" expression "then" optional_statement_list else_statement
         {
-            $$ = ctx.syntTree->newNode(AstNode::IfThenElseStatement, $2, $4, $5);
+            $$ = newCompareNode(ctx, STNode::IfThenElseStatement, $2, $4, $5);
         }
     | "if" expression "then" optional_statement_list elseif_statement
         {
-            $$ = ctx.syntTree->newNode(AstNode::IfThenElseIfStatement, $2, $4, $5);
+            $$ = newCompareNode(ctx, STNode::IfThenElseIfStatement, $2, $4, $5);
         }
     ;
 
 elseif_statement
     : "elseif" expression "then" optional_statement_list elseif_or_else_or_end
         {
-            $$ = ctx.syntTree->newNode(AstNode::IfThenElseIfStatement, $2, $4, $5);
+            $$ = newCompareNode(ctx, STNode::IfThenElseIfStatement, $2, $4, $5);
         }
     ;
 
@@ -523,36 +543,36 @@ end_statement
 return_statement
     : "return" expression ";"
         {
-            $$ = ctx.syntTree->newNode(AstNode::ReturnStatement, $2,
-                                   nullptr, nullptr, $2->getEval());
+            $$ = ctx.syntTree->newNode(STNode::ReturnStatement, $2,
+                                  nullptr, nullptr, $2->getEval());
         }
     ;
 
 break_statement
     : "break" ";"
         {
-            $$ = ctx.syntTree->newNode(AstNode::BreakStatement);
+            $$ = ctx.syntTree->newNode(STNode::BreakStatement);
         }
     ;
 
 continue_statement
     : "continue" ";"
         {
-            $$ = ctx.syntTree->newNode(AstNode::ContinueStatement);
+            $$ = ctx.syntTree->newNode(STNode::ContinueStatement);
         }
     ;
 
 loop_statement
     : "loop" optional_statement_list end_statement
         {
-            $$ = ctx.syntTree->newNode(AstNode::LoopStatement, $2);
+            $$ = ctx.syntTree->newNode(STNode::LoopStatement, $2);
         }
     ;
 
 while_statement
     : "while" expression "do" optional_statement_list end_statement
         {
-            $$ = ctx.syntTree->newNode(AstNode::WhileStatement, $2, $4);
+            $$ = newCompareNode(ctx, STNode::WhileStatement, $2, $4, nullptr);
         }
     ;
 
@@ -560,30 +580,30 @@ for_statement
     : "for" IDENTIFIER "in" range_or_array_or_ident_or_call "do" optional_statement_list end_statement
         {
             /* loopVarNode type has to be inferred from the loop expression/range */
-            auto loopVarNode = ctx.syntTree->newNodeWithSymbol(AstNode::VarDeclStatement, $2);
-            $$ = ctx.syntTree->newNodeWithSymbol(AstNode::ForStatement, nullptr, loopVarNode, $4, $6);
+            auto loopVarNode = ctx.syntTree->newNodeWithSymbol(STNode::VarDeclStatement, $2);
+            $$ = ctx.syntTree->newNodeWithSymbol(STNode::ForStatement, nullptr, loopVarNode, $4, $6);
         }
     ;
 
 match_statement
     : "match" IDENTIFIER "with" match_case_list end_statement
         {
-            $$ = ctx.syntTree->newNodeWithSymbol(AstNode::MatchStatement, $2, $4);
+            $$ = ctx.syntTree->newNodeWithSymbol(STNode::MatchStatement, $2, $4);
         }
     ;
 
 match_case
     : "case" literal_const_expression "->" optional_statement_list end_statement
         {
-            $$ = ctx.syntTree->newNode(AstNode::MatchCaseStatement, $2, $4);
+            $$ = ctx.syntTree->newNode(STNode::MatchCaseStatement, $2, $4);
         }
     | "case" range_or_array_or_ident_or_call "->" optional_statement_list end_statement
         {
-            $$ = ctx.syntTree->newNode(AstNode::MatchCaseStatement, $2, $4);
+            $$ = ctx.syntTree->newNode(STNode::MatchCaseStatement, $2, $4);
         }
     | "default" "->" optional_statement_list end_statement
         {
-            $$ = ctx.syntTree->newNode(AstNode::MatchDefaultStatement, $3);
+            $$ = ctx.syntTree->newNode(STNode::MatchDefaultStatement, $3);
         }
     ;
 
@@ -612,7 +632,7 @@ range_expression
     : range_param ".." range_param
         {
             /* First child reserved for parameter_list chains */
-            $$ = ctx.syntTree->newNode(AstNode::ExprRange, nullptr, $1, $3, AstEval::Range);
+            $$ = ctx.syntTree->newNode(STNode::ExprRange, nullptr, $1, $3, STEval::Range);
         }
     ;
 
@@ -628,8 +648,8 @@ range_param
     | identifier_expression
     | INT_LITERAL
         {
-            $$ = ctx.syntTree->newNodeWithSymbol(AstNode::ExprLiteralConst, $1,
-                     nullptr, nullptr, nullptr, moon::evalTypeFromSymbol(*$1));
+            $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprLiteralConst, $1,
+                    nullptr, nullptr, nullptr, moon::evalTypeFromSymbol(*$1));
         }
     | STR_LITERAL
         {
@@ -638,16 +658,16 @@ range_param
             {
                 Parser::error("only character literals are allowed in range expressions.");
             }
-            $$ = ctx.syntTree->newNodeWithSymbol(AstNode::ExprLiteralConst, symbol,
-                     nullptr, nullptr, nullptr, moon::evalTypeFromSymbol(*symbol));
+            $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprLiteralConst, symbol,
+                    nullptr, nullptr, nullptr, moon::evalTypeFromSymbol(*symbol));
         }
     ;
 
 enum_declaration
     : "type" IDENTIFIER "enum" enum_constant_list end_statement
         {
-            $$ = ctx.syntTree->newNodeWithSymbol(AstNode::EnumDeclStatement, $2,
-                                            $4, nullptr, nullptr, AstEval::UDT);
+            $$ = ctx.syntTree->newNodeWithSymbol(STNode::EnumDeclStatement, $2,
+                                            $4, nullptr, nullptr, STEval::UDT);
         }
     ;
 
@@ -667,38 +687,38 @@ enum_constant_list
 enum_constant
     : IDENTIFIER
         {
-            $$ = ctx.syntTree->newNodeWithSymbol(AstNode::ExprNameIdent, $1,
-                                  nullptr, nullptr, nullptr, AstEval::Long);
+            $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprNameIdent, $1,
+                                  nullptr, nullptr, nullptr, STEval::Long);
         }
     | IDENTIFIER "=" INT_LITERAL
         {
-            auto enumValNode = ctx.syntTree->newNodeWithSymbol(AstNode::ExprLiteralConst, $3,
-                                   nullptr, nullptr, nullptr, moon::evalTypeFromSymbol(*$3));
+            auto enumValNode = ctx.syntTree->newNodeWithSymbol(STNode::ExprLiteralConst, $3,
+                                  nullptr, nullptr, nullptr, moon::evalTypeFromSymbol(*$3));
 
-            $$ = ctx.syntTree->newNodeWithSymbol(AstNode::ExprNameIdent, $1,
-                     nullptr, enumValNode, nullptr, enumValNode->getEval());
+            $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprNameIdent, $1,
+                    nullptr, enumValNode, nullptr, enumValNode->getEval());
         }
     | IDENTIFIER "=" enum_constant
         {
             /* Second child is the name of a previously defined constant */
-            $$ = ctx.syntTree->newNodeWithSymbol(AstNode::ExprNameIdent, $1,
-                                       nullptr, $3, nullptr, $3->getEval());
+            $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprNameIdent, $1,
+                                      nullptr, $3, nullptr, $3->getEval());
         }
     ;
 
 type_alias_declaration
     : "type" IDENTIFIER "=" type_identifier ";"
         {
-            $$ = ctx.syntTree->newNodeWithSymbol(AstNode::TypeAliasDeclStatement, $2,
-                                                 $4, nullptr, nullptr, AstEval::UDT);
+            $$ = ctx.syntTree->newNodeWithSymbol(STNode::TypeAliasDeclStatement, $2,
+                                                 $4, nullptr, nullptr, STEval::UDT);
         }
     ;
 
 struct_declaration
     : "type" IDENTIFIER "struct" struct_member_list end_statement
         {
-            $$ = ctx.syntTree->newNodeWithSymbol(AstNode::StructDeclStatement, $2,
-                                              $4, nullptr, nullptr, AstEval::UDT);
+            $$ = ctx.syntTree->newNodeWithSymbol(STNode::StructDeclStatement, $2,
+                                              $4, nullptr, nullptr, STEval::UDT);
         }
     ;
 

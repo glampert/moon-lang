@@ -63,7 +63,7 @@ int main(int argc, const char * argv[])
     {
         ParseContext parseCtx;
 
-        std::string srcFile = "test.moon";
+        std::string srcFile = "test.ml";
         std::string currText;
 
         SymbolTable symTable;
@@ -82,19 +82,22 @@ int main(int argc, const char * argv[])
 
         std::cout << (parser.parse() == 0 ? "\n-- FINISHED OK --" : "\n-- FINISHED WITH PARSE ERROR --") << "\n\n";
 
-        std::cout << symTable << std::endl;
-        std::cout << syntTree << std::endl;
+        std::cout << symTable << "\n";
+        std::cout << syntTree << "\n";
 
-        /*
         VM::DataVector progData;
         VM::CodeVector progCode;
 
         Compiler compiler{ symTable, syntTree };
         compiler.compile(progData, progCode);
+        std::cout << compiler << "\n";
+
+        std::cout << progCode << "\n";
+        std::cout << progData << "\n";
 
         VM vm{ std::move(progData), std::move(progCode) };
         vm.executeProgram();
-        */
+        std::cout << vm << "\n";
     }
     catch (const std::exception & e)
     {
