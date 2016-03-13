@@ -61,7 +61,7 @@ CXXFLAGS = -std=c++11          \
            -I$(SOURCE_DIR)/
 
 # For ad hoc static analysis with Clang, uncomment the following:
-#CXX = clang++ --analyze -Xanalyzer -analyzer-output=text
+#CXX += --analyze -Xanalyzer -analyzer-output=text
 
 #######################################
 
