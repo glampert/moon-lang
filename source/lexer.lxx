@@ -12,7 +12,7 @@
  * +-------------------------------------------------+ */
 
 /*
- * NOTE: Flex version 2.5.39 recommended!
+ * NOTE: Flex version 2.6 or higher recommended.
  */
 
 #define INC_LEXER 1
@@ -33,7 +33,7 @@ namespace moon
     #ifndef MOON_LEXER_LOG_STREAM
         #define MOON_LEXER_LOG_STREAM stdout
     #endif // MOON_LEXER_LOG_STREAM
-    #define LEX_LOG_COMMENT(msg)  std::fprintf(MOON_LEXER_LOG_STREAM, "[LEX_CM](%02i): '%s'\n", (ctx)->lexer->get_yylineno(), (msg))
+    #define LEX_LOG_COMMENT(msg)  std::fprintf(MOON_LEXER_LOG_STREAM, "[LEX_CM](%02i): '%s'\n", lineno(), (msg))
     #define LEX_LOG_TOKEN(token)  std::fprintf(MOON_LEXER_LOG_STREAM, "[LEX_TK](%02i): '%s'\n", (yylineno), (token))
     #define LEX_LOG_TYPE(type)    std::fprintf(MOON_LEXER_LOG_STREAM, "[LEX_TP](%02i): '%s'\n", (yylineno), (type))
     #define LEX_LOG_KEYW(keyword) std::fprintf(MOON_LEXER_LOG_STREAM, "[LEX_KW](%02i): '%s'\n", (yylineno), (keyword))
@@ -48,73 +48,70 @@ namespace moon
     #define LEX_LOG_LIT(type)
 #endif // MOON_DUMP_LEXER_TOKENS
 
+// We are forced to cast the yyFlexLexer 'this' pointer to our moon::Lexer when
+// calling the helper methods or using the extended ParseContext member. I do not know
+// of a more elegant way of handling this with the generated FlexLexer code at the moment...
+#define AS_MOON_LEXER(ptr) (*static_cast<moon::Lexer *>(ptr))
+
 // Overwritten so we can capture the input to
 // remember the current line for error printing.
-#define YY_INPUT(buf, result, maxSize)                     \
-    do                                                     \
-    {                                                      \
-        char * bufferPtr = (char *)buf;                    \
-        if ((result = LexerInput(bufferPtr, maxSize)) < 0) \
-        {                                                  \
-            YY_FATAL_ERROR("lexer input failed");          \
-        }                                                  \
-        MOON_ASSERT(ctx != nullptr);                       \
-        if (ctx->currText != nullptr && result > 0)        \
-        {                                                  \
-            ctx->currText->append(bufferPtr, result);      \
-        }                                                  \
-    } while (0)
+#define YY_INPUT(buf, result, maxSize) AS_MOON_LEXER(this).lexOnInput((char *)buf, result, maxSize)
 
 // Calls our custom error handler (called by FlexLexer).
-#define YY_FATAL_ERROR(msg) moon::lexOnError(ctx, msg)
+#define YY_FATAL_ERROR(message) AS_MOON_LEXER(this).lexOnError(message)
 
 // ========================================================
-// lexOnError():
+// moon::Lexer local methods:
 // ========================================================
 
-static void lexOnError(ParseContext * ctx, const char * message)
+void Lexer::lexOnError(const char * message)
 {
-    MOON_ASSERT(ctx != nullptr);
-    MOON_ASSERT(ctx->lexer != nullptr);
-
-    const std::string filename = (ctx->srcFile != nullptr) ? *ctx->srcFile : "???";
-    compilerError(message, filename, ctx->lexer->get_yylineno(), ctx->currText);
+    const std::string filename = (ctx.srcFile != nullptr) ? *ctx.srcFile : "???";
+    compilerError(message, filename, lineno(), ctx.currText);
     throw LexerException{ "Lexer error" };
 }
 
-// ========================================================
-// lexOnSingleLineComment():
-// ========================================================
-
-static void lexOnSingleLineComment(ParseContext * ctx)
+void Lexer::lexOnInput(char * buf, int & result, const int maxSize)
 {
-    MOON_ASSERT(ctx != nullptr);
-    MOON_ASSERT(ctx->lexer != nullptr);
-
-    int ch;
-    LEX_LOG_COMMENT("Skipping single-line comment");
-    while ((ch = ctx->lexer->yyinput()) != '\n' && ch != YY_NULL) { }
+    const auto readCount = LexerInput(buf, maxSize);
+    if (readCount < 0)
+    {
+        YY_FATAL_ERROR("lexer input failed");
+    }
+    if (ctx.currText != nullptr && readCount > 0)
+    {
+        ctx.currText->append(buf, readCount);
+    }
+    result = readCount;
 }
 
-// ========================================================
-// lexOnMultiLineComment():
-// ========================================================
-
-static void lexOnMultiLineComment(ParseContext * ctx)
+void Lexer::lexOnNewLine()
 {
-    MOON_ASSERT(ctx != nullptr);
-    MOON_ASSERT(ctx->lexer != nullptr);
+    if (ctx.currText != nullptr)
+    {
+        ctx.currText->clear();
+    }
+}
 
+void Lexer::lexOnSingleLineComment()
+{
+    int ch;
+    LEX_LOG_COMMENT("Skipping single-line comment");
+    while ((ch = yyinput()) != '\n' && ch != YY_NULL) { }
+}
+
+void Lexer::lexOnMultiLineComment()
+{
     LEX_LOG_COMMENT("Skipping multi-line comment");
     for (int ch;;)
     {
-        while ((ch = ctx->lexer->yyinput()) != '*' && ch != YY_NULL)
+        while ((ch = yyinput()) != '*' && ch != YY_NULL)
         {
             // Skip chars until the next '*' or EOF.
         }
         if (ch == '*')
         {
-            while ((ch = ctx->lexer->yyinput()) == '*')
+            while ((ch = yyinput()) == '*')
             {
                 // Eat up any '*' that follow the first one.
             }
@@ -132,36 +129,20 @@ static void lexOnMultiLineComment(ParseContext * ctx)
 }
 
 // ========================================================
-// lexOnNewLine():
+// moon::Lexer Symbol/token handlers:
 // ========================================================
 
-static void lexOnNewLine(ParseContext * ctx)
-{
-    MOON_ASSERT(ctx != nullptr);
-    if (ctx->currText != nullptr)
-    {
-        ctx->currText->clear();
-    }
-}
-
-// ========================================================
-// Symbol/token handlers:
-// ========================================================
-
-#define LEX_DEFINE_SYMBOL_HANDLER(handlerName, findMethod, addMethod)   \
-    static void handlerName(ParseContext * ctx)                         \
-    {                                                                   \
-        MOON_ASSERT(ctx           != nullptr);                          \
-        MOON_ASSERT(ctx->symTable != nullptr);                          \
-        MOON_ASSERT(ctx->lexer    != nullptr);                          \
-        MOON_ASSERT(ctx->yylval   != nullptr);                          \
-        auto sym = ctx->symTable->findMethod(ctx->lexer->get_yytext()); \
-        if (sym == nullptr)                                             \
-        {                                                               \
-            sym = ctx->symTable->addMethod(ctx->lexer->get_yytext(),    \
-                                           ctx->lexer->get_yylineno()); \
-        }                                                               \
-        ctx->yylval->asSymbol = sym;                                    \
+#define LEX_DEFINE_SYMBOL_HANDLER(handlerName, findMethod, addMethod) \
+    void Lexer::handlerName()                                         \
+    {                                                                 \
+        MOON_ASSERT(ctx.yylval   != nullptr);                         \
+        MOON_ASSERT(ctx.symTable != nullptr);                         \
+        auto sym = ctx.symTable->findMethod(YYText());                \
+        if (sym == nullptr)                                           \
+        {                                                             \
+            sym = ctx.symTable->addMethod(YYText(), lineno());        \
+        }                                                             \
+        ctx.yylval->asSymbol = sym;                                   \
     }
 
 LEX_DEFINE_SYMBOL_HANDLER( lexOnIdentifier,   findSymbol,       addIdentifier   );
@@ -200,10 +181,10 @@ NEW_LINE      [\n\r]
 %%
 
     /* ---- Comments and whitespace: ---- */
-{WHITE_SPACE}    { }                                    /* Whitespace ignored                               */
-{NEW_LINE}       { moon::lexOnNewLine(ctx);           } /* Keep track of the latest line for error printing */
-"//"             { moon::lexOnSingleLineComment(ctx); } /* C++ style single line comment                    */
-"/*"             { moon::lexOnMultiLineComment(ctx);  } /* C-style multi-line comment block                 */
+{WHITE_SPACE}    { }                                               /* Whitespace ignored                               */
+{NEW_LINE}       { AS_MOON_LEXER(this).lexOnNewLine();           } /* Keep track of the latest line for error printing */
+"//"             { AS_MOON_LEXER(this).lexOnSingleLineComment(); } /* C++ style single line comment                    */
+"/*"             { AS_MOON_LEXER(this).lexOnMultiLineComment();  } /* C-style multi-line comment block                 */
 "*/"             { YY_FATAL_ERROR("unmatched end of multi-line comment block"); }
 
     /* ---- Miscellaneous tokens and operators: ---- */
@@ -276,13 +257,13 @@ NEW_LINE      [\n\r]
 "module"         { LEX_LOG_KEYW( "module"   ); return moon::Parser::token::KW_MODULE;        }
 
     /* ---- Literal constants: ---- */
-{INT_LITERAL}    { LEX_LOG_LIT( "int-literal"     ); moon::lexOnIntLiteral(ctx);   return moon::Parser::token::INT_LITERAL;  }
-{FLT_LITERAL}    { LEX_LOG_LIT( "float-literal"   ); moon::lexOnFloatLiteral(ctx); return moon::Parser::token::FLT_LITERAL;  }
-{BOOL_LITERAL}   { LEX_LOG_LIT( "boolean-literal" ); moon::lexOnBoolLiteral(ctx);  return moon::Parser::token::BOOL_LITERAL; }
-{STR_LITERAL}    { LEX_LOG_LIT( "string-literal"  ); moon::lexOnStrLiteral(ctx);   return moon::Parser::token::STR_LITERAL;  }
+{INT_LITERAL}    { LEX_LOG_LIT( "int-literal"     ); AS_MOON_LEXER(this).lexOnIntLiteral();   return moon::Parser::token::INT_LITERAL;  }
+{FLT_LITERAL}    { LEX_LOG_LIT( "float-literal"   ); AS_MOON_LEXER(this).lexOnFloatLiteral(); return moon::Parser::token::FLT_LITERAL;  }
+{BOOL_LITERAL}   { LEX_LOG_LIT( "boolean-literal" ); AS_MOON_LEXER(this).lexOnBoolLiteral();  return moon::Parser::token::BOOL_LITERAL; }
+{STR_LITERAL}    { LEX_LOG_LIT( "string-literal"  ); AS_MOON_LEXER(this).lexOnStrLiteral();   return moon::Parser::token::STR_LITERAL;  }
 
     /* ---- Identifies/names: ---- */
-{IDENTIFIER}     { LEX_LOG_IDENT(); moon::lexOnIdentifier(ctx); return moon::Parser::token::IDENTIFIER; }
+{IDENTIFIER}     { LEX_LOG_IDENT(); AS_MOON_LEXER(this).lexOnIdentifier(); return moon::Parser::token::IDENTIFIER; }
 
     /* ---- Anything not listed above is an error, handled by the special '.' rule: ---- */
 .                { YY_FATAL_ERROR("invalid token"); }

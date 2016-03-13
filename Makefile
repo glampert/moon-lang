@@ -51,13 +51,14 @@ WARNS_IGNORED = -Wno-deprecated-register \
                 -Wno-unused-function     \
                 -Wno-sign-compare
 
-CXXFLAGS = -std=c++11          \
-           $(WARNS_USED)       \
-           $(WARNS_IGNORED)    \
-           $(DEBUG_FLAGS)      \
-           $(GLOBAL_DEFINES)   \
-           -I.                 \
-           -I$(GENERATED_DIR)/ \
+CXXFLAGS = -std=c++11           \
+           $(WARNS_USED)        \
+           $(WARNS_IGNORED)     \
+           $(DEBUG_FLAGS)       \
+           $(GLOBAL_DEFINES)    \
+           -I.                  \
+           -I/usr/local/include \
+           -I$(GENERATED_DIR)/  \
            -I$(SOURCE_DIR)/
 
 # For ad hoc static analysis with Clang, uncomment the following:

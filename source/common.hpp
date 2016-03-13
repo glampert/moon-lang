@@ -21,7 +21,8 @@
 #include "output.hpp"
 
 #ifndef INC_LEXER
-    #include "generated/FlexLexer.h"
+    // This header file is a built-in that comes with then Flex install.
+    #include <FlexLexer.h>
 #endif // INC_LEXER
 
 namespace moon
@@ -65,11 +66,29 @@ class Lexer final
     : public yyFlexLexer
 {
 public:
-    Lexer(ParseContext & ctx, std::istream & source)
-    {
-        set_yycontext(&ctx);
-        switch_streams(&source);
-    }
+
+    // Not copyable.
+    Lexer(const Lexer &) = delete;
+    Lexer & operator = (const Lexer &) = delete;
+
+    Lexer(ParseContext & parseCtx, std::istream & source)
+        : yyFlexLexer { &source  }
+        , ctx         { parseCtx }
+    { }
+
+    ParseContext & ctx;
+
+    // Methods defined in lexer.lxx:
+    void lexOnInput(char * buf, int & result, int maxSize);
+    void lexOnError(const char * message);
+    void lexOnSingleLineComment();
+    void lexOnMultiLineComment();
+    void lexOnNewLine();
+    void lexOnIdentifier();
+    void lexOnStrLiteral();
+    void lexOnIntLiteral();
+    void lexOnFloatLiteral();
+    void lexOnBoolLiteral();
 };
 
 union SemanticVal

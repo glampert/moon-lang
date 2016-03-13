@@ -363,6 +363,12 @@ IntermediateInstr * emitWhileLoop(Compiler & compiler, const SyntaxTreeNode * ro
     return linkInstr(loopCond, linkInstr(loopContinue, noopLabelEnd));
 }
 
+IntermediateInstr * emitForLoop(Compiler & compiler, const SyntaxTreeNode * root)
+{
+    //TODO
+    return compiler.newInstruction(OpCode::NoOp);
+}
+
 IntermediateInstr * emitBreak(Compiler & compiler, const SyntaxTreeNode *)
 {
     MOON_ASSERT(compiler.getLoopEndAnchor() != nullptr);
@@ -465,7 +471,7 @@ static const EmitInstrForNodeCB emitInstrCallbacks[]
     &emitIfThenElseIf,                      // IfThenElseIfStatement
     &emitLoop,                              // LoopStatement
     &emitWhileLoop,                         // WhileStatement
-    &emitNOOP,                              // ForStatement
+    &emitForLoop,                           // ForStatement
     &emitNOOP,                              // MatchStatement
     &emitNOOP,                              // MatchCaseStatement
     &emitNOOP,                              // MatchDefaultStatement

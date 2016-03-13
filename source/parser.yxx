@@ -753,9 +753,8 @@ int yylex(SemanticVal * yylval, ParseContext & ctx)
 void Parser::error(const std::string & message)
 {
     MOON_ASSERT(ctx.lexer != nullptr);
-
     const std::string filename = (ctx.srcFile != nullptr) ? *ctx.srcFile : "???";
-    compilerError(message, filename, ctx.lexer->get_yylineno(), ctx.currText);
+    compilerError(message, filename, ctx.lexer->lineno(), ctx.currText);
     throw ParserException{ "Parser error" };
 }
 
