@@ -14,7 +14,9 @@ before_install:
 
 install:
   # Update the GCC version if on Linux (needed for C++11 support)
-  # and update/install Bison and Flex:
+  - if [ $TRAVIS_OS_NAME == linux ]; then sudo apt-get install -qq g++-4.9 && export CXX="g++-4.9" && export CC="gcc-4.9"; fi
+
+  # Update/install Bison and Flex:
   - if [ $TRAVIS_OS_NAME == linux ]; then
         sudo apt-get update -qq;
         sudo apt-get install -qq flex;
@@ -26,9 +28,8 @@ install:
         make -j 4 install;
         cd $PWD/..;
         export PATH=$HOME/bison/bin:$PATH;
-        sudo apt-get install -qq g++-4.9;
-        export CXX="g++-4.9" && export CC="gcc-4.9";
     fi
+
   # Bison/Flex update on OSX using Brew
   # (need the unlink hack for OSX, see: http://stackoverflow.com/a/29053701/1198654)
   - if [ $TRAVIS_OS_NAME == osx ]; then
@@ -42,7 +43,8 @@ install:
     fi
 
 script:
-  - flex  -V
+  - $CXX --version
+  - flex -V
   - bison -V
   - make
 
