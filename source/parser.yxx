@@ -1,10 +1,13 @@
 
+/*
+ * NOTE: Bison version 3.0 or higher recommended.
+ * https://www.gnu.org/software/bison/manual/html_node/index.html
+ */
+
 /* +-------------------------------------------------+ *
  * | Bison configuration parameters:                 | *
  * +-------------------------------------------------+ */
 
-/* https://www.gnu.org/software/bison/manual/html_node/index.html */
-%require  "3.0.4"
 %skeleton "lalr1.cc"
 %defines
 
