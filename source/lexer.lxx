@@ -145,11 +145,11 @@ void Lexer::lexOnMultiLineComment()
         ctx.yylval->asSymbol = sym;                                   \
     }
 
-LEX_DEFINE_SYMBOL_HANDLER( lexOnIdentifier,   findSymbol,       addIdentifier   );
-LEX_DEFINE_SYMBOL_HANDLER( lexOnStrLiteral,   findStrLiteral,   addStrLiteral   );
-LEX_DEFINE_SYMBOL_HANDLER( lexOnIntLiteral,   findIntLiteral,   addIntLiteral   );
-LEX_DEFINE_SYMBOL_HANDLER( lexOnFloatLiteral, findFloatLiteral, addFloatLiteral );
-LEX_DEFINE_SYMBOL_HANDLER( lexOnBoolLiteral,  findBoolLiteral,  addBoolLiteral  );
+LEX_DEFINE_SYMBOL_HANDLER( lexOnIdentifier,   findSymbol,       addIdentifier   )
+LEX_DEFINE_SYMBOL_HANDLER( lexOnStrLiteral,   findStrLiteral,   addStrLiteral   )
+LEX_DEFINE_SYMBOL_HANDLER( lexOnIntLiteral,   findIntLiteral,   addIntLiteral   )
+LEX_DEFINE_SYMBOL_HANDLER( lexOnFloatLiteral, findFloatLiteral, addFloatLiteral )
+LEX_DEFINE_SYMBOL_HANDLER( lexOnBoolLiteral,  findBoolLiteral,  addBoolLiteral  )
 #undef LEX_DEFINE_SYMBOL_HANDLER
 
 } // namespace moon {}

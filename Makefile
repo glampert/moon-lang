@@ -35,8 +35,6 @@ GLOBAL_DEFINES = -DMOON_DEBUG_MEMORY=1  \
 
 WARNS_USED = -Wall                   \
              -Wextra                 \
-             -Weffc++                \
-             -pedantic               \
              -Wsequence-point        \
              -Wdisabled-optimization \
              -Wuninitialized         \
