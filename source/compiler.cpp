@@ -366,6 +366,7 @@ IntermediateInstr * emitWhileLoop(Compiler & compiler, const SyntaxTreeNode * ro
 IntermediateInstr * emitForLoop(Compiler & compiler, const SyntaxTreeNode * root)
 {
     //TODO
+    (void)root;
     return compiler.newInstruction(OpCode::NoOp);
 }
 
