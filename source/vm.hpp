@@ -28,54 +28,60 @@ class VM final
 {
 public:
 
-    static constexpr int DefaultStackSize = 8192; // Initial stack size in Variants.
-    using DataVector = std::vector<Variant>;      // Global program data.
-    using CodeVector = std::vector<Instruction>;  // Instructions / program code.
+    // Initial stack size in Variants.
+    static constexpr int DefaultStackSize = 8192;
+
+    // Helper types:
+    using DataVector = std::vector<Variant>;
+    using CodeVector = std::vector<Instruction>;
+
+    // Program context:
+    Stack         stack;
+    DataVector    data;
+    CodeVector    code;
+    FunctionTable functions;
+
+    //
+    // VM interface:
+    //
 
     VM(int stackSize = DefaultStackSize);
-    VM(DataVector && data, CodeVector && code, int stackSize = DefaultStackSize);
 
     // Not copyable.
     VM(const VM &) = delete;
     VM & operator = (const VM &) = delete;
 
-    void resetProgram(DataVector && data, CodeVector && code);
-    void executeProgram();
+    void setProgramCounter(int target) noexcept;
+    int  getProgramCounter() const noexcept;
+
+    void execute();
+    void executeSingleInstruction(OpCode op, std::uint32_t operandIndex);
 
     // Prints the current Program counter, data vector and stack.
     void print(std::ostream & os = std::cout) const;
 
 private:
 
-    void setProgCounter(int target);
-    void executeSingleInstruction(OpCode op, std::uint32_t operandIndex);
-
     // The "Program Counter" (index of the next
-    // instruction to be executed from progCode).
+    // instruction to be executed from the code vector).
     int pc;
-
-    // Program context:
-    Stack         progStack;
-    DataVector    progData;
-    CodeVector    progCode;
-    FunctionTable progFunctions;
 };
 
 // ========================================================
 // Debug printing helpers:
 // ========================================================
 
-void printDataVector(const VM::DataVector & progData, std::ostream & os = std::cout);
-void printCodeVector(const VM::CodeVector & progCode, std::ostream & os = std::cout);
+void printDataVector(const VM::DataVector & data, std::ostream & os = std::cout);
+void printCodeVector(const VM::CodeVector & code, std::ostream & os = std::cout);
 
-inline std::ostream & operator << (std::ostream & os, const VM::DataVector & progData)
+inline std::ostream & operator << (std::ostream & os, const VM::DataVector & data)
 {
-    printDataVector(progData, os);
+    printDataVector(data, os);
     return os;
 }
-inline std::ostream & operator << (std::ostream & os, const VM::CodeVector & progCode)
+inline std::ostream & operator << (std::ostream & os, const VM::CodeVector & code)
 {
-    printCodeVector(progCode, os);
+    printCodeVector(code, os);
     return os;
 }
 inline std::ostream & operator << (std::ostream & os, const VM & vm)

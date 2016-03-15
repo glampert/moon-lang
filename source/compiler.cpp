@@ -365,9 +365,41 @@ IntermediateInstr * emitWhileLoop(Compiler & compiler, const SyntaxTreeNode * ro
 
 IntermediateInstr * emitForLoop(Compiler & compiler, const SyntaxTreeNode * root)
 {
-    //TODO
-    (void)root;
-    return compiler.newInstruction(OpCode::NoOp);
+    // Must have the counter (i) and a range/call/name expression:
+    expectChildAtIndex(root, 0);
+    expectChildAtIndex(root, 1);
+    expectSymbol(root->getChild(0));
+
+    auto forIndex = root->getChild(0)->getSymbol();
+    auto forInit  = traverseTreeRecursive(compiler, root->getChild(1));
+    auto forPrep  = compiler.newInstruction(OpCode::ForLoopPrep, forIndex);
+    auto forTest  = compiler.newInstruction(OpCode::ForLoopTest, forIndex);
+    auto forStep  = compiler.newInstruction(OpCode::ForLoopStep, forIndex);
+    auto forCont  = compiler.newInstruction(OpCode::Jmp, forStep);
+    auto forEnd   = compiler.newInstruction(OpCode::NoOp);
+
+    // Goes after the ForLoopTest to break if the result was false.
+    auto jumpIfFalse = compiler.newInstruction(OpCode::JmpIfFalse, forEnd);
+
+    // We have to jump over the first step of the loop on initialization (ForLoopPrep).
+    auto postPrepJump = compiler.newInstruction(OpCode::Jmp, forTest);
+
+    // If there's any code in the loop body:
+    IntermediateInstr * loopBody;
+    if (root->getChild(2) != nullptr)
+    {
+        compiler.setLoopAnchors(forStep, forEnd); // Jump targets for 'continue/break'
+        loopBody = traverseTreeRecursive(compiler, root->getChild(2));
+        compiler.clearLoopAnchors();
+    }
+    else // Empty for loop:
+    {
+        loopBody = nullptr;
+    }
+
+    auto block0 = linkInstr(postPrepJump, linkInstr(linkInstr(forStep, forTest), jumpIfFalse));
+    auto block1 = linkInstr(linkInstr(forPrep, block0), loopBody);
+    return linkInstr(forInit, linkInstr(block1, linkInstr(forCont, forEnd)));
 }
 
 IntermediateInstr * emitBreak(Compiler & compiler, const SyntaxTreeNode *)
@@ -424,34 +456,149 @@ IntermediateInstr * emitStore(Compiler & compiler, const SyntaxTreeNode * root)
     return linkInstr(argument, operation);
 }
 
-IntermediateInstr * emitCall(Compiler & compiler, const SyntaxTreeNode * root)
+IntermediateInstr * emitArraySubscript(Compiler & compiler, const SyntaxTreeNode * root)
+{
+    // child[0] is reserved for parameter lists and may be null.
+    expectChildAtIndex(root, 1);
+    expectChildAtIndex(root, 2);
+    auto arrayExpr     = traverseTreeRecursive(compiler, root->getChild(1));
+    auto subscriptExpr = traverseTreeRecursive(compiler, root->getChild(2));
+    auto subscriptOp   = compiler.newInstruction(OpCode::ArraySubscript);
+    return linkInstr(arrayExpr, linkInstr(subscriptExpr, subscriptOp));
+}
+
+void countArgsRecursive(const SyntaxTreeNode * root, int & argCountOut, Compiler & compiler)
+{
+    if (root == nullptr)
+    {
+        return;
+    }
+
+    ++argCountOut;
+    compiler.markVisited(root);
+
+    if (!compiler.nodeVisited(root->getChild(0)))
+    {
+        countArgsRecursive(root->getChild(0), argCountOut, compiler);
+    }
+    if (!compiler.nodeVisited(root->getChild(1)))
+    {
+        countArgsRecursive(root->getChild(1), argCountOut, compiler);
+    }
+}
+
+template<OpCode OP>
+IntermediateInstr * emitCallChain(Compiler & compiler, const SyntaxTreeNode * root)
 {
     expectSymbol(root);
-    auto operation = compiler.newInstruction(OpCode::Call, root->getSymbol());
+    auto operation = compiler.newInstruction(OP, root->getSymbol());
 
-    // Resolve the potential function argument list:
+    // We have to keep track of the visited nodes to be able to properly
+    // compute the argument counts. Some nodes will be visited more than
+    // once due to the parameter list chains.
+    compiler.clearVisited();
+
+    int argumentCount = 0;
+    IntermediateInstr * myArgs = nullptr;
+    IntermediateInstr * argListChain = nullptr;
+
+    // We might be linked to an argument list chain, so go down the child 0 hierarchy:
     if (root->getChild(0) != nullptr)
     {
-        // function_id => arg_0 => arg_1 => arg_N
-        auto argList = traverseTreeRecursive(compiler, root->getChild(0));
-
-        // Child node 0 will have a linked list with the provided arguments:
-        int argumentsProvided = 0;
-        for (auto c = root->getChild(0); c != nullptr; c = c->getChild(0))
-        {
-            ++argumentsProvided;
-        }
-
-        // Argument count is appended as a literal integer:
-        auto argCountLiteral = compiler.symTable.findOrDefineValue(argumentsProvided);
-        auto loadArgCountOp  = compiler.newInstruction(OpCode::Load, argCountLiteral);
-        return linkInstr(argList, linkInstr(loadArgCountOp, operation));
+        argListChain = traverseTreeRecursive(compiler, root->getChild(0));
     }
-    else // Function called with zero arguments.
+
+    // Child 1 has the argument list of this function:
+    if (root->getChild(1) != nullptr)
     {
-        auto argCountLiteral = compiler.symTable.findOrDefineValue(0);
-        auto loadArgCountOp  = compiler.newInstruction(OpCode::Load, argCountLiteral);
-        return linkInstr(loadArgCountOp, operation);
+        myArgs = traverseTreeRecursive(compiler, root->getChild(1));
+        countArgsRecursive(root->getChild(1), argumentCount, compiler);
+    }
+
+    // Argument count is appended as a literal integer:
+    auto argCountLiteral = compiler.symTable.findOrDefineValue(argumentCount);
+    auto loadArgCountOp  = compiler.newInstruction(OpCode::Load, argCountLiteral);
+
+    // Wrap it up!
+    if (myArgs != nullptr)
+    {
+        return linkInstr(linkInstr(myArgs, linkInstr(loadArgCountOp, operation)), argListChain);
+    }
+    else // No args for this function/constructor:
+    {
+        return linkInstr(linkInstr(loadArgCountOp, operation), argListChain);
+    }
+}
+
+IntermediateInstr * emitFunctionDecl(Compiler & compiler, const SyntaxTreeNode * root)
+{
+    expectSymbol(root); // Func name
+    auto funcStart = compiler.newInstruction(OpCode::FuncStart, root->getSymbol());
+    auto funcEnd   = compiler.newInstruction(OpCode::FuncEnd);
+
+    // Resolve the function body if any. Parameter list and return type are not relevant here.
+    compiler.setReturnAnchor(funcEnd);
+    auto funcBody = ((root->getChild(1) != nullptr) ?
+                     traverseTreeRecursive(compiler, root->getChild(1)) :
+                     compiler.newInstruction(OpCode::NoOp));
+    compiler.clearReturnAnchor();
+
+    // Chain everything together:
+    return linkInstr(funcStart, linkInstr(funcBody, funcEnd));
+}
+
+IntermediateInstr * emitReturn(Compiler & compiler, const SyntaxTreeNode * root)
+{
+    MOON_ASSERT(compiler.getFuncEndAnchor() != nullptr);
+
+    // Return simply resolves its child expression if it has one.
+    auto retExpr = ((root->getChild(0) != nullptr) ?
+                    traverseTreeRecursive(compiler, root->getChild(0)) :
+                    compiler.newInstruction(OpCode::NoOp));
+
+    auto retJump = compiler.newInstruction(OpCode::JmpReturn, compiler.getFuncEndAnchor());
+    return linkInstr(retExpr, retJump);
+}
+
+IntermediateInstr * emitNewVar(Compiler & compiler, const SyntaxTreeNode * root)
+{
+    expectSymbol(root); // Var name
+
+    const Symbol * type = nullptr;
+    IntermediateInstr * argument = nullptr;
+
+    if (root->getChild(1) != nullptr) // Type node
+    {
+        type = root->getChild(1)->getSymbol();
+    }
+    if (type == nullptr)
+    {
+        type = symbolFromEval(compiler.symTable, root->getEval());
+    }
+
+    int argumentCount = 0;
+    if (root->getChild(0) != nullptr) // Initializer expression node
+    {
+        argument = traverseTreeRecursive(compiler, root->getChild(0));
+        argumentCount = 1;
+    }
+
+    auto newOp   = compiler.newInstruction(OpCode::NewVar, type);
+    auto storeOp = compiler.newInstruction(OpCode::Store, root->getSymbol());
+
+    // A load instruction is appended to indicate if we should pop one
+    // value from the stack to initialize the new var or if it was left
+    // uninitialized.
+    auto argCountLiteral = compiler.symTable.findOrDefineValue(argumentCount);
+    auto loadArgCountOp  = compiler.newInstruction(OpCode::Load, argCountLiteral);
+
+    if (argument != nullptr)
+    {
+        return linkInstr(linkInstr(argument, linkInstr(loadArgCountOp, newOp)), storeOp);
+    }
+    else
+    {
+        return linkInstr(linkInstr(loadArgCountOp, newOp), storeOp);
     }
 }
 
@@ -476,22 +623,22 @@ static const EmitInstrForNodeCB emitInstrCallbacks[]
     &emitNOOP,                              // MatchStatement
     &emitNOOP,                              // MatchCaseStatement
     &emitNOOP,                              // MatchDefaultStatement
-    &emitNOOP,                              // FuncDeclStatement
+    &emitFunctionDecl,                      // FuncDeclStatement
     &emitNOOP,                              // EnumDeclStatement
     &emitNOOP,                              // StructDeclStatement
     &emitNOOP,                              // TypeAliasDeclStatement
-    &emitNOOP,                              // VarDeclStatement
-    &emitNOOP,                              // ReturnStatement
+    &emitNewVar,                            // VarDeclStatement
+    &emitReturn,                            // ReturnStatement
     &emitBreak,                             // BreakStatement
     &emitContinue,                          // ContinueStatement
     &emitNOOP,                              // ExprRange
     &emitNOOP,                              // ExprArrayLiteral
-    &emitNOOP,                              // ExprArraySubscript
-    &emitCall,                              // ExprFuncCall
+    &emitArraySubscript,                    // ExprArraySubscript
+    &emitCallChain<OpCode::Call>,           // ExprFuncCall
     &emitLoad,                              // ExprNameIdent
     &emitNOOP,                              // ExprTypeIdent
     &emitLoad,                              // ExprLiteralConst
-    &emitNOOP,                              // ExprObjectConstructor
+    &emitCallChain<OpCode::NewObj>,         // ExprObjectConstructor
     &emitStore,                             // ExprAssign
     &emitBinaryOp<OpCode::CmpNotEqual>,     // ExprCmpNotEqual
     &emitBinaryOp<OpCode::CmpEqual>,        // ExprCmpEqual
@@ -533,24 +680,23 @@ IntermediateInstr * traverseTreeRecursive(Compiler & compiler, const SyntaxTreeN
 // Compiler class methods:
 // ========================================================
 
-Compiler::Compiler(SymbolTable & symtab, SyntaxTree & ast)
-    : symTable           { symtab  }
-    , syntTree           { ast     }
-    , firstInstr         { nullptr }
-    , instructionCount   { 0       }
+Compiler::Compiler()
+    : instructionCount   { 0       }
+    , instrListHead      { nullptr }
     , lastLoopStartLabel { nullptr }
     , lastLoopEndLabel   { nullptr }
+    , lastFuncEndLabel   { nullptr }
 { }
 
-void Compiler::compile(VM::DataVector & progData, VM::CodeVector & progCode)
+void Compiler::compile(VM & vm)
 {
-    firstInstr = traverseTreeRecursive(*this, syntTree.getRoot());
-    intermediateToVM(progData, progCode);
+    instrListHead = traverseTreeRecursive(*this, syntTree.getRoot());
+    intermediateToVM(vm.data, vm.code);
 }
 
 void Compiler::printIntermediateInstructions(std::ostream & os) const
 {
-    printIntermediateInstrListHelper(firstInstr, os);
+    printIntermediateInstrListHelper(instrListHead, os);
 }
 
 void Compiler::printInstructionMapping(std::ostream & os) const
@@ -578,293 +724,48 @@ void Compiler::clearLoopAnchors() noexcept
     lastLoopEndLabel   = nullptr;
 }
 
-#if 0
-Compiler::IntermediateInstr * Compiler::traverseTreeRecursive(const SyntaxTreeNode * root)
+void Compiler::setReturnAnchor(const IntermediateInstr * endLabel) noexcept
 {
-    MOON_ASSERT(root != nullptr);
-
-    const STNode nodeType = root->getType();
-
-    // Common statements/expressions/temps:
-    IntermediateInstr * block0        = nullptr;
-    IntermediateInstr * block1        = nullptr;
-    IntermediateInstr * block2        = nullptr;
-
-    // Used to assemble conditional statements:
-    IntermediateInstr * noop          = nullptr;
-    IntermediateInstr * condition     = nullptr;
-    IntermediateInstr * thenStatement = nullptr;
-    IntermediateInstr * elseStatement = nullptr;
-    IntermediateInstr * jumpIfFalse   = nullptr;
-    IntermediateInstr * jumpToEnd     = nullptr;
-
-    switch (nodeType)
-    {
-    case STNode::TranslationUnit :
-        {
-            block0 = newInstruction(OpCode::ModuleStart);
-            if (root->getChild(0) != nullptr) // A translation unit might be empty.
-            {
-                block1 = traverseTreeRecursive(root->getChild(0));
-                return linkInstr(block0, block1);
-            }
-            return block0;
-        }
-    case STNode::Statement :
-        {
-            expectChildAtIndex(root, 1);
-            if (root->getChild(0) != nullptr)
-            {
-                block0 = traverseTreeRecursive(root->getChild(0));
-                block1 = traverseTreeRecursive(root->getChild(1));
-                return linkInstr(block0, block1);
-            }
-            else
-            {
-                return traverseTreeRecursive(root->getChild(1));
-            }
-        }
-    case STNode::IfThenStatement :
-        {
-            // If the then-statement ('if' body) is not empty:
-            if (root->getChild(1) != nullptr)
-            {
-                expectNumChildren(root, 2);
-                condition     = traverseTreeRecursive(root->getChild(0));
-                thenStatement = traverseTreeRecursive(root->getChild(1));
-                noop          = newInstruction(OpCode::NoOp);
-                jumpIfFalse   = newInstruction(OpCode::JmpIfFalse, noop);
-
-                // if-cond => jump-end-if-false => if-body => noop[jump-target/end]
-                block0 = linkInstr(condition, jumpIfFalse);
-                block1 = linkInstr(block0, thenStatement);
-                return linkInstr(block1, noop);
-            }
-            else // Empty then-statement/body:
-            {
-                condition   = traverseTreeRecursive(root->getChild(0));
-                noop        = newInstruction(OpCode::NoOp);
-                jumpIfFalse = newInstruction(OpCode::JmpIfFalse, noop);
-
-                // if-cond => jump-end-if-false => noop[jump-target/end]
-                block0 = linkInstr(condition, jumpIfFalse);
-                return linkInstr(block0, noop);
-            }
-        }
-    case STNode::IfThenElseStatement :
-        {
-            // child[0] = condition/expression (must have)
-            // child[1] = if-body/then-statement (may be empty)
-            // child[2] = else-body/statement (may be empty)
-
-            // Must have a if-condition part:
-            expectChildAtIndex(root, 0);
-            condition = traverseTreeRecursive(root->getChild(0));
-
-            // If the then-statement body and else-statement body are not empty, resolve them:
-            if (root->getChild(1) != nullptr)
-            {
-                thenStatement = traverseTreeRecursive(root->getChild(1));
-            }
-            if (root->getChild(2) != nullptr)
-            {
-                elseStatement = traverseTreeRecursive(root->getChild(2));
-            }
-
-            noop        = newInstruction(OpCode::NoOp);
-            jumpToEnd   = newInstruction(OpCode::Jmp, noop);
-            jumpIfFalse = newInstruction(OpCode::JmpIfFalse, (elseStatement != nullptr) ? elseStatement : jumpToEnd);
-
-            // Handle the instruction sequence differently if the if or else bodies are empty:
-            block0 = linkInstr(condition, jumpIfFalse);
-            if (thenStatement != nullptr)
-            {
-                block1 = linkInstr(block0, thenStatement);
-                block2 = linkInstr(block1, jumpToEnd);
-            }
-            else
-            {
-                block2 = linkInstr(block0, jumpToEnd);
-            }
-
-            if (elseStatement != nullptr)
-            {
-                return linkInstr(linkInstr(block2, elseStatement), noop);
-            }
-            else
-            {
-                return linkInstr(block2, noop);
-            }
-            // if-cond => jump-else-if-false => if-body =>
-            //     jump-end => else-body => noop[jump-target/end]
-        }
-    case STNode::IfThenElseIfStatement :
-        {
-            // When entering the if/elseif chain for the first time:
-            //
-            // child[0] = if condition/expression (must have)
-            // child[1] = if-body/then-statement (may be empty)
-            // child[2] = elseif-body/then-statement (may be empty)
-            //
-            // After the initial 'if':
-            //
-            // child[0] = elseif condition/expression (must have)
-            // child[1] = elseif-body/then-statement (may be empty)
-            // child[2] = terminal else-statement or another elseif (which may have empty bodies)
-
-            // Must have a if-condition part:
-            expectChildAtIndex(root, 0);
-            condition = traverseTreeRecursive(root->getChild(0));
-
-            // If the then-statement body and elseif body are not empty, resolve them:
-            if (root->getChild(1) != nullptr)
-            {
-                thenStatement = traverseTreeRecursive(root->getChild(1));
-            }
-            if (root->getChild(2) != nullptr)
-            {
-                elseStatement = traverseTreeRecursive(root->getChild(2)); // else|elseif
-            }
-
-            // Note: This will produce a noop at the end for each of the
-            // if/elseif conditions in the chain. Those can be consolidated into
-            // a single noop/jump-target by the final bytecode compilation stage.
-            noop        = newInstruction(OpCode::NoOp);
-            jumpToEnd   = newInstruction(OpCode::Jmp, noop);
-            jumpIfFalse = newInstruction(OpCode::JmpIfFalse, (elseStatement != nullptr) ? elseStatement : jumpToEnd);
-
-            block0 = linkInstr(condition, jumpIfFalse);
-            block1 = linkInstr(block0, thenStatement);
-            block2 = linkInstr(block1, jumpToEnd);
-            return linkInstr(linkInstr(block2, elseStatement), noop);
-
-            // if|elseif-cond => jump-next-if-false => if|elseif-body =>
-            //     jump-end => [repeat till an else] => noop[jump-target/end]
-        }
-    case STNode::VarDeclStatement :
-        {
-            //TEMP
-            if (root->getEval() == SyntaxTreeNode::Eval::Int)
-            {
-                return newInstruction(OpCode::IntNew);
-            }
-            else
-            {
-                MOON_ASSERT(0); //TODO
-            }
-        }
-
-//  ReturnStatement
-
-    case STNode::ExprFuncCall :
-        {
-            int functionArgCount = 0;
-
-            expectSymbol(root);
-            block0 = newInstruction(OpCode::Call, root->getSymbol());
-
-            // Resolve the potential function parameters:
-            if (root->getChild(0) != nullptr)
-            {
-                // function_id => parameter_0 => parameter_1 => parameter_N
-                block1 = traverseTreeRecursive(root->getChild(0));
-
-                //FIXME don't think this is enough, might need to test the other children too?
-                for (auto c = root->getChild(0); c != nullptr; c = c->getChild(0))
-                {
-                    ++functionArgCount;
-                }
-
-                block2 = newInstruction(OpCode::IntLoad, symTable.findOrDefineValue(functionArgCount));
-                return linkInstr(block1, linkInstr(block2, block0));
-            }
-            else // Function with zero parameters/arguments.
-            {
-                block2 = newInstruction(OpCode::IntLoad, symTable.findOrDefineValue(0));
-                return linkInstr(block2, block0);
-            }
-        }
-    case STNode::ExprNameIdent :
-    case STNode::ExprLiteralConst :
-        {
-            //TODO other data types!
-            expectSymbol(root);
-            block0 = newInstruction(OpCode::IntLoad, root->getSymbol());
-
-            // !!! for functions !!!
-            if (root->getChild(0) != nullptr)
-            {
-                block1 = traverseTreeRecursive(root->getChild(0));
-                return linkInstr(block0, block1); // <-- CHANGE THIS TO ALTER FUNC PARAMETER PASSING ORDER!
-            }
-            else
-            {
-                return block0;
-            }
-        }
-    case STNode::ExprAssign :
-        {
-            //TODO other data types (not just Int)!
-            expectNumChildren(root, 2);
-            expectSymbol(root->getChild(0));
-            block0 = traverseTreeRecursive(root->getChild(1));
-            block1 = newInstruction(OpCode::IntStore, root->getChildSymbol(0));
-            return linkInstr(block0, block1);
-        }
-
-    // All binary expressions are implemented the same way, except
-    // for the instructions emitted. Simplify the code with a
-    // little bit of preprocessor black magic ;)
-    #define CASE_BINARY_EXPR(nodeType, opType)                 \
-    case STNode::nodeType :                                   \
-        do                                                     \
-        {                                                      \
-            expectNumChildren(root, 2);                        \
-            block0 = traverseTreeRecursive(root->getChild(0)); \
-            block1 = traverseTreeRecursive(root->getChild(1)); \
-            block2 = newInstruction(OpCode::opType);           \
-            return linkInstr(linkInstr(block0, block1), block2);     \
-        } while (0)
-    CASE_BINARY_EXPR( ExprCmpNotEqual,     IntCmpNotEq        );
-    CASE_BINARY_EXPR( ExprCmpEqual,        IntCmpEq           );
-    CASE_BINARY_EXPR( ExprCmpGreaterEqual, IntCmpGreaterEqual );
-    CASE_BINARY_EXPR( ExprCmpGreaterThan,  IntCmpGreater      );
-    CASE_BINARY_EXPR( ExprCmpLessEqual,    IntCmpLessEqual    );
-    CASE_BINARY_EXPR( ExprCmpLessThan,     IntCmpLess         );
-    CASE_BINARY_EXPR( ExprSubtract,        IntSub             );
-    CASE_BINARY_EXPR( ExprAdd,             IntAdd             );
-    CASE_BINARY_EXPR( ExprModulo,          IntMod             );
-    CASE_BINARY_EXPR( ExprDivide,          IntDiv             );
-    CASE_BINARY_EXPR( ExprMultiply,        IntMul             );
-    #undef CASE_BINARY_EXPR
-
-    default :
-        //TODO
-        break;
-    } // switch (nodeType)
-
-    MOON_ASSERT(0); //TODO throw a CompilerError or something...
+    lastFuncEndLabel = endLabel;
 }
-#endif//0
+
+void Compiler::clearReturnAnchor() noexcept
+{
+    lastFuncEndLabel = nullptr;
+}
+
+void Compiler::markVisited(const SyntaxTreeNode * node)
+{
+    visitedNodes.push_back(node);
+}
+
+bool Compiler::nodeVisited(const SyntaxTreeNode * node) const
+{
+    if (node == nullptr)
+    {
+        return false;
+    }
+    const auto iter = std::find(std::begin(visitedNodes), std::end(visitedNodes), node);
+    return iter != std::end(visitedNodes);
+}
+
+void Compiler::clearVisited() noexcept
+{
+    visitedNodes.clear();
+}
 
 void Compiler::fixReferences(const IntermediateInstr * instr, VM::DataVector & progData, VM::CodeVector & progCode)
 {
     MOON_ASSERT(instr != nullptr);
 
-//////
     (void)progData;
+    //TODO NOTE: we need to update function definitions in the
+    //global function table with the jump address of each script method!!!
 
     switch (instr->op)
     {
-    //
-    // -- Miscellaneous:
-    //
-//  case OpCode::NoOp :
-//  case OpCode::ModuleStart :
+    //case OpCode::FuncDecl : //TODO
 
-    //
-    // -- Jump instructions:
-    //
     case OpCode::Jmp        :
     case OpCode::JmpIfTrue  :
     case OpCode::JmpIfFalse :
@@ -882,16 +783,10 @@ void Compiler::fixReferences(const IntermediateInstr * instr, VM::DataVector & p
             break;
         }
 
-    //
-    // -- Integer instructions:
-    //
-//  case OpCode::IntNew :
-
-    //case OpCode::IntLoad  :
-    //case OpCode::IntStore :
-        // this rule can actually be shared by several instruction types...
+    // this rule can actually be shared by several instruction types...
+    //case OpCode::Load  :
+    //case OpCode::Store :
     case OpCode::Call :
-    //case OpCode::CallNative :
         {
             // Index of this instruction and its data operand:
             auto selfCodeIdx      = getProgCodeIndex(instrMapping, instr);
@@ -902,21 +797,7 @@ void Compiler::fixReferences(const IntermediateInstr * instr, VM::DataVector & p
             break;
         }
 
-//  case OpCode::IntCmpNotEq :
-//  case OpCode::IntCmpEq :
-//  case OpCode::IntCmpGreaterEqual :
-//  case OpCode::IntCmpGreater :
-//  case OpCode::IntCmpLessEqual :
-//  case OpCode::IntCmpLess :
-
-//  case OpCode::IntSub :
-//  case OpCode::IntAdd :
-//  case OpCode::IntMod :
-//  case OpCode::IntDiv :
-//  case OpCode::IntMul :
-
     default :
-        //MOON_ASSERT(0);//TODO
         break;
     } // switch (instr->op)
 }
@@ -924,10 +805,10 @@ void Compiler::fixReferences(const IntermediateInstr * instr, VM::DataVector & p
 void Compiler::intermediateToVM(VM::DataVector & progData, VM::CodeVector & progCode)
 {
     // We might still eliminate a few noops, but it should
-    // be worth while reserving the memory beforehand anyway.
+    // be worthwhile reserving the memory beforehand anyway.
     progCode.reserve(instructionCount);
 
-    for (auto instr = firstInstr; instr != nullptr; instr = instr->next)
+    for (auto instr = instrListHead; instr != nullptr; instr = instr->next)
     {
         // On our setup, noops are just placeholders for
         // the jump targets. They can be eliminated now.
@@ -962,7 +843,7 @@ void Compiler::intermediateToVM(VM::DataVector & progData, VM::CodeVector & prog
     progCode.push_back(packInstruction(OpCode::NoOp, 0));
 
     // Now map back the data and instructions into the progCode and progData:
-    for (auto instr = firstInstr; instr != nullptr; instr = instr->next)
+    for (auto instr = instrListHead; instr != nullptr; instr = instr->next)
     {
         fixReferences(instr, progData, progCode);
     }

@@ -22,8 +22,20 @@ std::string toString(const OpCode op)
         "JMP",
         "JMP_IF_TRUE",
         "JMP_IF_FALSE",
+        "JMP_RETURN",
         "CALL",
-//        "CALL_NATIVE",
+
+        "NEW_OBJ",
+        "NEW_VAR",
+
+        "FUNC_START",
+        "FUNC_END",
+
+        "FOR_LOOP_PREP",
+        "FOR_LOOP_TEST",
+        "FOR_LOOP_STEP",
+
+        "ARRAY_SUBSCRIPT",
 
         "LOAD",
         "STORE",
@@ -53,23 +65,6 @@ std::string toString(const OpCode op)
 
         "NEGATE",
         "PLUS"
-
-        /*FIXME tidy
-        "INT_NEW",
-        "INT_LOAD",
-        "INT_STORE",
-        "INT_CMP_NOT_EQ",
-        "INT_CMP_EQ",
-        "INT_CMP_GREATER_EQUAL",
-        "INT_CMP_GREATER",
-        "INT_CMP_LESS_EQUAL",
-        "INT_CMP_LESS",
-        "INT_SUB",
-        "INT_ADD",
-        "INT_MOD",
-        "INT_DIV",
-        "INT_MUL"
-        */
     };
     static_assert(arrayLength(opCodeNames) == unsigned(OpCode::Count),
                   "Keep this array in sync with the enum declaration!");

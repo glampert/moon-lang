@@ -15,25 +15,27 @@
 namespace moon
 {
 
+// ========================================================
+// FIXME test/temp stuff
+
 template<template<typename> class OP>
-void intBinaryOp(Stack & progStack)
+void binaryOp(Stack & stack)
 {
     OP<LangLong> op;
 
-    auto operandB = progStack.pop();
+    auto operandB = stack.pop();
     MOON_ASSERT(operandB.type == Variant::Type::Integer);
 
-    auto operandA = progStack.pop();
+    auto operandA = stack.pop();
     MOON_ASSERT(operandA.type == Variant::Type::Integer);
 
     Variant result;
     result.type = Variant::Type::Integer;
     result.value.asInteger = op(operandA.value.asInteger, operandB.value.asInteger);
 
-    progStack.push(result);
+    stack.push(result);
 }
 
-//TEST
 void Native_Print(VM & vm, Stack::Slice args)
 {
     (void)vm;
@@ -52,64 +54,50 @@ void Native_Print(VM & vm, Stack::Slice args)
 // ========================================================
 
 VM::VM(const int stackSize)
-    : pc        { 0 }
-    , progStack { stackSize }
-{ }
-
-VM::VM(DataVector && data, CodeVector && code, const int stackSize)
-    : pc        { 0 }
-    , progStack { stackSize }
-    , progData  { std::forward<DataVector>(data) }
-    , progCode  { std::forward<CodeVector>(code) }
+    : stack { stackSize }
+    , pc    { 0 }
 {
-    //TEST
-    {
-        progFunctions.addFunction("print", nullptr, 0, Function::TargetNative, &Native_Print);
-    }
+    //FIXME TEST
+    functions.addFunction("print", nullptr, 0, Function::TargetNative, &Native_Print);
 }
 
-void VM::setProgCounter(const int target)
+void VM::setProgramCounter(const int target) noexcept
 {
-    MOON_ASSERT(target < progCode.size());
+    MOON_ASSERT(target < code.size());
     pc = target - 1;
     //
     // The -1 is necessary because the 'for' loop
-    // in executeProgram() will still increment the
-    // pc after executeSingleInstruction() returns.
+    // in () will still increment the pc after
+    // executeSingleInstruction() returns.
+    //
     // This is arguably a hack. Perhaps it should
     // be implemented in a more clear way...
     //
 }
 
-void VM::resetProgram(DataVector && data, CodeVector && code)
+int VM::getProgramCounter() const noexcept
 {
-    pc       = 0;
-    progData = std::forward<DataVector>(data);
-    progCode = std::forward<CodeVector>(code);
-    progStack.clear();
-    //TODO what about progFunctions?
+    return pc;
 }
 
-void VM::executeProgram()
+void VM::execute()
 {
-    const int instructionCount = static_cast<int>(progCode.size());
-
+    const int instructionCount = static_cast<int>(code.size());
     for (pc = 0; pc < instructionCount; ++pc)
     {
         OpCode op;
         std::uint32_t operandIndex;
-        unpackInstruction(progCode[pc], op, operandIndex);
+        unpackInstruction(code[pc], op, operandIndex);
         executeSingleInstruction(op, operandIndex);
     }
 
-    /////FIXME temp
-    //printDataVector(progData);
-
-    MOON_ASSERT(progStack.isEmpty());
+    // If the stack is left dirty at the end of a program, there's probably a bug somewhere.
+    MOON_ASSERT(stack.isEmpty() && "Stack should be empty at the end of a program!");
 }
 
 void VM::executeSingleInstruction(const OpCode op, const std::uint32_t operandIndex)
 {
+    //TODO
     (void)op;
     (void)operandIndex;
 #if 0
@@ -126,20 +114,20 @@ void VM::executeSingleInstruction(const OpCode op, const std::uint32_t operandIn
     // Jump instructions:
     //
     case OpCode::Jmp :
-        setProgCounter(operandIndex);
+        setProgramCounter(operandIndex);
         break;
 
     case OpCode::JmpIfTrue :
-        if (progStack.pop().value.asInteger != 0)
+        if (stack.pop().value.asInteger != 0)
         {
-            setProgCounter(operandIndex);
+            setProgramCounter(operandIndex);
         }
         break;
 
     case OpCode::JmpIfFalse :
-        if (progStack.pop().value.asInteger == 0)
+        if (stack.pop().value.asInteger == 0)
         {
-            setProgCounter(operandIndex);
+            setProgramCounter(operandIndex);
         }
         break;
 
@@ -149,27 +137,27 @@ void VM::executeSingleInstruction(const OpCode op, const std::uint32_t operandIn
     case OpCode::Call :
     case OpCode::CallNative :
         {
-            const auto funcName = progData[operandIndex];
+            const auto funcName = data[operandIndex];
             if (funcName.type != Variant::Type::String)
             {
                 MOON_RUNTIME_EXCEPTION("function name not a string!");
             }
 
-            auto func = progFunctions.findFunction(funcName.value.asStringPtr);
+            auto func = functions.findFunction(funcName.value.asStringPtr);
             if (func == nullptr)
             {
                 MOON_RUNTIME_EXCEPTION("attempting to call undefined function: '" + toString(funcName) + "()'");
             }
 
-            const auto argCount = progStack.pop();
+            const auto argCount = stack.pop();
             if (argCount.type != Variant::Type::Integer)
             {
                 MOON_RUNTIME_EXCEPTION("function arg count sentry should be an integer!");
             }
 
             const auto n = argCount.value.asInteger;
-            (*func)(*this, progStack.slice(progStack.getCurrSize() - n, n));
-            progStack.popN(n);
+            (*func)(*this, stack.slice(stack.getCurrSize() - n, n));
+            stack.popN(n);
         }
         break;
 
@@ -182,33 +170,33 @@ void VM::executeSingleInstruction(const OpCode op, const std::uint32_t operandIn
 
     case OpCode::IntLoad :
         // Push integer operand to the VM stack.
-        progStack.push(progData[operandIndex]);
+        stack.push(data[operandIndex]);
         break;
 
     case OpCode::IntStore :
         // Stores the current stack top to the data index of
         // this instruction, then pop the VM stack.
-        progData[operandIndex] = progStack.pop();
+        data[operandIndex] = stack.pop();
         break;
 
     //
     // Integer comparisons:
     //
-    case OpCode::IntCmpNotEq        : intBinaryOp< std::not_equal_to  >(progStack); break;
-    case OpCode::IntCmpEq           : intBinaryOp< std::equal_to      >(progStack); break;
-    case OpCode::IntCmpGreaterEqual : intBinaryOp< std::greater_equal >(progStack); break;
-    case OpCode::IntCmpGreater      : intBinaryOp< std::greater       >(progStack); break;
-    case OpCode::IntCmpLessEqual    : intBinaryOp< std::less_equal    >(progStack); break;
-    case OpCode::IntCmpLess         : intBinaryOp< std::less          >(progStack); break;
+    case OpCode::IntCmpNotEq        : intBinaryOp< std::not_equal_to  >(stack); break;
+    case OpCode::IntCmpEq           : intBinaryOp< std::equal_to      >(stack); break;
+    case OpCode::IntCmpGreaterEqual : intBinaryOp< std::greater_equal >(stack); break;
+    case OpCode::IntCmpGreater      : intBinaryOp< std::greater       >(stack); break;
+    case OpCode::IntCmpLessEqual    : intBinaryOp< std::less_equal    >(stack); break;
+    case OpCode::IntCmpLess         : intBinaryOp< std::less          >(stack); break;
 
     //
     // Integer arithmetics:
     //
-    case OpCode::IntSub : intBinaryOp< std::minus      >(progStack); break;
-    case OpCode::IntAdd : intBinaryOp< std::plus       >(progStack); break;
-    case OpCode::IntMod : intBinaryOp< std::modulus    >(progStack); break;
-    case OpCode::IntDiv : intBinaryOp< std::divides    >(progStack); break; // TODO check for divide by zero! (maybe use an overloaded template!)
-    case OpCode::IntMul : intBinaryOp< std::multiplies >(progStack); break;
+    case OpCode::IntSub : intBinaryOp< std::minus      >(stack); break;
+    case OpCode::IntAdd : intBinaryOp< std::plus       >(stack); break;
+    case OpCode::IntMod : intBinaryOp< std::modulus    >(stack); break;
+    case OpCode::IntDiv : intBinaryOp< std::divides    >(stack); break; // TODO check for divide by zero! (maybe use an overloaded template!)
+    case OpCode::IntMul : intBinaryOp< std::multiplies >(stack); break;
 
     default :
         //TODO
@@ -230,7 +218,7 @@ static void dumpVariant(const Variant var, const int index, std::ostream & os)
        << toString(var.type) << "\n";
 }
 
-void printCodeVector(const VM::CodeVector & progCode, std::ostream & os)
+void printCodeVector(const VM::CodeVector & code, std::ostream & os)
 {
     OpCode op = OpCode::NoOp;
     std::uint32_t operandIndex = 0;
@@ -238,7 +226,7 @@ void printCodeVector(const VM::CodeVector & progCode, std::ostream & os)
 
     os << color::white() << "[[ begin code vector dump ]]" << color::restore() << "\n";
 
-    for (auto instr : progCode)
+    for (auto instr : code)
     {
         unpackInstruction(instr, op, operandIndex);
 
@@ -248,20 +236,20 @@ void printCodeVector(const VM::CodeVector & progCode, std::ostream & os)
         ++instrIndex;
     }
 
-    os << color::white() << "[[ listed " << progCode.size() << " instructions ]]" << color::restore() << "\n";
+    os << color::white() << "[[ listed " << code.size() << " instructions ]]" << color::restore() << "\n";
 }
 
-void printDataVector(const VM::DataVector & progData, std::ostream & os)
+void printDataVector(const VM::DataVector & data, std::ostream & os)
 {
     os << color::white() << "[[ begin data vector dump ]]" << color::restore() << "\n";
 
     int index = 0;
-    for (auto var : progData)
+    for (auto var : data)
     {
         dumpVariant(var, index++, os);
     }
 
-    os << color::white() << "[[ printed " << progData.size() << " variants ]]" << color::restore() << "\n";
+    os << color::white() << "[[ printed " << data.size() << " variants ]]" << color::restore() << "\n";
 }
 
 void VM::print(std::ostream & os) const
@@ -270,20 +258,20 @@ void VM::print(std::ostream & os) const
     os << color::red() << "PC = " << color::restore() << pc << "\n";
 
     os << "\n";
-    printDataVector(progData, os);
+    printDataVector(data, os);
     os << "\n";
 
     os << color::white() << "[[ VM stack ]]" << color::restore() << "\n";
-    if (!progStack.isEmpty())
+    if (!stack.isEmpty())
     {
         int index = 0;
-        auto stack = progStack.slice(0, progStack.getCurrSize());
-        for (auto var = stack.first(); var != nullptr; var = stack.next())
+        auto s = stack.slice(0, stack.getCurrSize());
+        for (auto var = s.first(); var != nullptr; var = s.next())
         {
             dumpVariant(*var, index++, os);
         }
     }
-    os << color::white() << "[[ printed " << progStack.getCurrSize() << " variants ]]" << color::restore() << "\n";
+    os << color::white() << "[[ printed " << stack.getCurrSize() << " variants ]]" << color::restore() << "\n";
     os << color::white() << "\n[[ ----------------------- ]]" << color::restore() << "\n";
 }
 

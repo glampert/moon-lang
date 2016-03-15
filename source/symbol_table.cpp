@@ -238,6 +238,7 @@ SymbolTable::SymbolTable()
     addIdentifier("any",       Symbol::LineNumBuiltIn);
 
     // Internal types (not actual types usable in code):
+    addIdentifier("object",    Symbol::LineNumBuiltIn);
     addIdentifier("varargs",   Symbol::LineNumBuiltIn);
     addIdentifier("void",      Symbol::LineNumBuiltIn);
     addIdentifier("undefined", Symbol::LineNumBuiltIn);

@@ -396,7 +396,9 @@ expression
 func_call_expression
     : IDENTIFIER "(" parameter_list ")"
         {
-            $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprFuncCall, $1, $3);
+            /* Second child is the parameter_list chain.
+               First is reserved for chaining the call itself to another parameter_list */
+            $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprFuncCall, $1, nullptr, $3);
         }
     ;
 
@@ -462,10 +464,15 @@ array_expression
     ;
 
 array_subscript_expression
-    : IDENTIFIER "[" expression "]"
+    : identifier_expression "[" expression "]"
         {
             /* First child reserved for parameter_list chains */
-            $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprArraySubscript, $1, nullptr, $3, nullptr);
+            $$ = ctx.syntTree->newNode(STNode::ExprArraySubscript, nullptr, $1, $3);
+        }
+    | func_call_expression "[" expression "]"
+        {
+            /* Only makes sense when the function returns an array type */
+            $$ = ctx.syntTree->newNode(STNode::ExprArraySubscript, nullptr, $1, $3);
         }
     ;
 
@@ -474,7 +481,7 @@ object_constructor_expression
         {
             /* First child reserved for parameter_list chains */
             $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprObjectConstructor, $1->getSymbol(),
-                                                                nullptr, $1, $3, $1->getEval());
+                                                                nullptr, $3, $1, $1->getEval());
         }
     ;
 
@@ -544,7 +551,11 @@ end_statement
     ;
 
 return_statement
-    : "return" expression ";"
+    : "return" ";"
+        {
+            $$ = ctx.syntTree->newNode(STNode::ReturnStatement);
+        }
+    | "return" expression ";"
         {
             $$ = ctx.syntTree->newNode(STNode::ReturnStatement, $2,
                                   nullptr, nullptr, $2->getEval());

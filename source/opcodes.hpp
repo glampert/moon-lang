@@ -38,16 +38,34 @@ enum class OpCode : std::uint8_t
     // Pops 1 value from the VM stack.
     JmpIfFalse,
 
+    // Jumps to the end of a function taking with it the return value, if any.
+    JmpReturn,
+
     // Call a script function.
     Call,
 
-    // Call external C/C++ function.
-//    CallNative, probably won't need, can do with just Call
+    // allocate & call constructor, pushes result into the stack
+    NewObj,
 
-// new universal instructions:
+    // creates a new typed Variant, pushes into the stack
+    // assumes the previous load is the argument count, e.g.:
+    // 0=uninitialized var; 1=pops one value for the initializer
+    NewVar,
 
-    Load,
-    Store,
+    // FuncStart has the name of the function as its operand
+    FuncStart,
+    FuncEnd,
+
+    // operand is the name of the iterator
+    ForLoopPrep,
+    ForLoopTest,
+    ForLoopStep,
+
+    ArraySubscript, // pops the array ref and subscript from the stack[array_ref, sub]
+                    // pushes the resulting value into the stack
+
+    Load,  // push operand into stack
+    Store, // store stack top into operand and pop
 
     CmpNotEqual,
     CmpEqual,
@@ -75,28 +93,6 @@ enum class OpCode : std::uint8_t
     Negate,
     Plus,
 
-    /*
-    //FIXME REMOVE; THE FOLLOWING INSTRUCTIONS ARE DEPRECATED
-    //
-    // Integer instructions and arithmetics:
-    IntNew,   // let int a = ... / let a = <int expr> ...
-    IntLoad,  // move from memory to VM stack (pushes 1 value)
-    IntStore, // a =  b write back from stack to memory (pops 1 value)
-
-    IntCmpNotEq,        // a != b (pops 2, pushes the result)
-    IntCmpEq,           // a == b (pops 2, pushes the result)
-    IntCmpGreaterEqual, // a >= b (pops 2, pushes the result)
-    IntCmpGreater,      // a >  b (pops 2, pushes the result)
-    IntCmpLessEqual,    // a <= b (pops 2, pushes the result)
-    IntCmpLess,         // a <  b (pops 2, pushes the result)
-
-    IntSub, // a -  b (pops 2, pushes the result)
-    IntAdd, // a +  b (pops 2, pushes the result)
-    IntMod, // a %  b (pops 2, pushes the result)
-    IntDiv, // a /  b (pops 2, pushes the result)
-    IntMul, // a *  b (pops 2, pushes the result)
-    */
-
     // Number of op-codes. Internal use.
     Count
 };
@@ -106,17 +102,17 @@ enum class OpCode : std::uint8_t
 // must also fit in a byte. Hence the name "bytecode" sometimes used.
 static_assert(unsigned(OpCode::Count) <= 255, "Too many opcodes! Value must fit in a byte!");
 
-inline bool isJumpInstruction(const OpCode op) noexcept
-{
-    return op == OpCode::Jmp || op == OpCode::JmpIfTrue || op == OpCode::JmpIfFalse;
-}
-inline bool isCallInstruction(const OpCode op) noexcept
-{
-    return op == OpCode::Call;
-}
-
 // Return a printable string for debug dumping or disassembly.
 std::string toString(OpCode op);
+
+// Shorthand helper:
+inline bool isJumpInstruction(const OpCode op) noexcept
+{
+    return (op == OpCode::Jmp        ||
+            op == OpCode::JmpIfFalse ||
+            op == OpCode::JmpIfTrue  ||
+            op == OpCode::JmpReturn);
+}
 
 // ========================================================
 // VM instruction representation:

@@ -118,18 +118,18 @@ const Symbol * symbolFromEval(const SymbolTable & symTable, const SyntaxTreeNode
     // These are built-ins always present in the symbol table. Check symbol_table.cpp.
     switch (eval)
     {
-    case SyntaxTreeNode::Eval::Undefined : return symTable.findSymbol("undefined");
-    case SyntaxTreeNode::Eval::Void      : return symTable.findSymbol("void");
-    case SyntaxTreeNode::Eval::VarArgs   : return symTable.findSymbol("varargs");
-    case SyntaxTreeNode::Eval::Int       : return symTable.findSymbol("int");
-    case SyntaxTreeNode::Eval::Long      : return symTable.findSymbol("long");
-    case SyntaxTreeNode::Eval::Float     : return symTable.findSymbol("float");
-    case SyntaxTreeNode::Eval::Bool      : return symTable.findSymbol("bool");
-    case SyntaxTreeNode::Eval::String    : return symTable.findSymbol("string");
-    case SyntaxTreeNode::Eval::Array     : return symTable.findSymbol("array");
-    case SyntaxTreeNode::Eval::Range     : return symTable.findSymbol("range");
-    case SyntaxTreeNode::Eval::Any       : return symTable.findSymbol("any");
-    default                              : return nullptr;
+    case SyntaxTreeNode::Eval::Void    : return symTable.findSymbol("void");
+    case SyntaxTreeNode::Eval::VarArgs : return symTable.findSymbol("varargs");
+    case SyntaxTreeNode::Eval::Int     : return symTable.findSymbol("int");
+    case SyntaxTreeNode::Eval::Long    : return symTable.findSymbol("long");
+    case SyntaxTreeNode::Eval::Float   : return symTable.findSymbol("float");
+    case SyntaxTreeNode::Eval::Bool    : return symTable.findSymbol("bool");
+    case SyntaxTreeNode::Eval::String  : return symTable.findSymbol("string");
+    case SyntaxTreeNode::Eval::Array   : return symTable.findSymbol("array");
+    case SyntaxTreeNode::Eval::Range   : return symTable.findSymbol("range");
+    case SyntaxTreeNode::Eval::Any     : return symTable.findSymbol("any");
+    case SyntaxTreeNode::Eval::UDT     : return symTable.findSymbol("object");
+    default                            : return symTable.findSymbol("undefined");
     } // switch (eval)
 }
 

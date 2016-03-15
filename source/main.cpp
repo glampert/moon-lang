@@ -66,37 +66,29 @@ int main(int argc, const char * argv[])
         std::string srcFile = "test.ml";
         std::string currText;
 
-        SymbolTable symTable;
-        SyntaxTree  syntTree;
-
-        Lexer  lexer{ parseCtx, std::cin };
-        Parser parser{ parseCtx };
+        VM       vm;
+        Compiler compiler;
+        Lexer    lexer  { parseCtx, std::cin };
+        Parser   parser { parseCtx };
 
         parseCtx.yylval   = nullptr;
         parseCtx.lexer    = &lexer;
         parseCtx.parser   = &parser;
-        parseCtx.symTable = &symTable;
-        parseCtx.syntTree = &syntTree;
+        parseCtx.symTable = &compiler.symTable;
+        parseCtx.syntTree = &compiler.syntTree;
         parseCtx.currText = &currText;
         parseCtx.srcFile  = &srcFile;
 
         std::cout << (parser.parse() == 0 ? "\n-- FINISHED OK --" : "\n-- FINISHED WITH PARSE ERROR --") << "\n\n";
+        std::cout << compiler.symTable << "\n";
+        std::cout << compiler.syntTree << "\n";
 
-        std::cout << symTable << "\n";
-        std::cout << syntTree << "\n";
-
-        VM::DataVector progData;
-        VM::CodeVector progCode;
-
-        Compiler compiler{ symTable, syntTree };
-        compiler.compile(progData, progCode);
+        compiler.compile(vm);
         std::cout << compiler << "\n";
+        std::cout << vm.code << "\n";
+        std::cout << vm.data << "\n";
 
-        std::cout << progCode << "\n";
-        std::cout << progData << "\n";
-
-        VM vm{ std::move(progData), std::move(progCode) };
-        vm.executeProgram();
+        vm.execute();
         std::cout << vm << "\n";
     }
     catch (const std::exception & e)
