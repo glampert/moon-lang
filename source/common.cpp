@@ -13,6 +13,36 @@ namespace moon
 {
 
 // ========================================================
+// BaseException class:
+// ========================================================
+
+BaseException::BaseException(const char * message)
+{
+    if (message == nullptr)
+    {
+        message = "Unknown error";
+    }
+    std::snprintf(messageBuffer, arrayLength(messageBuffer), "Moon exception -> %s", message);
+    messageBuffer[arrayLength(messageBuffer) - 1] = '\0'; // Ensure null terminated.
+}
+
+BaseException::BaseException(const std::string & message)
+    : BaseException(message.c_str())
+{
+}
+
+const char * BaseException::what() const noexcept
+{
+    return messageBuffer;
+}
+
+BaseException::~BaseException()
+{
+    // Anchors the virtual table to this file.
+    // Do not remove.
+}
+
+// ========================================================
 // Miscellaneous utilities:
 // ========================================================
 

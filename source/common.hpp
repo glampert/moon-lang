@@ -15,7 +15,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
-#include <stdexcept>
+#include <exception>
 #include <unordered_map>
 
 #include "output.hpp"
@@ -119,33 +119,28 @@ int yylex(SemanticVal * yylval, ParseContext & ctx);
 // Exceptions thrown by the compiler and runtime:
 // ========================================================
 
-class CompilerException final
-    : public std::runtime_error
+class BaseException
+    : public std::exception
 {
 public:
-    using std::runtime_error::runtime_error;
+
+    explicit BaseException(const char * message);
+    explicit BaseException(const std::string & message);
+
+    virtual const char * what() const noexcept override;
+    virtual ~BaseException();
+
+private:
+
+    // Sized buffer to avoid allocating extra memory with strings.
+    static constexpr int MaxMessageLen = 1024;
+    char messageBuffer[MaxMessageLen];
 };
 
-class LexerException final
-    : public std::runtime_error
-{
-public:
-    using std::runtime_error::runtime_error;
-};
-
-class ParserException final
-    : public std::runtime_error
-{
-public:
-    using std::runtime_error::runtime_error;
-};
-
-class RuntimeException final
-    : public std::runtime_error
-{
-public:
-    using std::runtime_error::runtime_error;
-};
+struct LexerException    final : public BaseException { using BaseException::BaseException; };
+struct ParserException   final : public BaseException { using BaseException::BaseException; };
+struct CompilerException final : public BaseException { using BaseException::BaseException; };
+struct RuntimeException  final : public BaseException { using BaseException::BaseException; };
 
 // ========================================================
 // Miscellaneous utilities:

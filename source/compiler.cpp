@@ -477,20 +477,22 @@ void countArgsRecursive(const SyntaxTreeNode * root, int & argCountOut, Compiler
     ++argCountOut;
     compiler.markVisited(root);
 
-    if (!compiler.nodeVisited(root->getChild(0)))
+    if (!compiler.nodeWasVisited(root->getChild(0)))
     {
         countArgsRecursive(root->getChild(0), argCountOut, compiler);
     }
-    if (!compiler.nodeVisited(root->getChild(1)))
+    if (!compiler.nodeWasVisited(root->getChild(1)))
     {
         countArgsRecursive(root->getChild(1), argCountOut, compiler);
     }
 }
 
+// This function is used to resolve parameter chains for function calls,
+// constructor calls and array literals. The OP template parameter is the
+// instruction ending the list (i.e.: a Call, NewObj, NewArray, etc).
 template<OpCode OP>
-IntermediateInstr * emitCallChain(Compiler & compiler, const SyntaxTreeNode * root)
+IntermediateInstr * emitParamChain(Compiler & compiler, const SyntaxTreeNode * root)
 {
-    expectSymbol(root);
     auto operation = compiler.newInstruction(OP, root->getSymbol());
 
     // We have to keep track of the visited nodes to be able to properly
@@ -549,14 +551,14 @@ IntermediateInstr * emitFunctionDecl(Compiler & compiler, const SyntaxTreeNode *
 
 IntermediateInstr * emitReturn(Compiler & compiler, const SyntaxTreeNode * root)
 {
-    MOON_ASSERT(compiler.getFuncEndAnchor() != nullptr);
+    MOON_ASSERT(compiler.getReturnAnchor() != nullptr);
 
     // Return simply resolves its child expression if it has one.
     auto retExpr = ((root->getChild(0) != nullptr) ?
                     traverseTreeRecursive(compiler, root->getChild(0)) :
                     compiler.newInstruction(OpCode::NoOp));
 
-    auto retJump = compiler.newInstruction(OpCode::JmpReturn, compiler.getFuncEndAnchor());
+    auto retJump = compiler.newInstruction(OpCode::JmpReturn, compiler.getReturnAnchor());
     return linkInstr(retExpr, retJump);
 }
 
@@ -602,6 +604,63 @@ IntermediateInstr * emitNewVar(Compiler & compiler, const SyntaxTreeNode * root)
     }
 }
 
+IntermediateInstr * emitNewRange(Compiler & compiler, const SyntaxTreeNode * root)
+{
+    expectChildAtIndex(root, 1); // range start
+    expectChildAtIndex(root, 2); // range end
+
+    auto startExpr  = traverseTreeRecursive(compiler, root->getChild(1));
+    auto endExpr    = traverseTreeRecursive(compiler, root->getChild(2));
+    auto newRangeOp = compiler.newInstruction(OpCode::NewRange);
+
+    return linkInstr(linkInstr(startExpr, endExpr), newRangeOp);
+}
+
+IntermediateInstr * emitMatchPrep(Compiler & compiler, const SyntaxTreeNode * root)
+{
+    expectChildAtIndex(root, 0); // The param to match with
+
+    auto matchParam  = traverseTreeRecursive(compiler, root->getChild(0));
+    auto matchPrepOp = compiler.newInstruction(OpCode::MatchPrep);
+    auto matchEndOp  = compiler.newInstruction(OpCode::NoOp);
+
+    // Reusing the return anchor to mark the end of the match switch.
+    compiler.setReturnAnchor(matchEndOp);
+    auto matchBody = root->getChild(1) ? traverseTreeRecursive(compiler, root->getChild(1)) : nullptr;
+    compiler.clearReturnAnchor();
+
+    return linkInstr(linkInstr(linkInstr(matchParam, matchPrepOp), matchBody), matchEndOp);
+}
+
+IntermediateInstr * emitMatchTest(Compiler & compiler, const SyntaxTreeNode * root)
+{
+    MOON_ASSERT(compiler.getReturnAnchor() != nullptr);
+    expectChildAtIndex(root, 0); // The expression to match against
+
+    auto caseExpr     = traverseTreeRecursive(compiler, root->getChild(0));
+    auto caseBody     = root->getChild(1) ? traverseTreeRecursive(compiler, root->getChild(1)) : nullptr;
+    auto caseEnd      = compiler.newInstruction(OpCode::NoOp);
+    auto caseEndJump  = compiler.newInstruction(OpCode::JmpIfFalse, caseEnd);
+    auto matchEndJump = compiler.newInstruction(OpCode::Jmp, compiler.getReturnAnchor());
+    auto matchTestOp  = compiler.newInstruction(OpCode::MatchTest);
+
+    auto block0 = linkInstr(linkInstr(caseExpr, matchTestOp), caseEndJump);
+    auto block1 = linkInstr(linkInstr(block0, caseBody), matchEndJump);
+    auto siblingCase = root->getChild(2) ? traverseTreeRecursive(compiler, root->getChild(2)) : nullptr;
+
+    return linkInstr(linkInstr(block1, caseEnd), siblingCase);
+}
+
+IntermediateInstr * emitMatchDefault(Compiler & compiler, const SyntaxTreeNode * root)
+{
+    if (root->getChild(1))
+    {
+        // The default clause may be empty.
+        return traverseTreeRecursive(compiler, root->getChild(1));
+    }
+    return compiler.newInstruction(OpCode::NoOp);
+}
+
 // ----------------------------------------------------------------------------
 // emitInstrCallbacks[]:
 //
@@ -620,9 +679,9 @@ static const EmitInstrForNodeCB emitInstrCallbacks[]
     &emitLoop,                              // LoopStatement
     &emitWhileLoop,                         // WhileStatement
     &emitForLoop,                           // ForStatement
-    &emitNOOP,                              // MatchStatement
-    &emitNOOP,                              // MatchCaseStatement
-    &emitNOOP,                              // MatchDefaultStatement
+    &emitMatchPrep,                         // MatchStatement
+    &emitMatchTest,                         // MatchCaseStatement
+    &emitMatchDefault,                      // MatchDefaultStatement
     &emitFunctionDecl,                      // FuncDeclStatement
     &emitNOOP,                              // EnumDeclStatement
     &emitNOOP,                              // StructDeclStatement
@@ -631,14 +690,14 @@ static const EmitInstrForNodeCB emitInstrCallbacks[]
     &emitReturn,                            // ReturnStatement
     &emitBreak,                             // BreakStatement
     &emitContinue,                          // ContinueStatement
-    &emitNOOP,                              // ExprRange
-    &emitNOOP,                              // ExprArrayLiteral
+    &emitNewRange,                          // ExprRange
+    &emitParamChain<OpCode::NewArray>,      // ExprArrayLiteral
     &emitArraySubscript,                    // ExprArraySubscript
-    &emitCallChain<OpCode::Call>,           // ExprFuncCall
+    &emitParamChain<OpCode::Call>,          // ExprFuncCall
     &emitLoad,                              // ExprNameIdent
     &emitNOOP,                              // ExprTypeIdent
     &emitLoad,                              // ExprLiteralConst
-    &emitCallChain<OpCode::NewObj>,         // ExprObjectConstructor
+    &emitParamChain<OpCode::NewObj>,        // ExprObjectConstructor
     &emitStore,                             // ExprAssign
     &emitBinaryOp<OpCode::CmpNotEqual>,     // ExprCmpNotEqual
     &emitBinaryOp<OpCode::CmpEqual>,        // ExprCmpEqual
@@ -739,7 +798,7 @@ void Compiler::markVisited(const SyntaxTreeNode * node)
     visitedNodes.push_back(node);
 }
 
-bool Compiler::nodeVisited(const SyntaxTreeNode * node) const
+bool Compiler::nodeWasVisited(const SyntaxTreeNode * node) const
 {
     if (node == nullptr)
     {

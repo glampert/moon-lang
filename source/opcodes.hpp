@@ -44,13 +44,22 @@ enum class OpCode : std::uint8_t
     // Call a script function.
     Call,
 
-    // allocate & call constructor, pushes result into the stack
-    NewObj,
-
     // creates a new typed Variant, pushes into the stack
     // assumes the previous load is the argument count, e.g.:
     // 0=uninitialized var; 1=pops one value for the initializer
     NewVar,
+
+    // allocate new range object from the previous 2 values in the stack.
+    // Pushes the result.
+    NewRange,
+
+    // Allocates a new array from previous stack values.
+    // Value immediately before is the number of elements in the array.
+    // Pushes the result.
+    NewArray,
+
+    // allocate & call constructor, pushes result into the stack
+    NewObj,
 
     // FuncStart has the name of the function as its operand
     FuncStart,
@@ -60,6 +69,9 @@ enum class OpCode : std::uint8_t
     ForLoopPrep,
     ForLoopTest,
     ForLoopStep,
+
+    MatchPrep, // pops one value
+    MatchTest, // pops one value, pushes the result of the test
 
     ArraySubscript, // pops the array ref and subscript from the stack[array_ref, sub]
                     // pushes the resulting value into the stack

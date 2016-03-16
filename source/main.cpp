@@ -34,7 +34,8 @@ NOTES ON THE LANGUAGE SYNTAX SIDE:
 
 - Define some construct for debug only code, e.g. some `debug` keyword, like in D.
 
-- Built-in assert function.
+- Built-in assert() function.
+- Built-in panic() function.
 
 - Concept of modules/namespaces?
 
@@ -58,6 +59,23 @@ int main(int argc, const char * argv[])
     (void)argc;
     (void)argv;
     using namespace moon;
+
+    /* Final interface should look something like:
+    try
+    {
+        moon::VM       vm;              // Executes the bytecode generate by a Compiler.
+        moon::Compiler compiler;        // Parses scripts & generates VM bytecode.
+
+        compiler.loadScript("test.ml"); // Parsing & semantic checks.
+        compiler.compile(vm);           // Bytecode generation.
+
+        vm.execute();                   // Execute the whole program.
+    }
+    catch (const moon::BaseException & e)
+    {
+        // Compiler or runtime errors (including script panic())
+    }
+    */
 
     try
     {
@@ -91,8 +109,8 @@ int main(int argc, const char * argv[])
         vm.execute();
         std::cout << vm << "\n";
     }
-    catch (const std::exception & e)
+    catch (const moon::BaseException & e)
     {
-        std::cout << "EXCEPTION: " << e.what() << std::endl;
+        std::cout << e.what() << std::endl;
     }
 }

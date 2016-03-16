@@ -53,7 +53,7 @@ public:
 
     const IntermediateInstr * getLoopStartAnchor() const noexcept { return lastLoopStartLabel; }
     const IntermediateInstr * getLoopEndAnchor()   const noexcept { return lastLoopEndLabel;   }
-    const IntermediateInstr * getFuncEndAnchor()   const noexcept { return lastFuncEndLabel;   }
+    const IntermediateInstr * getReturnAnchor()    const noexcept { return lastFuncEndLabel;   }
 
     void setLoopAnchors(const IntermediateInstr * startLabel, const IntermediateInstr * endLabel) noexcept;
     void clearLoopAnchors() noexcept;
@@ -62,7 +62,7 @@ public:
     void clearReturnAnchor() noexcept;
 
     void markVisited(const SyntaxTreeNode * node);
-    bool nodeVisited(const SyntaxTreeNode * node) const;
+    bool nodeWasVisited(const SyntaxTreeNode * node) const;
     void clearVisited() noexcept;
 
     //

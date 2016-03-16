@@ -129,7 +129,7 @@ void Lexer::lexOnMultiLineComment()
 }
 
 // ========================================================
-// moon::Lexer Symbol/token handlers:
+// moon::Lexer special symbol/token handlers:
 // ========================================================
 
 #define LEX_DEFINE_SYMBOL_HANDLER(handlerName, findMethod, addMethod) \

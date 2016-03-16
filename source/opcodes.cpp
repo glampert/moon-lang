@@ -25,8 +25,10 @@ std::string toString(const OpCode op)
         "JMP_RETURN",
         "CALL",
 
-        "NEW_OBJ",
         "NEW_VAR",
+        "NEW_RANGE",
+        "NEW_ARRAY",
+        "NEW_OBJ",
 
         "FUNC_START",
         "FUNC_END",
@@ -34,6 +36,9 @@ std::string toString(const OpCode op)
         "FOR_LOOP_PREP",
         "FOR_LOOP_TEST",
         "FOR_LOOP_STEP",
+
+        "MATCH_PREP",
+        "MATCH_TEST",
 
         "ARRAY_SUBSCRIPT",
 

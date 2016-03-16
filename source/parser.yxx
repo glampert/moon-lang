@@ -232,7 +232,7 @@ static moon::SyntaxTreeNode * newCompareNode(moon::ParseContext & ctx, const STN
 %type <asSTNode> enum_declaration enum_constant enum_constant_list
 %type <asSTNode> struct_declaration struct_member_list
 %type <asSTNode> func_call_expression func_declaration func_parameter_list_declaration parameter_list return_statement
-%type <asSTNode> match_statement match_case match_case_list
+%type <asSTNode> match_statement match_case match_case_list match_param
 %type <asSTNode> range_expression range_param range_or_array_or_ident_or_call
 %type <asSTNode> let_var_declaration typed_var_declaration
 %type <asSTNode> type_alias_declaration
@@ -599,10 +599,18 @@ for_statement
         }
     ;
 
+/* Things we allow on a 'match X with' statement: */
+match_param
+    : literal_const_expression
+    | identifier_expression
+    | array_subscript_expression
+    | func_call_expression
+    ;
+
 match_statement
-    : "match" IDENTIFIER "with" match_case_list end_statement
+    : "match" match_param "with" match_case_list end_statement
         {
-            $$ = ctx.syntTree->newNodeWithSymbol(STNode::MatchStatement, $2, $4);
+            $$ = ctx.syntTree->newNode(STNode::MatchStatement, $2, $4);
         }
     ;
 
@@ -617,7 +625,7 @@ match_case
         }
     | "default" "->" optional_statement_list end_statement
         {
-            $$ = ctx.syntTree->newNode(STNode::MatchDefaultStatement, $3);
+            $$ = ctx.syntTree->newNode(STNode::MatchDefaultStatement, nullptr, $3);
         }
     ;
 
