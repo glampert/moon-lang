@@ -68,14 +68,100 @@ std::string trimTrailingFloatZeros(std::string trimmed)
     return trimmed;
 }
 
-std::size_t hashCString(const char * cstr) noexcept
+std::string unescapeString(const char * escaped)
+{
+    MOON_ASSERT(escaped != nullptr);
+
+    std::string unescaped;
+    for (const char * ptr = escaped; *ptr != '\0'; ++ptr)
+    {
+        switch (*ptr)
+        {
+        case '\\' :
+            unescaped.push_back('\\');
+            unescaped.push_back('\\');
+            break;
+        case '\'' :
+            unescaped.push_back('\'');
+            break;
+        case '\"' :
+            unescaped.push_back('"');
+            break;
+        case '\n' :
+            unescaped.push_back('\\');
+            unescaped.push_back('n');
+            break;
+        case '\r' :
+            unescaped.push_back('\\');
+            unescaped.push_back('r');
+            break;
+        case '\t' :
+            unescaped.push_back('\\');
+            unescaped.push_back('t');
+            break;
+        default :
+            unescaped.push_back(*ptr);
+            break;
+        } // switch (*ptr)
+    }
+    return unescaped;
+}
+
+std::string escapeString(const char * unescaped)
+{
+    MOON_ASSERT(unescaped != nullptr);
+
+    std::string escaped;
+    for (const char * ptr = unescaped; *ptr != '\0'; ++ptr)
+    {
+        const char c = *ptr;
+        if (c == '\\')
+        {
+            const char next = *(ptr + 1); // Peek the next one
+            switch (next)
+            {
+            case '0' :
+                escaped.push_back('\0');
+                ++ptr; break;
+            case '\\' :
+                escaped.push_back('\\');
+                ++ptr; break;
+            case '\'' :
+                escaped.push_back('\'');
+                ++ptr; break;
+            case '"' :
+                escaped.push_back('"');
+                ++ptr; break;
+            case 'n' :
+                escaped.push_back('\n');
+                ++ptr; break;
+            case 'r' :
+                escaped.push_back('\r');
+                ++ptr; break;
+            case 't' :
+                escaped.push_back('\t');
+                ++ptr; break;
+            default :
+                escaped.push_back(c);
+                break;
+            } // switch (next)
+        }
+        else
+        {
+            escaped.push_back(c);
+        }
+    }
+    return escaped;
+}
+
+std::uint32_t hashCString(const char * cstr) noexcept
 {
     MOON_ASSERT(cstr != nullptr);
 
     // Simple and fast One-at-a-Time (OAT) hash algorithm:
     //  http://en.wikipedia.org/wiki/Jenkins_hash_function
     //
-    std::size_t h = 0;
+    std::uint32_t h = 0;
     while (*cstr != '\0')
     {
         h += *cstr++;
@@ -93,6 +179,85 @@ const char * getEmptyCString() noexcept
 {
     static const char emptyStr[]{ '\0', '\0', '\0', '\0' };
     return emptyStr;
+}
+
+// ========================================================
+// RcString => Reference counted string types:
+// ========================================================
+
+//
+// ConstRcString:
+//
+ConstRcString * newConstRcString(const char * cstr)
+{
+    MOON_ASSERT(cstr != nullptr);
+    const std::uint32_t strLen = static_cast<std::uint32_t>(std::strlen(cstr));
+
+    const auto strHash    = hashCString(cstr);
+    const auto memBytes   = sizeof(ConstRcString) + strLen + 1;
+    std::uint8_t * memPtr = static_cast<std::uint8_t *>(std::malloc(memBytes));
+
+    ConstRcString * rstr = reinterpret_cast<ConstRcString *>(memPtr);
+    memPtr += sizeof(ConstRcString);
+
+    char * strClone = reinterpret_cast<char *>(memPtr);
+    std::memcpy(strClone, cstr, strLen);
+    strClone[strLen] = '\0';
+
+    return construct(rstr, { strClone, strLen, strHash, 1 });
+}
+
+void addRcStringRef(ConstRcString * rstr)
+{
+    MOON_ASSERT(rstr != nullptr);
+    rstr->refCount++;
+}
+
+void releaseRcString(ConstRcString * rstr)
+{
+    MOON_ASSERT(rstr != nullptr);
+    rstr->refCount--;
+    if (rstr->refCount == 0)
+    {
+        std::free(rstr);
+    }
+}
+
+//
+// MutableRcString:
+//
+MutableRcString * newMutableRcString(const char * cstr)
+{
+    MOON_ASSERT(cstr != nullptr);
+    const std::uint32_t strLen = static_cast<std::uint32_t>(std::strlen(cstr));
+
+    const auto memBytes = sizeof(MutableRcString) + strLen + 1;
+    std::uint8_t * memPtr = static_cast<std::uint8_t *>(std::malloc(memBytes));
+
+    MutableRcString * rstr = reinterpret_cast<MutableRcString *>(memPtr);
+    memPtr += sizeof(MutableRcString);
+
+    char * strClone = reinterpret_cast<char *>(memPtr);
+    std::memcpy(strClone, cstr, strLen);
+    strClone[strLen] = '\0';
+
+    return construct(rstr, { strClone, strLen, 1 });
+}
+
+void addRcStringRef(MutableRcString * rstr)
+{
+    MOON_ASSERT(rstr != nullptr);
+    rstr->refCount++;
+}
+
+void releaseRcString(MutableRcString * rstr)
+{
+    MOON_ASSERT(rstr != nullptr);
+    rstr->refCount--;
+    if (rstr->refCount == 0)
+    {
+        std::free(rstr);
+    }
 }
 
 } // namespace moon {}

@@ -166,7 +166,7 @@ void SyntaxTreeNode::print(const int level, const int childIndex, std::ostream &
     os << prefix << toString(nodeType) << "(" << level << ":" << childIndex << ", ";
     if (symbol)
     {
-        os << "'" << color::magenta() << toString(*symbol) << color::restore() << "', ";
+        os << "'" << color::magenta() << unescapeString(toString(*symbol).c_str()) << color::restore() << "', ";
     }
     os << toString(evalType) << ")\n";
 

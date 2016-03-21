@@ -19,47 +19,50 @@ namespace moon
 
 Variant Variant::fromSymbol(const Symbol & sym)
 {
-    Variant v;
+    Variant var;
+
     switch (sym.type)
     {
     case Symbol::Type::IntLiteral :
-        v.value.asInteger = sym.value.asInteger;
-        v.type = Variant::Type::Integer;
+        var.value.asInteger = sym.value.asInteger;
+        var.type = Variant::Type::Integer;
         break;
 
     case Symbol::Type::FloatLiteral :
-        v.value.asFloat = sym.value.asFloat;
-        v.type = Variant::Type::Float;
+        var.value.asFloat = sym.value.asFloat;
+        var.type = Variant::Type::Float;
         break;
 
     case Symbol::Type::BoolLiteral :
-        v.value.asInteger = sym.value.asBoolean;
-        v.type = Variant::Type::Integer;
+        var.value.asInteger = sym.value.asBoolean;
+        var.type = Variant::Type::Integer;
         break;
 
     case Symbol::Type::Identifier :
     case Symbol::Type::StrLiteral :
-        //FIXME this is temporary. We must copy the string because the symbol might be gone!
-        v.value.asStringPtr = (char *)sym.value.asStringPtr;
-        v.type = Variant::Type::String;
+        //FIXME this is temporary. We must copy the string because the symbol might be gone! (or use RcString)
+        var.value.asStringPtr = sym.value.asStringPtr;
+        var.type = Variant::Type::String;
         break;
 
-    default : // Will return a null variant.
-        break;
-    }
-    return v;
+    default :
+        MOON_RUNTIME_EXCEPTION("symbol doesn't map directly to a variant!");
+    } // switch (sym.type)
+
+    return var;
 }
 
-std::string toString(const Variant v)
+std::string toString(const Variant var)
 {
-    switch (v.type)
+    switch (var.type)
     {
-    case Variant::Type::Integer : return toString(v.value.asInteger);
-    case Variant::Type::Float   : return toString(v.value.asFloat);
-    case Variant::Type::String  : return toString(v.value.asStringPtr);
-    case Variant::Type::Null    : return "null";
-    default                     : return "???";
-    } // switch (v.type)
+    case Variant::Type::Integer  : return toString(var.value.asInteger);
+    case Variant::Type::Float    : return toString(var.value.asFloat);
+    case Variant::Type::String   : return toString(var.value.asStringPtr);
+    case Variant::Type::Function : return toString(var.value.asFunctionPtr ? var.value.asFunctionPtr->name : "null");
+    case Variant::Type::Null     : return "null";
+    default                      : return "???";
+    } // switch (var.type)
 }
 
 std::string toString(const Variant::Type type)
@@ -69,7 +72,8 @@ std::string toString(const Variant::Type type)
         color::red()    + std::string("null")   + color::restore(),
         color::blue()   + std::string("int")    + color::restore(),
         color::yellow() + std::string("float")  + color::restore(),
-        color::white()  + std::string("string") + color::restore()
+        color::white()  + std::string("string") + color::restore(),
+        color::white()  + std::string("func")   + color::restore()
     };
     static_assert(arrayLength(typeNames) == unsigned(Variant::Type::Count),
                   "Keep this array in sync with the enum declaration!");

@@ -8,71 +8,183 @@
 // ================================================================================================
 
 #include "vm.hpp"
-
-#include <functional> // std::plus, std::minus, std::divides, etc...
-#include <iomanip>    // For std::setw & friends
+#include <iomanip> // For std::setw & friends
 
 namespace moon
 {
 
 // ========================================================
-// FIXME test/temp stuff
+// Opcode handlers:
+// ========================================================
 
-template<template<typename> class OP>
-void binaryOp(Stack & stack)
+namespace
 {
-    OP<LangLong> op;
 
-    auto operandB = stack.pop();
-    MOON_ASSERT(operandB.type == Variant::Type::Integer);
+using OpCodeHandlerCB = void (*)(VM & vm, std::uint32_t operandIndex);
 
-    auto operandA = stack.pop();
-    MOON_ASSERT(operandA.type == Variant::Type::Integer);
-
-    Variant result;
-    result.type = Variant::Type::Integer;
-    result.value.asInteger = op(operandA.value.asInteger, operandB.value.asInteger);
-
-    stack.push(result);
+void opNOOP(VM &, const std::uint32_t)
+{
+    // Surprisingly, a no-op does nothing :P
 }
 
-void Native_Print(VM & vm, Stack::Slice args)
+void opJump(VM & vm, const std::uint32_t operandIndex)
+{
+    vm.setProgramCounter(operandIndex);
+}
+
+void opJumpIfTrue(VM & vm, const std::uint32_t operandIndex)
+{
+    if (!vm.stack.pop().isZero())
+    {
+        vm.setProgramCounter(operandIndex);
+    }
+}
+
+void opJumpIfFalse(VM & vm, const std::uint32_t operandIndex)
+{
+    if (vm.stack.pop().isZero())
+    {
+        vm.setProgramCounter(operandIndex);
+    }
+}
+
+void opCall(VM & vm, const std::uint32_t operandIndex)
+{
+    const Variant funcVar  = vm.data[operandIndex];
+    const Variant argCount = vm.stack.pop();
+
+    if (funcVar.type != Variant::Type::Function)
+    {
+        MOON_RUNTIME_EXCEPTION("expected a function object!");
+    }
+    if (funcVar.value.asFunctionPtr == nullptr)
+    {
+        MOON_RUNTIME_EXCEPTION("attempting to call a null function object!");
+    }
+    if (argCount.type != Variant::Type::Integer)
+    {
+        MOON_RUNTIME_EXCEPTION("function arg count sentry should be an integer!");
+    }
+
+    const auto argc = argCount.value.asInteger;
+    const auto argv = vm.stack.slice(vm.stack.getCurrSize() - argc, argc);
+    vm.stack.popN(argc);
+
+    (*funcVar.value.asFunctionPtr)(vm, argv);
+}
+
+void opLoad(VM & vm, const std::uint32_t operandIndex)
+{
+    // Push integer operand to the VM stack.
+    vm.stack.push(vm.data[operandIndex]);
+}
+
+void opStore(VM & vm, const std::uint32_t operandIndex)
+{
+    // Stores the current stack top to the data index of
+    // this instruction, then pop the VM stack.
+    vm.data[operandIndex] = vm.stack.pop();
+}
+
+template<OpCode OP>
+void opBinary(VM & vm, const std::uint32_t)
+{
+    const auto operandB = vm.stack.pop();
+    const auto operandA = vm.stack.pop();
+    vm.stack.push(performBinaryOp(OP, operandA, operandB));
+}
+
+template<OpCode OP>
+void opBinaryAssign(VM & vm, const std::uint32_t)
 {
     (void)vm;
-
-    std::string str;
-    for (auto var = args.first(); var != nullptr; var = args.next())
-    {
-        str += " ";
-        str += toString(*var);
-    }
-    std::cout << "Native_Print: " << str << std::endl;
+//    const auto operandB = vm.stack.pop();
+//    const auto operandA = vm.stack.pop();
+//    const auto result   = performBinaryOp(OP, operandA, operandB);
+//    TODO where to write the result?
 }
+
+// ----------------------------------------------------------------------------
+// opHandlerCallbacks[]:
+//
+// The handlers for each instruction opcode.
+// These are called by the VM for each instruction
+// in the program by VM::executeSingleInstruction().
+// ----------------------------------------------------------------------------
+static const OpCodeHandlerCB opHandlerCallbacks[]
+{
+    &opNOOP,                            // NoOp
+    &opNOOP,                            // ModuleStart
+    &opJump,                            // Jmp
+    &opJumpIfTrue,                      // JmpIfTrue
+    &opJumpIfFalse,                     // JmpIfFalse
+    &opNOOP,                            // JmpReturn
+    &opCall,                            // Call
+    &opNOOP,                            // NewVar
+    &opNOOP,                            // NewRange
+    &opNOOP,                            // NewArray
+    &opNOOP,                            // NewObj
+    &opNOOP,                            // FuncStart
+    &opNOOP,                            // FuncEnd
+    &opNOOP,                            // ForLoopPrep
+    &opNOOP,                            // ForLoopTest
+    &opNOOP,                            // ForLoopStep
+    &opNOOP,                            // MatchPrep
+    &opNOOP,                            // MatchTest
+    &opNOOP,                            // ArraySubscript
+    &opLoad,                            // Load
+    &opStore,                           // Store
+    &opBinary<OpCode::CmpNotEqual>,     // CmpNotEqual
+    &opBinary<OpCode::CmpEqual>,        // CmpEqual
+    &opBinary<OpCode::CmpGreaterEqual>, // CmpGreaterEqual
+    &opBinary<OpCode::CmpGreater>,      // CmpGreater
+    &opBinary<OpCode::CmpLessEqual>,    // CmpLessEqual
+    &opBinary<OpCode::CmpLess>,         // CmpLess
+    &opBinary<OpCode::LogicOr>,         // LogicOr
+    &opBinary<OpCode::LogicAnd>,        // LogicAnd
+    &opBinary<OpCode::Sub>,             // Sub
+    &opBinary<OpCode::Add>,             // Add
+    &opBinary<OpCode::Mod>,             // Mod
+    &opBinary<OpCode::Div>,             // Div
+    &opBinary<OpCode::Mul>,             // Mul
+    &opBinaryAssign<OpCode::Sub>,       // SubAssign
+    &opBinaryAssign<OpCode::Add>,       // AddAssign
+    &opBinaryAssign<OpCode::Mod>,       // ModAssign
+    &opBinaryAssign<OpCode::Div>,       // DivAssign
+    &opBinaryAssign<OpCode::Mul>,       // MulAssign
+    &opNOOP,                            // LogicNot
+    &opNOOP,                            // Negate
+    &opNOOP                             // Plus
+};
+static_assert(arrayLength(opHandlerCallbacks) == unsigned(OpCode::Count),
+              "Keep this array in sync with the enum declaration!");
+
+} // namespace {}
 
 // ========================================================
 // VM class methods:
 // ========================================================
 
-VM::VM(const int stackSize)
+VM::VM(const bool loadBuiltIns, const int stackSize)
     : stack { stackSize }
     , pc    { 0 }
 {
-    //FIXME TEST
-    functions.addFunction("print", nullptr, 0, Function::TargetNative, &Native_Print);
+    if (loadBuiltIns)
+    {
+        registerNativeBuiltInFunctions(functions);
+    }
 }
 
 void VM::setProgramCounter(const int target) noexcept
 {
-    MOON_ASSERT(target < code.size());
-    pc = target - 1;
-    //
+    MOON_ASSERT(target >= 0 && target < code.size() && "Invalid instruction index!");
+
     // The -1 is necessary because the 'for' loop
-    // in () will still increment the pc after
+    // in execute() will still increment the pc after
     // executeSingleInstruction() returns.
-    //
     // This is arguably a hack. Perhaps it should
     // be implemented in a more clear way...
-    //
+    pc = target - 1;
 }
 
 int VM::getProgramCounter() const noexcept
@@ -97,112 +209,9 @@ void VM::execute()
 
 void VM::executeSingleInstruction(const OpCode op, const std::uint32_t operandIndex)
 {
-    //TODO
-    (void)op;
-    (void)operandIndex;
-#if 0
-    switch (op)
-    {
-    //
-    // Misc instructions / program control:
-    //
-    case OpCode::NoOp :
-    case OpCode::ModuleStart :
-        break;//TODO
-
-    //
-    // Jump instructions:
-    //
-    case OpCode::Jmp :
-        setProgramCounter(operandIndex);
-        break;
-
-    case OpCode::JmpIfTrue :
-        if (stack.pop().value.asInteger != 0)
-        {
-            setProgramCounter(operandIndex);
-        }
-        break;
-
-    case OpCode::JmpIfFalse :
-        if (stack.pop().value.asInteger == 0)
-        {
-            setProgramCounter(operandIndex);
-        }
-        break;
-
-    //
-    // Function call:
-    //
-    case OpCode::Call :
-    case OpCode::CallNative :
-        {
-            const auto funcName = data[operandIndex];
-            if (funcName.type != Variant::Type::String)
-            {
-                MOON_RUNTIME_EXCEPTION("function name not a string!");
-            }
-
-            auto func = functions.findFunction(funcName.value.asStringPtr);
-            if (func == nullptr)
-            {
-                MOON_RUNTIME_EXCEPTION("attempting to call undefined function: '" + toString(funcName) + "()'");
-            }
-
-            const auto argCount = stack.pop();
-            if (argCount.type != Variant::Type::Integer)
-            {
-                MOON_RUNTIME_EXCEPTION("function arg count sentry should be an integer!");
-            }
-
-            const auto n = argCount.value.asInteger;
-            (*func)(*this, stack.slice(stack.getCurrSize() - n, n));
-            stack.popN(n);
-        }
-        break;
-
-    //
-    // Integer instructions:
-    //
-    case OpCode::IntNew :
-        //TODO
-        break;
-
-    case OpCode::IntLoad :
-        // Push integer operand to the VM stack.
-        stack.push(data[operandIndex]);
-        break;
-
-    case OpCode::IntStore :
-        // Stores the current stack top to the data index of
-        // this instruction, then pop the VM stack.
-        data[operandIndex] = stack.pop();
-        break;
-
-    //
-    // Integer comparisons:
-    //
-    case OpCode::IntCmpNotEq        : intBinaryOp< std::not_equal_to  >(stack); break;
-    case OpCode::IntCmpEq           : intBinaryOp< std::equal_to      >(stack); break;
-    case OpCode::IntCmpGreaterEqual : intBinaryOp< std::greater_equal >(stack); break;
-    case OpCode::IntCmpGreater      : intBinaryOp< std::greater       >(stack); break;
-    case OpCode::IntCmpLessEqual    : intBinaryOp< std::less_equal    >(stack); break;
-    case OpCode::IntCmpLess         : intBinaryOp< std::less          >(stack); break;
-
-    //
-    // Integer arithmetics:
-    //
-    case OpCode::IntSub : intBinaryOp< std::minus      >(stack); break;
-    case OpCode::IntAdd : intBinaryOp< std::plus       >(stack); break;
-    case OpCode::IntMod : intBinaryOp< std::modulus    >(stack); break;
-    case OpCode::IntDiv : intBinaryOp< std::divides    >(stack); break; // TODO check for divide by zero! (maybe use an overloaded template!)
-    case OpCode::IntMul : intBinaryOp< std::multiplies >(stack); break;
-
-    default :
-        //TODO
-        break;
-    } // switch (op)
-#endif //0
+    const auto handlerIndex  = static_cast<unsigned>(op);
+    MOON_ASSERT(handlerIndex < static_cast<unsigned>(OpCode::Count));
+    return opHandlerCallbacks[handlerIndex](*this, operandIndex);
 }
 
 // ========================================================
@@ -211,10 +220,16 @@ void VM::executeSingleInstruction(const OpCode op, const std::uint32_t operandIn
 
 static void dumpVariant(const Variant var, const int index, std::ostream & os)
 {
+    auto valStr = toString(var);
+    if (var.type == Variant::Type::String)
+    {
+        valStr = unescapeString(valStr.c_str());
+    }
+
     os << color::cyan() << "[ " << std::setw(3) << std::setfill(' ') << index << " ] "
        << color::yellow() << "0x" << std::hex << std::setw(16) << std::setfill('0')
        << reinterpret_cast<std::uintptr_t>(var.value.asVoidPtr) << color::restore() << " ("
-       << color::red() << std::dec << toString(var) << color::restore() << ") => "
+       << color::red() << std::dec << valStr << color::restore() << ") => "
        << toString(var.type) << "\n";
 }
 
@@ -255,7 +270,7 @@ void printDataVector(const VM::DataVector & data, std::ostream & os)
 void VM::print(std::ostream & os) const
 {
     os << color::white() << "[[ ---- VM state dump ---- ]]" << color::restore() << "\n";
-    os << color::red() << "PC = " << color::restore() << pc << "\n";
+    os << color::red() << "PC = " << color::restore() << getProgramCounter() << "\n";
 
     os << "\n";
     printDataVector(data, os);

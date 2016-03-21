@@ -1,7 +1,7 @@
 
 // ================================================================================================
 // -*- C++ -*-
-// File: main.cpp
+// File: cli_main.cpp
 // Author: Guilherme R. Lampert
 // Created on: 10/03/16
 // Brief: Command-line interpreter entry point.
@@ -76,6 +76,51 @@ int main(int argc, const char * argv[])
         // Compiler or runtime errors (including script panic())
     }
     */
+
+    // Misc temporary tests
+    {
+        std::cout << "sizeof(Compiler::IntermediateInstr) = " << sizeof(Compiler::IntermediateInstr) << std::endl;
+        std::cout << "sizeof(Variant) = " << sizeof(Variant) << std::endl;
+
+        std::cout << "sizeof(ConstRcString)   = " << sizeof(ConstRcString) << std::endl;
+        std::cout << "sizeof(MutableRcString) = " << sizeof(MutableRcString) << std::endl;
+
+        auto rstr1 = newConstRcString("\'testing, 1234\'");
+        auto rstr2 = newMutableRcString("\'testing, 1234\'");
+
+        std::cout << "s: " << rstr1->chars << std::endl;
+        std::cout << "l: " << rstr1->length << std::endl;
+        std::cout << "h: " << rstr1->hashVal << std::endl;
+        std::cout << "r: " << rstr1->refCount << std::endl;
+        std::cout << std::endl;
+        std::cout << "s: " << rstr2->chars << std::endl;
+        std::cout << "l: " << rstr2->length << std::endl;
+        std::cout << "r: " << rstr2->refCount << std::endl;
+
+        HashTableCRcStr<int> ht1;
+        HashTableMRcStr<int> ht2;
+        ht1.emplace(rstr1, 1);
+        ht2.emplace(rstr2, 2);
+
+        releaseRcString(rstr1);
+        releaseRcString(rstr2);
+
+        ///////////////
+        Variant v0;
+        Variant v1;
+
+        v0.type = Variant::Type::Integer;
+        v1.type = Variant::Type::Integer;
+
+        v0.value.asInteger = 3;
+        v1.value.asInteger = 3;
+
+        auto res = performBinaryOp(OpCode::Mod, v0, v1);
+        std::cout << std::endl;
+        std::cout << toString(res.type) << std::endl;
+        std::cout << toString(res) << std::endl;
+        std::cout << std::endl;
+    }
 
     try
     {

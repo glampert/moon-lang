@@ -44,11 +44,12 @@ public:
         IntermediateInstr * next;
         Operand             operand;
         std::uint32_t       uid;
+        Variant::Type       type;
         OpCode              op;
     };
 
     IntermediateInstr * newInstruction(OpCode op);
-    IntermediateInstr * newInstruction(OpCode op, const Symbol * symbol);
+    IntermediateInstr * newInstruction(OpCode op, const Symbol * symbol, Variant::Type type = Variant::Type::Null);//FIXME no default value in here!
     IntermediateInstr * newInstruction(OpCode op, const IntermediateInstr * jumpTarget);
 
     const IntermediateInstr * getLoopStartAnchor() const noexcept { return lastLoopStartLabel; }
@@ -97,7 +98,7 @@ public:
 
 private:
 
-    void intermediateToVM(VM::DataVector & progData, VM::CodeVector & progCode);
+    void intermediateToVM(VM::DataVector & progData, VM::CodeVector & progCode, FunctionTable & funcTable);
     void fixReferences(const IntermediateInstr * instr, VM::DataVector & progData, VM::CodeVector & progCode);
 
     // instructionCount is also the uid.

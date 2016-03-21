@@ -13,7 +13,6 @@
 #include "opcodes.hpp"
 #include "runtime.hpp"
 
-#include <iostream>
 #include <utility>
 #include <vector>
 
@@ -28,7 +27,7 @@ class VM final
 {
 public:
 
-    // Initial stack size in Variants.
+    // Default program stack size in Variants.
     static constexpr int DefaultStackSize = 8192;
 
     // Helper types:
@@ -45,7 +44,9 @@ public:
     // VM interface:
     //
 
-    VM(int stackSize = DefaultStackSize);
+    // loadBuiltIns: Load built-in native functions and helper modules.
+    // stackSize:    Size in Variants of the program stack. Size is fixed.
+    VM(bool loadBuiltIns = true, int stackSize = DefaultStackSize);
 
     // Not copyable.
     VM(const VM &) = delete;

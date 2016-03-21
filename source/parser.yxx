@@ -90,6 +90,23 @@ static moon::SyntaxTreeNode * newCompareNode(moon::ParseContext & ctx, const STN
     return ctx.syntTree->newNode(type, child0, child1, child2);
 }
 
+static moon::SyntaxTreeNode * newBinaryOpNode(moon::ParseContext & ctx, const STNode type,
+                                              const moon::SyntaxTreeNode * lhs,
+                                              const moon::SyntaxTreeNode * rhs)
+{
+    //if (!compatibleTypes(lhs, rhs)
+    //{
+    // *** TODO ERROR, cannot perform operation 'XYZ' on typeA and typeB ***
+    //}
+    return ctx.syntTree->newNode(type, lhs, rhs, nullptr, rhs->getEval());
+}
+
+static moon::SyntaxTreeNode * newUnaryOpNode(moon::ParseContext & ctx, const STNode type,
+                                             const moon::SyntaxTreeNode * operand)
+{
+    return ctx.syntTree->newNode(type, operand, nullptr, nullptr, operand->getEval());
+}
+
 } /* %code */
 
 /* +-------------------------------------------------+ *
@@ -361,28 +378,28 @@ expression
     | array_expression
     | range_expression
     | object_constructor_expression
-    | expression[L] "%="  expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprModAssign,       $L, $R); }
-    | expression[L] "/="  expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprDivAssign,       $L, $R); }
-    | expression[L] "*="  expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprMulAssign,       $L, $R); }
-    | expression[L] "-="  expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprSubAssign,       $L, $R); }
-    | expression[L] "+="  expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprAddAssign,       $L, $R); }
-    | expression[L] "="   expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprAssign,          $L, $R); }
-    | expression[L] "or"  expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprLogicOr,         $L, $R); }
-    | expression[L] "and" expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprLogicAnd,        $L, $R); }
-    | expression[L] "!="  expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprCmpNotEqual,     $L, $R); }
-    | expression[L] "=="  expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprCmpEqual,        $L, $R); }
-    | expression[L] ">="  expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprCmpGreaterEqual, $L, $R); }
-    | expression[L] ">"   expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprCmpGreaterThan,  $L, $R); }
-    | expression[L] "<="  expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprCmpLessEqual,    $L, $R); }
-    | expression[L] "<"   expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprCmpLessThan,     $L, $R); }
-    | expression[L] "-"   expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprSubtract,        $L, $R); }
-    | expression[L] "+"   expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprAdd,             $L, $R); }
-    | expression[L] "%"   expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprModulo,          $L, $R); }
-    | expression[L] "/"   expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprDivide,          $L, $R); }
-    | expression[L] "*"   expression[R] { $$ = ctx.syntTree->newNode(STNode::ExprMultiply,        $L, $R); }
-    | "not" expression[R]               { $$ = ctx.syntTree->newNode(STNode::ExprLogicNot,            $R); }
-    | "-"   expression[R]               { $$ = ctx.syntTree->newNode(STNode::ExprUnaryMinus,          $R); }
-    | "+"   expression[R]               { $$ = ctx.syntTree->newNode(STNode::ExprUnaryPlus,           $R); }
+    | expression[L] "%="  expression[R] { $$ = newBinaryOpNode(ctx, STNode::ExprModAssign,       $L, $R); }
+    | expression[L] "/="  expression[R] { $$ = newBinaryOpNode(ctx, STNode::ExprDivAssign,       $L, $R); }
+    | expression[L] "*="  expression[R] { $$ = newBinaryOpNode(ctx, STNode::ExprMulAssign,       $L, $R); }
+    | expression[L] "-="  expression[R] { $$ = newBinaryOpNode(ctx, STNode::ExprSubAssign,       $L, $R); }
+    | expression[L] "+="  expression[R] { $$ = newBinaryOpNode(ctx, STNode::ExprAddAssign,       $L, $R); }
+    | expression[L] "="   expression[R] { $$ = newBinaryOpNode(ctx, STNode::ExprAssign,          $L, $R); }
+    | expression[L] "or"  expression[R] { $$ = newBinaryOpNode(ctx, STNode::ExprLogicOr,         $L, $R); }
+    | expression[L] "and" expression[R] { $$ = newBinaryOpNode(ctx, STNode::ExprLogicAnd,        $L, $R); }
+    | expression[L] "!="  expression[R] { $$ = newBinaryOpNode(ctx, STNode::ExprCmpNotEqual,     $L, $R); }
+    | expression[L] "=="  expression[R] { $$ = newBinaryOpNode(ctx, STNode::ExprCmpEqual,        $L, $R); }
+    | expression[L] ">="  expression[R] { $$ = newBinaryOpNode(ctx, STNode::ExprCmpGreaterEqual, $L, $R); }
+    | expression[L] ">"   expression[R] { $$ = newBinaryOpNode(ctx, STNode::ExprCmpGreaterThan,  $L, $R); }
+    | expression[L] "<="  expression[R] { $$ = newBinaryOpNode(ctx, STNode::ExprCmpLessEqual,    $L, $R); }
+    | expression[L] "<"   expression[R] { $$ = newBinaryOpNode(ctx, STNode::ExprCmpLessThan,     $L, $R); }
+    | expression[L] "-"   expression[R] { $$ = newBinaryOpNode(ctx, STNode::ExprSubtract,        $L, $R); }
+    | expression[L] "+"   expression[R] { $$ = newBinaryOpNode(ctx, STNode::ExprAdd,             $L, $R); }
+    | expression[L] "%"   expression[R] { $$ = newBinaryOpNode(ctx, STNode::ExprModulo,          $L, $R); }
+    | expression[L] "/"   expression[R] { $$ = newBinaryOpNode(ctx, STNode::ExprDivide,          $L, $R); }
+    | expression[L] "*"   expression[R] { $$ = newBinaryOpNode(ctx, STNode::ExprMultiply,        $L, $R); }
+    | "not" expression[R]               { $$ = newUnaryOpNode(ctx,  STNode::ExprLogicNot,            $R); }
+    | "-"   expression[R]               { $$ = newUnaryOpNode(ctx,  STNode::ExprUnaryMinus,          $R); }
+    | "+"   expression[R]               { $$ = newUnaryOpNode(ctx,  STNode::ExprUnaryPlus,           $R); }
     | array_subscript_expression
     | func_call_expression
     | "(" expression ")"

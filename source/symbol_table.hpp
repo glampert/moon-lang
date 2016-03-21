@@ -66,6 +66,9 @@ struct Symbol final
     // Compare this type and value for equality with the provided params.
     bool cmpEqual(Type otherType, Value otherValue) const noexcept;
 
+    // Test if the symbol's name is equal to one of the built-in types, e.g.: int, float, string, etc.
+    bool isBuiltInTypeId() const noexcept;
+
     // Print the symbol as a table row for use by the SymbolTable.
     void print(std::ostream & os = std::cout) const;
 };
@@ -81,7 +84,7 @@ class SymbolTable final
 {
 public:
 
-    using SymTable = HashTable<const Symbol *>;
+    using SymTable = HashTableCStr<const Symbol *>;
 
      SymbolTable();
     ~SymbolTable();
@@ -125,7 +128,7 @@ public:
     void print(std::ostream & os = std::cout) const;
 
     // Clone string into new memory. If the string is enclosed in
-    // double-quotes, the quotation characters are ignored.
+    // double-quotes, the first and last quotation characters are ignored.
     const char * cloneCStringNoQuotes(const char * sourcePtr);
 
 private:

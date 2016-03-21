@@ -88,7 +88,6 @@ enum class OpCode : std::uint8_t
 
     LogicOr,
     LogicAnd,
-    LogicNot,
 
     Sub,
     Add,
@@ -102,6 +101,7 @@ enum class OpCode : std::uint8_t
     DivAssign,
     MulAssign,
 
+    LogicNot,
     Negate,
     Plus,
 
@@ -136,8 +136,8 @@ inline bool isJumpInstruction(const OpCode op) noexcept
 // to its operand in the `progData` or the index to its jump
 // target in `progCode` if it is a jump or call instruction.
 //
-// For an instruction that takes no operands, such as
-// a compare instruction, then the index will be zero.
+// For an instruction that takes no operands, such as a compare
+// instruction, then the operand index will be zero.
 //
 // A store instruction will write the top of the `progStack`
 // to its operand index.

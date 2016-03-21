@@ -12,6 +12,28 @@
 namespace moon
 {
 
+static const char * builtInTypeNames[]
+{
+    // Built-in type names:
+    "int",
+    "long",
+    "float",
+    "bool",
+    "string",
+    "array",
+    "range",
+    "any",
+
+    // Internal types (not actual types usable in code):
+    "object",
+    "varargs",
+    "void",
+    "undefined",
+
+    // Marks the end of the list.
+    nullptr
+};
+
 // ========================================================
 // Symbol methods and helpers:
 // ========================================================
@@ -57,11 +79,29 @@ bool Symbol::cmpEqual(const Type otherType, const Value otherValue) const noexce
             }
         }
 
+        if (otherStrLen == 0) // Empty string
+        {
+            return std::strlen(value.asStringPtr) == 0;
+        }
+
+        // General case:
         return std::strncmp(value.asStringPtr, otherStr, otherStrLen) == 0;
     }
 
     // Compare the widest integral values:
     return value.asInteger == otherValue.asInteger;
+}
+
+bool Symbol::isBuiltInTypeId() const noexcept
+{
+    for (int i = 0; builtInTypeNames[i] != nullptr; ++i)
+    {
+        if (std::strcmp(name, builtInTypeNames[i]) == 0)
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 void Symbol::print(std::ostream & os) const
@@ -74,7 +114,7 @@ void Symbol::print(std::ostream & os) const
         case Symbol::Type::typeId :                                                                  \
         {                                                                                            \
             temp1 = (lineNum != LineNumBuiltIn) ? toString(lineNum) : "built-in";                    \
-            temp2 = toString(value);                                                                 \
+            temp2 = unescapeString(toString(value).c_str());                                         \
             std::snprintf(formatStr, arrayLength(formatStr), "| %-30s | %-8s | %s%-9s%s | %s\n",     \
                           name, temp1.c_str(), colorCmd, typeName, color::restore(), temp2.c_str()); \
         }                                                                                            \
@@ -220,28 +260,18 @@ SymbolTable::SymbolTable()
     // under the same symbol whenever possible, we can predefine
     // a few defaults that will likely be used on most programs.
     //
-    addIntLiteral("0",         Symbol::LineNumBuiltIn);
-    addIntLiteral("1",         Symbol::LineNumBuiltIn);
-    addBoolLiteral("true",     Symbol::LineNumBuiltIn);
-    addBoolLiteral("false",    Symbol::LineNumBuiltIn);
-    addFloatLiteral("0.0",     Symbol::LineNumBuiltIn);
-    addFloatLiteral("1.0",     Symbol::LineNumBuiltIn);
+    addStrLiteral("",       Symbol::LineNumBuiltIn);
+    addIntLiteral("0",      Symbol::LineNumBuiltIn);
+    addIntLiteral("1",      Symbol::LineNumBuiltIn);
+    addBoolLiteral("true",  Symbol::LineNumBuiltIn);
+    addBoolLiteral("false", Symbol::LineNumBuiltIn);
+    addFloatLiteral("0.0",  Symbol::LineNumBuiltIn);
+    addFloatLiteral("1.0",  Symbol::LineNumBuiltIn);
 
-    // Built-in type names:
-    addIdentifier("int",       Symbol::LineNumBuiltIn);
-    addIdentifier("long",      Symbol::LineNumBuiltIn);
-    addIdentifier("float",     Symbol::LineNumBuiltIn);
-    addIdentifier("bool",      Symbol::LineNumBuiltIn);
-    addIdentifier("string",    Symbol::LineNumBuiltIn);
-    addIdentifier("array",     Symbol::LineNumBuiltIn);
-    addIdentifier("range",     Symbol::LineNumBuiltIn);
-    addIdentifier("any",       Symbol::LineNumBuiltIn);
-
-    // Internal types (not actual types usable in code):
-    addIdentifier("object",    Symbol::LineNumBuiltIn);
-    addIdentifier("varargs",   Symbol::LineNumBuiltIn);
-    addIdentifier("void",      Symbol::LineNumBuiltIn);
-    addIdentifier("undefined", Symbol::LineNumBuiltIn);
+    for (int i = 0; builtInTypeNames[i] != nullptr; ++i)
+    {
+        addIdentifier(builtInTypeNames[i], Symbol::LineNumBuiltIn);
+    }
 }
 
 SymbolTable::~SymbolTable()
@@ -357,11 +387,6 @@ const char * SymbolTable::cloneCStringNoQuotes(const char * sourcePtr)
     MOON_ASSERT(sourcePtr != nullptr);
 
     auto sourceLen = std::strlen(sourcePtr);
-    if (sourceLen == 0)
-    {
-        return getEmptyCString();
-    }
-
     if (sourceLen > 1)
     {
         // Avoid possible leading and training double quotes:
@@ -371,9 +396,13 @@ const char * SymbolTable::cloneCStringNoQuotes(const char * sourcePtr)
         }
         if (sourcePtr[0] == '"')
         {
-            ++sourcePtr;
             --sourceLen;
+            ++sourcePtr;
         }
+    }
+    if (sourceLen == 0)
+    {
+        return getEmptyCString();
     }
 
     auto newStr = new char[sourceLen + 1];

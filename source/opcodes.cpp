@@ -12,7 +12,7 @@
 namespace moon
 {
 
-// OpCode to printable string:
+// OpCode to printable string (no colors added)
 std::string toString(const OpCode op)
 {
     static const std::string opCodeNames[]
@@ -24,50 +24,39 @@ std::string toString(const OpCode op)
         "JMP_IF_FALSE",
         "JMP_RETURN",
         "CALL",
-
         "NEW_VAR",
         "NEW_RANGE",
         "NEW_ARRAY",
         "NEW_OBJ",
-
         "FUNC_START",
         "FUNC_END",
-
         "FOR_LOOP_PREP",
         "FOR_LOOP_TEST",
         "FOR_LOOP_STEP",
-
         "MATCH_PREP",
         "MATCH_TEST",
-
         "ARRAY_SUBSCRIPT",
-
         "LOAD",
         "STORE",
-
         "CMP_NOT_EQUAL",
         "CMP_EQUAL",
         "CMP_GREATER_EQUAL",
         "CMP_GREATER",
         "CMP_LESS_EQUAL",
         "CMP_LESS",
-
         "LOGIC_OR",
         "LOGIC_AND",
-        "LOGIC_NOT",
-
         "SUB",
         "ADD",
         "MOD",
         "DIV",
         "MUL",
-
         "SUB_ASSIGN",
         "ADD_ASSIGN",
         "MOD_ASSIGN",
         "DIV_ASSIGN",
         "MUL_ASSIGN",
-
+        "LOGIC_NOT",
         "NEGATE",
         "PLUS"
     };

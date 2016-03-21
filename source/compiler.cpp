@@ -32,6 +32,15 @@ using STNode            = SyntaxTreeNode::Type;
 // a bug in the compiler. The syntax tree should already
 // represent a 100% valid program when we get here.
 
+void internalError(const std::string & errorMessage, const int srcLineNum)
+{
+    const std::string errorTag = color::red() + toString("internal compiler error:") + color::restore();
+    const std::string message  = toString(__FILE__) + "(" + toString(srcLineNum) + "): " + errorTag + " " + errorMessage;
+
+    std::cerr << message << std::endl;
+    throw CompilerException{ "Internal compiler error" };
+}
+
 std::uint32_t getProgCodeIndex(const InstructionMap & instrMapping, const IntermediateInstr * instr)
 {
     MOON_ASSERT(instr != nullptr);
@@ -39,7 +48,7 @@ std::uint32_t getProgCodeIndex(const InstructionMap & instrMapping, const Interm
     auto && entry = instrMapping.find(instr);
     if (entry == std::end(instrMapping))
     {
-        throw CompilerException{ "Instruction " + toString(instr->op) + " not found in InstructionMap" };
+        internalError("Instruction " + toString(instr->op) + " not found in InstructionMap", __LINE__);
     }
     return entry->second;
 }
@@ -51,14 +60,50 @@ std::uint32_t getProgDataIndex(const DataMap & dataMapping, const Symbol * sym)
     auto && entry = dataMapping.find(sym);
     if (entry == std::end(dataMapping))
     {
-        throw CompilerException{ "Symbol " + toString(*sym) + " not found in DataMap" };
+        internalError("Symbol " + toString(*sym) + " not found in DataMap", __LINE__);
     }
     return entry->second;
 }
 
-std::uint32_t addSymbolToProgData(VM::DataVector & progData, const Symbol & sym)
+Variant::Type varTypeForNodeEval(const SyntaxTreeNode * node)
 {
-    progData.push_back(Variant::fromSymbol(sym));
+    const auto eval = node->getEval();
+    switch (eval)
+    {
+    case SyntaxTreeNode::Eval::Int    : return Variant::Type::Integer;
+    case SyntaxTreeNode::Eval::Long   : return Variant::Type::Integer;
+    case SyntaxTreeNode::Eval::Float  : return Variant::Type::Float;
+    case SyntaxTreeNode::Eval::Bool   : return Variant::Type::Integer;
+    case SyntaxTreeNode::Eval::String : return Variant::Type::String;
+    default                           : return Variant::Type::Null;
+    } // switch (eval)
+}
+
+std::uint32_t addSymbolToProgData(VM::DataVector & progData, FunctionTable & funcTable,
+                                  const Symbol & sym, const Variant::Type type)
+{
+    Variant var{}; // Default initialized to null.
+
+    // Identifies might be variables, function or user defined types.
+    if (sym.type == Symbol::Type::Identifier && !sym.isBuiltInTypeId())
+    {
+        var.type = type;
+
+        // Some of the types require special handing:
+        if (type == Variant::Type::Function)
+        {
+            var.value.asFunctionPtr = funcTable.findFunction(sym.name);
+            //TODO should error if func is undefined?
+            //think so. Better even if we could get file/line info?
+            //Or perhaps better do it at the Parser then?
+        }
+    }
+    else // Literal constants/strings:
+    {
+        var = Variant::fromSymbol(sym);
+    }
+
+    progData.push_back(var);
     return static_cast<std::uint32_t>(progData.size() - 1);
 }
 
@@ -69,7 +114,7 @@ void expectNumChildren(const SyntaxTreeNode * node, const int expected)
     {
         if (node->getChild(n) == nullptr)
         {
-            throw CompilerException{ "Expected " + toString(expected) + " child nodes, got " + toString(n) };
+            internalError("Expected " + toString(expected) + " child nodes, got " + toString(n), __LINE__);
         }
     }
 }
@@ -79,7 +124,7 @@ void expectChildAtIndex(const SyntaxTreeNode * node, const int childIndex)
     MOON_ASSERT(node != nullptr);
     if (node->getChild(childIndex) == nullptr)
     {
-        throw CompilerException{ "Expected node for child index " + toString(childIndex) };
+        internalError("Expected node for child index " + toString(childIndex), __LINE__);
     }
 }
 
@@ -88,7 +133,7 @@ void expectSymbol(const SyntaxTreeNode * node)
     MOON_ASSERT(node != nullptr);
     if (node->getSymbol() == nullptr)
     {
-        throw CompilerException{ "Expected symbol for node " + toString(node->getType()) };
+        internalError("Expected symbol for node " + toString(node->getType()), __LINE__);
     }
 }
 
@@ -111,7 +156,8 @@ void printIntermediateInstrListHelper(const IntermediateInstr * head, std::ostre
             {
                 if (instr->operand.symbol != nullptr)
                 {
-                    os << " \'" << color::magenta() << toString(*(instr->operand.symbol)) << color::restore() << "\'";
+                    os << " \'" << color::magenta() << unescapeString(toString(*(instr->operand.symbol)).c_str())
+                       << color::restore() << "\'";
                 }
             }
             else // Jump instruction. Operand is another instruction.
@@ -436,7 +482,15 @@ IntermediateInstr * emitBinaryOp(Compiler & compiler, const SyntaxTreeNode * roo
 IntermediateInstr * emitLoad(Compiler & compiler, const SyntaxTreeNode * root)
 {
     expectSymbol(root);
-    auto operation = compiler.newInstruction(OpCode::Load, root->getSymbol());
+    auto symbol = root->getSymbol();
+
+    // Booleans are converted to integer Variants (0=false, 1=true).
+    if (symbol->type == Symbol::Type::BoolLiteral)
+    {
+        const char * symVal = (symbol->value.asBoolean ? "1" : "0");
+        symbol = compiler.symTable.findIntLiteral(symVal); // Relies on the 0,1 literals being always defined build-ins
+    }
+    auto operation = compiler.newInstruction(OpCode::Load, symbol);
 
     // Function calls consist of a chain of load instructions followed by one CALL instruction.
     if (root->getChild(0) != nullptr)
@@ -451,7 +505,9 @@ IntermediateInstr * emitStore(Compiler & compiler, const SyntaxTreeNode * root)
 {
     expectNumChildren(root, 2);
     expectSymbol(root->getChild(0));
-    auto operation = compiler.newInstruction(OpCode::Store, root->getChildSymbol(0));
+    auto symbol    = root->getChildSymbol(0);
+    auto symbType  = varTypeForNodeEval(root);
+    auto operation = compiler.newInstruction(OpCode::Store, symbol, symbType);
     auto argument  = traverseTreeRecursive(compiler, root->getChild(1));
     return linkInstr(argument, operation);
 }
@@ -493,7 +549,7 @@ void countArgsRecursive(const SyntaxTreeNode * root, int & argCountOut, Compiler
 template<OpCode OP>
 IntermediateInstr * emitParamChain(Compiler & compiler, const SyntaxTreeNode * root)
 {
-    auto operation = compiler.newInstruction(OP, root->getSymbol());
+    auto operation = compiler.newInstruction(OP, root->getSymbol(), Variant::Type::Function);//FIXME probably not Function for everything!!!
 
     // We have to keep track of the visited nodes to be able to properly
     // compute the argument counts. Some nodes will be visited more than
@@ -586,7 +642,7 @@ IntermediateInstr * emitNewVar(Compiler & compiler, const SyntaxTreeNode * root)
     }
 
     auto newOp   = compiler.newInstruction(OpCode::NewVar, type);
-    auto storeOp = compiler.newInstruction(OpCode::Store, root->getSymbol());
+    auto storeOp = compiler.newInstruction(OpCode::Store, root->getSymbol(), varTypeForNodeEval(root));
 
     // A load instruction is appended to indicate if we should pop one
     // value from the stack to initialize the new var or if it was left
@@ -750,7 +806,7 @@ Compiler::Compiler()
 void Compiler::compile(VM & vm)
 {
     instrListHead = traverseTreeRecursive(*this, syntTree.getRoot());
-    intermediateToVM(vm.data, vm.code);
+    intermediateToVM(vm.data, vm.code, vm.functions);
 }
 
 void Compiler::printIntermediateInstructions(std::ostream & os) const
@@ -813,6 +869,53 @@ void Compiler::clearVisited() noexcept
     visitedNodes.clear();
 }
 
+void Compiler::intermediateToVM(VM::DataVector & progData, VM::CodeVector & progCode, FunctionTable & funcTable)
+{
+    // We might still eliminate a few noops, but it should
+    // be worthwhile reserving the memory beforehand anyway.
+    progCode.reserve(instructionCount);
+
+    for (auto instr = instrListHead; instr != nullptr; instr = instr->next)
+    {
+        // On our setup, noops are just placeholders for
+        // the jump targets. They can be eliminated now.
+        if (instr->op != OpCode::NoOp)
+        {
+            // References any data? (Jumps reference other instructions)
+            if (!isJumpInstruction(instr->op) && instr->operand.symbol != nullptr)
+            {
+                // Each symbol is added once.
+                if (dataMapping.find(instr->operand.symbol) == std::end(dataMapping))
+                {
+                    auto index = addSymbolToProgData(progData, funcTable, *(instr->operand.symbol), instr->type);
+                    dataMapping.emplace(instr->operand.symbol, index);
+                }
+            }
+
+            // Operand index and size are set later.
+            // For now this instruction is just a placeholder.
+            progCode.push_back(packInstruction(instr->op, 0));
+            instrMapping.emplace(instr, progCode.size() - 1);
+        }
+        else
+        {
+            // The noop doesn't get inserted, so this instruction maps to the
+            // index of the next instruction to be added to the progCode vector.
+            instrMapping.emplace(instr, progCode.size());
+        }
+    }
+
+    // Pad the end with one noop to anchor any potential jumps to the
+    // end of the program, since we have removed all the other noops.
+    progCode.push_back(packInstruction(OpCode::NoOp, 0));
+
+    // Now map back the data and instructions into the progCode and progData:
+    for (auto instr = instrListHead; instr != nullptr; instr = instr->next)
+    {
+        fixReferences(instr, progData, progCode);
+    }
+}
+
 void Compiler::fixReferences(const IntermediateInstr * instr, VM::DataVector & progData, VM::CodeVector & progCode)
 {
     MOON_ASSERT(instr != nullptr);
@@ -843,8 +946,11 @@ void Compiler::fixReferences(const IntermediateInstr * instr, VM::DataVector & p
         }
 
     // this rule can actually be shared by several instruction types...
-    //case OpCode::Load  :
-    //case OpCode::Store :
+
+    case OpCode::NewVar :
+
+    case OpCode::Load :
+    case OpCode::Store :
     case OpCode::Call :
         {
             // Index of this instruction and its data operand:
@@ -861,53 +967,6 @@ void Compiler::fixReferences(const IntermediateInstr * instr, VM::DataVector & p
     } // switch (instr->op)
 }
 
-void Compiler::intermediateToVM(VM::DataVector & progData, VM::CodeVector & progCode)
-{
-    // We might still eliminate a few noops, but it should
-    // be worthwhile reserving the memory beforehand anyway.
-    progCode.reserve(instructionCount);
-
-    for (auto instr = instrListHead; instr != nullptr; instr = instr->next)
-    {
-        // On our setup, noops are just placeholders for
-        // the jump targets. They can be eliminated now.
-        if (instr->op != OpCode::NoOp)
-        {
-            // References any data?
-            if (!isJumpInstruction(instr->op) && instr->operand.symbol != nullptr)
-            {
-                // Each symbol is added once.
-                if (dataMapping.find(instr->operand.symbol) == std::end(dataMapping))
-                {
-                    auto index = addSymbolToProgData(progData, *(instr->operand.symbol));
-                    dataMapping.emplace(instr->operand.symbol, index);
-                }
-            }
-
-            // Operand index and size are set later.
-            // For now this instruction is just a placeholder.
-            progCode.push_back(packInstruction(instr->op, 0));
-            instrMapping.emplace(instr, progCode.size() - 1);
-        }
-        else
-        {
-            // The noop doesn't get inserted, so this instruction maps to the
-            // index of the next instruction to be added to the progCode vector.
-            instrMapping.emplace(instr, progCode.size());
-        }
-    }
-
-    // Pad the end with one noop to anchor any potential jumps to the
-    // end of the program, since we have removed all the other noops.
-    progCode.push_back(packInstruction(OpCode::NoOp, 0));
-
-    // Now map back the data and instructions into the progCode and progData:
-    for (auto instr = instrListHead; instr != nullptr; instr = instr->next)
-    {
-        fixReferences(instr, progData, progCode);
-    }
-}
-
 // ========================================================
 // Intermediate Instruction node allocation:
 // ========================================================
@@ -918,16 +977,18 @@ Compiler::IntermediateInstr * Compiler::newInstruction(const OpCode op)
     instr->next               = nullptr;
     instr->operand.symbol     = nullptr;
     instr->uid                = instructionCount++;
+    instr->type               = Variant::Type::Null;
     instr->op                 = op;
     return instr;
 }
 
-Compiler::IntermediateInstr * Compiler::newInstruction(const OpCode op, const Symbol * symbol)
+Compiler::IntermediateInstr * Compiler::newInstruction(const OpCode op, const Symbol * symbol, const Variant::Type type)
 {
     auto instr                = instrPool.allocate();
     instr->next               = nullptr;
     instr->operand.symbol     = symbol;
     instr->uid                = instructionCount++;
+    instr->type               = type;
     instr->op                 = op;
     return instr;
 }
@@ -938,6 +999,7 @@ Compiler::IntermediateInstr * Compiler::newInstruction(const OpCode op, const In
     instr->next               = nullptr;
     instr->operand.jumpTarget = jumpTarget;
     instr->uid                = instructionCount++;
+    instr->type               = Variant::Type::Null;
     instr->op                 = op;
     return instr;
 }

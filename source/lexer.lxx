@@ -33,7 +33,7 @@ namespace moon
     #ifndef MOON_LEXER_LOG_STREAM
         #define MOON_LEXER_LOG_STREAM stdout
     #endif // MOON_LEXER_LOG_STREAM
-    #define LEX_LOG_COMMENT(msg)  std::fprintf(MOON_LEXER_LOG_STREAM, "[LEX_CM](%02i): '%s'\n", lineno(), (msg))
+    #define LEX_LOG_COMMENT(msg)  std::fprintf(MOON_LEXER_LOG_STREAM, "[LEX_CM](%02i): %s\n", lineno(), (msg))
     #define LEX_LOG_TOKEN(token)  std::fprintf(MOON_LEXER_LOG_STREAM, "[LEX_TK](%02i): '%s'\n", (yylineno), (token))
     #define LEX_LOG_TYPE(type)    std::fprintf(MOON_LEXER_LOG_STREAM, "[LEX_TP](%02i): '%s'\n", (yylineno), (type))
     #define LEX_LOG_KEYW(keyword) std::fprintf(MOON_LEXER_LOG_STREAM, "[LEX_KW](%02i): '%s'\n", (yylineno), (keyword))
@@ -132,6 +132,26 @@ void Lexer::lexOnMultiLineComment()
 // moon::Lexer special symbol/token handlers:
 // ========================================================
 
+void Lexer::lexOnStrLiteral()
+{
+    MOON_ASSERT(ctx.yylval   != nullptr);
+    MOON_ASSERT(ctx.symTable != nullptr);
+
+    // We have to do this special handling here to
+    // resolve escaped string characters like \n, \t, etc.
+    auto escaped = escapeString(YYText());
+
+    auto sym = ctx.symTable->findStrLiteral(escaped.c_str());
+    if (sym == nullptr)
+    {
+        sym = ctx.symTable->addStrLiteral(escaped.c_str(), lineno());
+    }
+    ctx.yylval->asSymbol = sym;
+}
+
+//
+// Generic handlers:
+//
 #define LEX_DEFINE_SYMBOL_HANDLER(handlerName, findMethod, addMethod) \
     void Lexer::handlerName()                                         \
     {                                                                 \
@@ -146,7 +166,6 @@ void Lexer::lexOnMultiLineComment()
     }
 
 LEX_DEFINE_SYMBOL_HANDLER( lexOnIdentifier,   findSymbol,       addIdentifier   )
-LEX_DEFINE_SYMBOL_HANDLER( lexOnStrLiteral,   findStrLiteral,   addStrLiteral   )
 LEX_DEFINE_SYMBOL_HANDLER( lexOnIntLiteral,   findIntLiteral,   addIntLiteral   )
 LEX_DEFINE_SYMBOL_HANDLER( lexOnFloatLiteral, findFloatLiteral, addFloatLiteral )
 LEX_DEFINE_SYMBOL_HANDLER( lexOnBoolLiteral,  findBoolLiteral,  addBoolLiteral  )
@@ -169,7 +188,7 @@ FRACT         "."{DIGIT}+
 INT_LITERAL   -?({DIGIT}|{HEXA_PREFIX})({DIGIT}|{HEXA_CHAR})*
 FLT_LITERAL   -?{DIGIT}+{FRACT}{EXPONENT}?
 BOOL_LITERAL  ("true"|"false")
-STR_LITERAL   \"[^\"]*\"
+STR_LITERAL   \"(\\.|[^\"])*\"
 IDENTIFIER    {LETTER}({LETTER}|{DIGIT}|".")*
 WHITE_SPACE   [ \t\f\v]
 NEW_LINE      [\n\r]

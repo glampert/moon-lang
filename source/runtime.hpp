@@ -11,23 +11,30 @@
 #define MOON_RUNTIME_HPP
 
 #include "common.hpp"
+#include "opcodes.hpp"
 #include "pool.hpp"
 
 namespace moon
 {
 
+// Forward declarations for the Variant union below.
+struct Type;
+struct Function;
+struct Object;
+
 // ========================================================
-// Running Variant (the common data type):
+// Runtime Variant (the common data type):
 // ========================================================
 
 struct Variant final
 {
     enum class Type : std::uint8_t
     {
-        Null,
+        Null = 0,
         Integer,
         Float,
         String,
+        Function,
 
         // Number of types. Internal use.
         Count
@@ -35,10 +42,11 @@ struct Variant final
 
     union Value
     {
-        LangLong    asInteger;
-        LangFloat   asFloat;
-        char      * asStringPtr;
-        void      * asVoidPtr;
+        LangLong         asInteger;
+        LangFloat        asFloat;
+        const Function * asFunctionPtr;
+        const char     * asStringPtr;
+        void           * asVoidPtr;
     };
 
     Value value;
@@ -49,12 +57,27 @@ struct Variant final
     {
         value.asInteger = 0;
     }
+    explicit Variant(const Type t) noexcept : type{ t }
+    {
+        value.asInteger = 0;
+    }
 
+    //
+    // Miscellaneous helpers:
+    //
+    bool isZero() const noexcept { return value.asInteger == 0; }
+    bool toBool() const noexcept { return !!value.asInteger;    }
     static Variant fromSymbol(const Symbol & sym);
 };
 
-std::string toString(Variant v); // prints just the value
-std::string toString(Variant::Type type);
+// Debug printing helpers:
+std::string toString(Variant v);          // Prints just the value
+std::string toString(Variant::Type type); // Prints the variant type tag
+std::string binaryOpToString(OpCode op);  // Prints the symbol if available, e.g.: + instead of ADD
+
+// Binary operator on Variant:
+bool isBinaryOpValid(OpCode op, Variant::Type typeA, Variant::Type typeB) noexcept;
+Variant performBinaryOp(OpCode op, Variant varA, Variant varB);
 
 // ========================================================
 // The program stack:
@@ -231,7 +254,7 @@ class FunctionTable final
 {
 public:
 
-    using FuncTable = HashTable<const Function *>;
+    using FuncTable = HashTableCStr<const Function *>;
     FunctionTable() = default;
 
     // Not copyable.
@@ -258,6 +281,9 @@ private:
     // Hash table indexed by the full function name.
     FuncTable table;
 };
+
+// Adds all the built-in native function entries to a FuncTable.
+void registerNativeBuiltInFunctions(FunctionTable & funcTable);
 
 } // namespace moon {}
 

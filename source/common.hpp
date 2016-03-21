@@ -141,14 +141,27 @@ struct LexerException    final : public BaseException { using BaseException::Bas
 struct ParserException   final : public BaseException { using BaseException::BaseException; };
 struct CompilerException final : public BaseException { using BaseException::BaseException; };
 struct RuntimeException  final : public BaseException { using BaseException::BaseException; };
+struct ScriptException   final : public BaseException { using BaseException::BaseException; };
 
 // ========================================================
 // Miscellaneous utilities:
 // ========================================================
 
-std::string trimTrailingFloatZeros(std::string trimmed);
-std::size_t hashCString(const char * cstr) noexcept;
+// Fast 32-bits hash of a null-terminated C string:
+constexpr std::uint32_t NullHash = 0;
+std::uint32_t hashCString(const char * cstr) noexcept;
+
+// Get an empty C string ("\0").
 const char * getEmptyCString() noexcept;
+
+// Remove insignificant trailing zeros from a float, possibly also removing the '.'
+std::string trimTrailingFloatZeros(std::string trimmed);
+
+// Replaces non-printable escape chars with the printable equivalent (i.e.: an actual "\n", for '\n' char).
+std::string unescapeString(const char * escaped);
+
+// Replaces escape sequences by the equivalent character code (i.e. a "\n" by the '\n' character).
+std::string escapeString(const char * unescaped);
 
 template<typename T, unsigned N>
 constexpr unsigned arrayLength(const T (&)[N]) noexcept
@@ -159,11 +172,8 @@ constexpr unsigned arrayLength(const T (&)[N]) noexcept
 struct CStrHasher final
 {
     std::size_t operator()(const char * cstr) const noexcept
-    {
-        return hashCString(cstr);
-    }
+    { return hashCString(cstr); }
 };
-
 struct CStrCmpEqual final
 {
     bool operator()(const char * a, const char * b) const noexcept
@@ -176,9 +186,8 @@ struct CStrCmpEqual final
         return std::strcmp(a, b) == 0;
     }
 };
-
 template<typename T>
-using HashTable = std::unordered_map<const char *, T, CStrHasher, CStrCmpEqual>;
+using HashTableCStr = std::unordered_map<const char *, T, CStrHasher, CStrCmpEqual>;
 
 // ========================================================
 // toString() helpers:
@@ -191,8 +200,103 @@ inline std::string toString(const std::uint64_t value) { return std::to_string(v
 inline std::string toString(const LangBool      value) { return value ? "true" : "false"; }
 inline std::string toString(const LangInt       value) { return std::to_string(value);    }
 inline std::string toString(const LangLong      value) { return std::to_string(value);    }
-inline std::string toString(const char *        value) { return value != nullptr ? value : "(null)"; }
+inline std::string toString(const char *        value) { return value != nullptr ? value : "null"; }
 inline std::string toString(const LangFloat     value) { return trimTrailingFloatZeros(std::to_string(value)); }
+
+// ========================================================
+// RcString => Reference counted string types:
+// ========================================================
+
+struct ConstRcString final
+{
+    const char *        chars;    // Immutable null-terminated C-string.
+    const std::uint32_t length;   // Length in characters, not including the null terminator.
+    const std::uint32_t hashVal;  // Precomputed hashCString() since the string is immutable.
+    std::uint32_t       refCount; // Current reference count. Deleted when it drops to zero.
+};
+
+struct MutableRcString final
+{
+    char *        chars;    // Mutable null-terminated C-string. Hash not precomputed in this case.
+    std::uint32_t length;   // Mutable length. Not counting the null terminator.
+    std::uint32_t refCount; // Current reference count. Deleted when it drops to zero.
+};
+
+// The const Ref Counted String has a precomputed hash of the string, so comparisons
+// are constant-time. The string gets deallocated when the last reference is released.
+ConstRcString * newConstRcString(const char * cstr);
+void addRcStringRef(ConstRcString * rstr);
+void releaseRcString(ConstRcString * rstr);
+
+// The immutable Ref Counted String on the other hand has no precomputed hash,
+// so comparisons are always a traditional strcmp().
+MutableRcString * newMutableRcString(const char * cstr);
+void addRcStringRef(MutableRcString * rstr);
+void releaseRcString(MutableRcString * rstr);
+
+// ------------------------------------
+
+// Ref Counted String comparison:
+template<typename RcStringType>
+inline int cmpRcStrings(const RcStringType * a, const RcStringType * b) noexcept
+{
+    MOON_ASSERT(a != nullptr && b != nullptr);
+    if (a->chars == b->chars) // Optimize for same memory
+    {
+        return 0;
+    }
+    if (a->length != b->length) // Optimize for strings of different length
+    {
+        return (a->length < b->length) ? -1 : +1;
+    }
+    return std::strncmp(a->chars, b->chars, a->length);
+}
+
+inline bool cmpRcStringsEqual(const ConstRcString * a, const ConstRcString * b) noexcept
+{
+    MOON_ASSERT(a != nullptr && b != nullptr);
+    // Cheap hash comparison for the immutable strings.
+    return a->hashVal == b->hashVal;
+}
+
+inline bool cmpRcStringsEqual(const MutableRcString * a, const MutableRcString * b) noexcept
+{
+    // The mutable string doesn't store a precomputed hash,
+    // so we always do a full per-character comparison.
+    return cmpRcStrings(a, b) == 0;
+}
+
+// ------------------------------------
+
+struct CRcStrHasher final
+{
+    std::size_t operator()(const ConstRcString * rstr) const noexcept
+    { return rstr->hashVal; }
+};
+struct CRcStrCmpEqual final
+{
+    bool operator()(const ConstRcString * a, const ConstRcString * b) const noexcept
+    { return cmpRcStringsEqual(a, b); }
+};
+template<typename T>
+using HashTableCRcStr = std::unordered_map<ConstRcString *, T, CRcStrHasher, CRcStrCmpEqual>;
+
+// ------------------------------------
+
+struct MRcStrHasher final
+{
+    std::size_t operator()(const MutableRcString * rstr) const noexcept
+    { return hashCString(rstr->chars); }
+};
+struct MRcStrCmpEqual final
+{
+    bool operator()(const MutableRcString * a, const MutableRcString * b) const noexcept
+    { return cmpRcStringsEqual(a, b); }
+};
+template<typename T>
+using HashTableMRcStr = std::unordered_map<MutableRcString *, T, MRcStrHasher, MRcStrCmpEqual>;
+
+// ------------------------------------
 
 } // namespace moon {}
 
