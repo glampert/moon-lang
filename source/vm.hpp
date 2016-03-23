@@ -45,7 +45,7 @@ public:
     //
 
     // loadBuiltIns: Load built-in native functions and helper modules.
-    // stackSize:    Size in Variants of the program stack. Size is fixed.
+    // stackSize:    Size in Variants of the program stack. Stack-size is fixed.
     VM(bool loadBuiltIns = true, int stackSize = DefaultStackSize);
 
     // Not copyable.

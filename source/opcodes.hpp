@@ -23,8 +23,10 @@ enum class OpCode : std::uint8_t
 {
     NoOp = 0,
 
-    // Nothing right now. In the future we might use it for global initialization.
-    ModuleStart,
+    // Nothing right now. In the future we might
+    // use them for global initialization/shutdown.
+    ProgStart,
+    ProgEnd,
 
     // Unconditional jump to target instruction.
     // Doesn't touch the VM stack.
@@ -95,12 +97,13 @@ enum class OpCode : std::uint8_t
     Div,
     Mul,
 
-    SubAssign,
-    AddAssign,
-    ModAssign,
-    DivAssign,
-    MulAssign,
+    SubStore,
+    AddStore,
+    ModStore,
+    DivStore,
+    MulStore,
 
+    // Unary ops:
     LogicNot,
     Negate,
     Plus,

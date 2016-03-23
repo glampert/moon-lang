@@ -29,14 +29,17 @@ namespace moon
 {
 
 // ========================================================
-// Some forward declarations for the parser:
+// Some forward declarations for the Lexer & Parser:
 // ========================================================
 
 struct Symbol;
 class SymbolTable;
 
-class SyntaxTree;
+struct Function;
+class FunctionTable;
+
 class SyntaxTreeNode;
+class SyntaxTree;
 
 class Parser;
 struct ParseContext;
@@ -103,6 +106,7 @@ struct ParseContext final
     Lexer             * lexer    = nullptr;
     Parser            * parser   = nullptr;
     SymbolTable       * symTable = nullptr;
+    FunctionTable     * fnTable  = nullptr;
     SyntaxTree        * syntTree = nullptr;
     std::string       * currText = nullptr; // [optional]
     const std::string * srcFile  = nullptr; // [optional]
@@ -162,6 +166,14 @@ std::string unescapeString(const char * escaped);
 
 // Replaces escape sequences by the equivalent character code (i.e. a "\n" by the '\n' character).
 std::string escapeString(const char * unescaped);
+
+// Temporary formatting buffer used is fixed to 2048
+// chars, so longer strings will get truncated!
+#ifdef __GNUC__
+std::string strPrintF(const char * format, ...) __attribute__((format(printf, 1, 2)));
+#else // !__GNUC__
+std::string strPrintF(const char * format, ...);
+#endif // __GNUC__
 
 template<typename T, unsigned N>
 constexpr unsigned arrayLength(const T (&)[N]) noexcept

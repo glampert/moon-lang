@@ -79,13 +79,19 @@ bool Symbol::cmpEqual(const Type otherType, const Value otherValue) const noexce
             }
         }
 
-        if (otherStrLen == 0) // Empty string
+        if (otherStrLen == 0) // Empty string?
         {
             return std::strlen(value.asStringPtr) == 0;
         }
 
+        const auto myStrLen = std::strlen(value.asStringPtr);
+        if (myStrLen != otherStrLen) // Different lengths?
+        {
+            return false;
+        }
+
         // General case:
-        return std::strncmp(value.asStringPtr, otherStr, otherStrLen) == 0;
+        return std::strncmp(value.asStringPtr, otherStr, myStrLen) == 0;
     }
 
     // Compare the widest integral values:

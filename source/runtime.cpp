@@ -9,6 +9,7 @@
 
 #include "runtime.hpp"
 #include "symbol_table.hpp"
+#include <type_traits>
 
 namespace moon
 {
@@ -85,24 +86,7 @@ std::string toString(const Variant::Type type)
 // Function:
 // ========================================================
 
-Function::Function() noexcept
-    : name           { "???"   }
-    , argumentTypes  { nullptr }
-    , argumentCount  { 0       }
-    , jumpTarget     { 0       }
-    , nativeCallback { nullptr }
-{ }
-
-Function::Function(const char * funcName, const Variant::Type * args, const std::uint32_t argCount,
-                   const std::uint32_t target, const NativeCB callback) noexcept
-    : name           { funcName }
-    , argumentTypes  { args     }
-    , argumentCount  { argCount }
-    , jumpTarget     { target   }
-    , nativeCallback { callback }
-{ }
-
-void Function::operator()(VM & vm, Stack::Slice args) const
+void Function::invoke(VM & vm, Stack::Slice args) const
 {
     validateArguments(args);
     if (nativeCallback != nullptr)
@@ -146,9 +130,45 @@ void Function::validateArguments(Stack::Slice args) const
     }
 }
 
+void Function::print(std::ostream & os) const
+{
+    const std::string retTypeStr   = hasReturnVal() ? toString(*returnType) : "void";
+    const std::string argCountStr  = !isVarArgs() ? toString(argumentCount) : "varargs";
+    const std::string jmpTargetStr = (jumpTarget != TargetNative) ? toString(jumpTarget) : "native";
+
+    std::string flagsStr;
+    if (isNative())       { flagsStr += "N "; }
+    if (isVarArgs())      { flagsStr += "V "; }
+    if (isDebugOnly())    { flagsStr += "D "; }
+    if (hasCallerInfo())  { flagsStr += "I "; }
+    if (hasReturnVal())   { flagsStr += "R "; }
+    if (flagsStr.empty()) { flagsStr = "- - - - -"; }
+
+    char formatStr[512] = {'\0'};
+    std::snprintf(formatStr, arrayLength(formatStr), "| %-30s | %-9s | %-9s | %-6s | %s\n",
+                  name, argCountStr.c_str(), flagsStr.c_str(), jmpTargetStr.c_str(), retTypeStr.c_str());
+
+    os << formatStr;
+}
+
 // ========================================================
 // FunctionTable:
 // ========================================================
+
+FunctionTable::~FunctionTable()
+{
+    static_assert(std::is_pod<Function>::value, "Function struct should be a POD type!");
+
+    // The Function instances are allocated as raw byte blocks
+    // and may be followed by argument lists and return type.
+    // As long as we keep the Function type a POD, this is safe.
+    for (auto && entry : table)
+    {
+        auto funcObj = const_cast<Function *>(entry.second);
+        ::operator delete(reinterpret_cast<void *>(funcObj)); // Raw delete. Doesn't call the destructor.
+    }
+    table.clear();
+}
 
 const Function * FunctionTable::findFunction(const char * name) const
 {
@@ -161,21 +181,66 @@ const Function * FunctionTable::findFunction(const char * name) const
     return nullptr; // Not found.
 }
 
-const Function * FunctionTable::addFunction(const char * funcName, const Variant::Type * argTypes,
-                                            const std::uint32_t argCount, const std::uint32_t jumpTarget,
-                                            const Function::NativeCB nativeCallback)
+const Function * FunctionTable::addFunction(const char * funcName, const Variant::Type * returnType,
+                                            const Variant::Type * argTypes, const std::uint32_t argCount,
+                                            const std::uint32_t jumpTarget, const std::uint32_t extraFlags,
+                                            Function::NativeCB nativeCallback)
 {
     MOON_ASSERT(funcName != nullptr);
     MOON_ASSERT(!findFunction(funcName) && "Function already registered!");
     MOON_ASSERT(argCount <= Function::MaxArguments && "Max arguments per function exceeded!");
 
-    const auto funcId   = cloneCString(funcName);
-    const auto funcArgs = cloneArgTypes(argTypes, argCount);
+    const std::size_t extraTypes = (returnType != nullptr) ? 1 : 0;
+    const std::size_t totalBytes = sizeof(Function) + ((argCount + extraTypes) * sizeof(Variant::Type));
 
-    //TODO memory pool of Function?
-    auto func = new Function{ funcId, funcArgs, argCount, jumpTarget, nativeCallback };
-    table[funcId] = func;
-    return func;
+    // We allocate the Function instance plus eventual argument type list and return
+    // type as a single memory block. Function will be first, followed by N arguments
+    // then the return type at the end.
+    std::uint8_t * memPtr = static_cast<std::uint8_t *>(::operator new(totalBytes));
+
+    Function * funcObj = reinterpret_cast<Function *>(memPtr);
+    memPtr += sizeof(Function);
+
+    Variant::Type * funcArgs;
+    if (argTypes != nullptr && argCount != 0)
+    {
+        funcArgs = reinterpret_cast<Variant::Type *>(memPtr);
+        memPtr += argCount * sizeof(Variant::Type);
+        std::memcpy(funcArgs, argTypes, argCount * sizeof(Variant::Type));
+    }
+    else
+    {
+        funcArgs = nullptr;
+    }
+
+    Variant::Type * funcRet;
+    if (returnType != nullptr)
+    {
+        funcRet = reinterpret_cast<Variant::Type *>(memPtr);
+        memPtr += sizeof(Variant::Type);
+        *funcRet = *returnType;
+    }
+    else
+    {
+        funcRet = nullptr;
+    }
+
+    const auto funcId = cloneCString(funcName);
+    table[funcId] = construct(funcObj, { funcId, funcRet, funcArgs, argCount, jumpTarget, extraFlags, nativeCallback });
+    return funcObj;
+}
+
+void FunctionTable::setJumpTargetFor(const char * funcName, const std::uint32_t newTarget)
+{
+    MOON_ASSERT(funcName != nullptr);
+
+    auto it = table.find(funcName);
+    MOON_ASSERT(it != std::end(table));
+
+    // This is the only time we need to unconst the object, so
+    // it is still worth storing it as const Function* in the table.
+    auto func = const_cast<Function *>(it->second);
+    func->jumpTarget = newTarget;
 }
 
 const char * FunctionTable::cloneCString(const char * sourcePtr)
@@ -186,24 +251,11 @@ const char * FunctionTable::cloneCString(const char * sourcePtr)
         return getEmptyCString();
     }
 
+    //FIXME probably replace with ConstRcString!
     auto newString = new char[sourceLen + 1];
     std::memcpy(newString, sourcePtr, sourceLen);
     newString[sourceLen] = '\0';
     return newString;
-}
-
-Variant::Type * FunctionTable::cloneArgTypes(const Variant::Type * argTypes, const std::uint32_t argCount)
-{
-    if (argTypes == nullptr || argCount == 0)
-    {
-        return nullptr;
-    }
-
-    //TODO special allocator? another pool?
-    // nevertheless, they must be deallocated. FunctionTable should own the data.
-    auto newTypes = new Variant::Type[argCount];
-    std::memcpy(newTypes, argTypes, argCount * sizeof(Variant::Type));
-    return newTypes;
 }
 
 bool FunctionTable::isEmpty() const noexcept
@@ -214,6 +266,32 @@ bool FunctionTable::isEmpty() const noexcept
 std::size_t FunctionTable::getSize() const noexcept
 {
     return table.size();
+}
+
+void FunctionTable::print(std::ostream & os) const
+{
+    os << color::white() << "[[ begin function table dump ]]" << color::restore() << "\n";
+    if (!table.empty())
+    {
+        os << "+--------------------------------+-----------+-----------+--------+----------+\n";
+        os << "| name                           | arg-count | flags     | jump   | ret-type |\n";
+        os << "+--------------------------------+-----------+-----------+--------+----------+\n";
+        for (auto && entry : table)
+        {
+            entry.second->print(os);
+        }
+    }
+    else
+    {
+        os << "(empty)\n";
+    }
+    os << color::white() << "[[ listed " << table.size() << " functions ]]" << color::restore() << "\n";
+}
+
+std::ostream & operator << (std::ostream & os, const FunctionTable & funcTable)
+{
+    funcTable.print(os);
+    return os;
 }
 
 } // namespace moon {}

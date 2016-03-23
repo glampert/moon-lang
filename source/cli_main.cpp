@@ -18,15 +18,14 @@
 TODO NOTES:
 
 - Should test this on a tool like Valgrind or Clang Mem Sanitizer to check for possible leaks!!!
-- Might want to separate literal constants on lists by type, to accelerate lookup.
+
+- Might want to separate literal constants on lists by type, to accelerate lookup....
 
 - Probably also define a StringTable class that uses ref-counting to keep track of our strings.
   Most strings defined during parsing in the SymbolTable can be reused by the VM, so we should
   avoid copying them.
 
 - Custom, user supplied, memory allocator? Could integrate with a std::allocator perhaps?...
-
-- Add the Travis build script on GitHub for auto build on commits!
 
 *****
 
@@ -46,9 +45,6 @@ NOTES ON THE LANGUAGE SYNTAX SIDE:
   - functions
   - easy to integrate with native methods (so we can for instance call OpenGL).
 
-- Add a pow() operator? E.g. '^' as it is in some math languages?
-  Also, should modulo (%) work on floats? Could use `reminder()` or similar...
-
 - Make `let` variables immutable (then add `mut`).
 
 =================================================
@@ -63,24 +59,26 @@ int main(int argc, const char * argv[])
     /* Final interface should look something like:
     try
     {
-        moon::VM       vm;              // Executes the bytecode generate by a Compiler.
-        moon::Compiler compiler;        // Parses scripts & generates VM bytecode.
+        moon::VM       vm;               // Executes the bytecode generate by a Compiler.
+        moon::Compiler compiler;         // Parses scripts & generates VM bytecode.
 
-        compiler.loadScript("test.ml"); // Parsing & semantic checks.
-        compiler.compile(vm);           // Bytecode generation.
+        compiler.parseScript("test.ml"); // Parsing & semantic checks.
+        compiler.parseScript([std::istream]); // from open file/stream of whatever sort
+        compiler.compile(vm);            // Bytecode generation.
 
-        vm.execute();                   // Execute the whole program.
+        vm.execute();                    // Execute the whole program.
     }
     catch (const moon::BaseException & e)
     {
-        // Compiler or runtime errors (including script panic())
+        // Compiler or runtime errors (including script panic()/assert)
     }
     */
 
     // Misc temporary tests
     {
         std::cout << "sizeof(Compiler::IntermediateInstr) = " << sizeof(Compiler::IntermediateInstr) << std::endl;
-        std::cout << "sizeof(Variant) = " << sizeof(Variant) << std::endl;
+        std::cout << "sizeof(Variant)  = " << sizeof(Variant) << std::endl;
+        std::cout << "sizeof(Function) = " << sizeof(Function) << std::endl;
 
         std::cout << "sizeof(ConstRcString)   = " << sizeof(ConstRcString) << std::endl;
         std::cout << "sizeof(MutableRcString) = " << sizeof(MutableRcString) << std::endl;
@@ -138,6 +136,7 @@ int main(int argc, const char * argv[])
         parseCtx.lexer    = &lexer;
         parseCtx.parser   = &parser;
         parseCtx.symTable = &compiler.symTable;
+        parseCtx.fnTable  = &vm.functions;
         parseCtx.syntTree = &compiler.syntTree;
         parseCtx.currText = &currText;
         parseCtx.srcFile  = &srcFile;
@@ -148,6 +147,7 @@ int main(int argc, const char * argv[])
 
         compiler.compile(vm);
         std::cout << compiler << "\n";
+        std::cout << vm.functions << "\n";
         std::cout << vm.code << "\n";
         std::cout << vm.data << "\n";
 

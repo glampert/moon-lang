@@ -19,6 +19,8 @@
 #include "common.hpp"
 #undef  INC_LEXER
 
+#include "symbol_table.hpp"
+
 namespace moon
 {
 

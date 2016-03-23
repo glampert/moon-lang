@@ -8,6 +8,7 @@
 // ================================================================================================
 
 #include "syntax_tree.hpp"
+#include "symbol_table.hpp"
 
 namespace moon
 {

@@ -8,23 +8,24 @@
 // ================================================================================================
 
 #include "vm.hpp"
-#include <cstdarg>
 
 // ========================================================
 // Local aux macros:
 // ========================================================
 
-#define ADD_FUNC(funcTable, funcName, ...)                                \
-    do {                                                                  \
-        const Variant::Type argTypes[]{ __VA_ARGS__ };                    \
-        funcTable.addFunction(#funcName, argTypes, arrayLength(argTypes), \
-                              Function::TargetNative, &native::funcName); \
+#define ADD_FUNC(funcTable, retType, funcName, flags, ...)                             \
+    do                                                                                 \
+    {                                                                                  \
+        const Variant::Type argTypes[]{ __VA_ARGS__ };                                 \
+        (funcTable).addFunction(#funcName, (retType), argTypes, arrayLength(argTypes), \
+                                Function::TargetNative, (flags), &native::funcName);   \
     } while (0)
 
-#define ADD_VARARGS_FUNC(funcTable, funcName) \
-    funcTable.addFunction(#funcName, nullptr, 0, Function::TargetNative, &native::funcName)
+#define ADD_VARARGS_FUNC(funcTable, retType, funcName, flags) \
+    (funcTable).addFunction(#funcName, (retType), nullptr, 0, \
+                            Function::TargetNative, (flags), &native::funcName)
 
-// Clashes with our native::assert()
+// Clashes with our native::assert() function.
 #undef assert
 
 // ========================================================
@@ -34,28 +35,9 @@ namespace moon
 namespace native
 {
 
-static std::string strPrintF(const char * format, ...)
-{
-// Suppress "format string is not a string literal" on GCC and Clang.
-#ifdef __GNUC__
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wformat-nonliteral"
-#endif // __GNUC__
-
-    va_list vaArgs;
-    char buffer[1024];
-
-    va_start(vaArgs, format);
-    std::vsnprintf(buffer, sizeof(buffer), format, vaArgs);
-    va_end(vaArgs);
-
-    buffer[sizeof(buffer) - 1] = '\0';
-    return buffer;
-
-#ifdef __GNUC__
-#pragma GCC diagnostic pop
-#endif // __GNUC__
-}
+// ========================================================
+// Miscellaneous printing and error reporting functions:
+// ========================================================
 
 void assert(VM &, Stack::Slice args) // (varargs) -> void
 {
@@ -122,61 +104,107 @@ void to_string(VM & vm, Stack::Slice args) // (varargs) -> string
         MOON_RUNTIME_EXCEPTION("to_string() requires at least one argument");
     }
 
-    // Second argument is the formatting flag. It is optional.
+    // Second argument is the optional formatting flag.
     auto var = args.first();
     auto fmt = args.next();
-    if (!fmt)
+    std::string outputStr;
+
+    if (fmt != nullptr)
     {
-        vm.stack.push(*var); // Return value
-        return;
+        if (fmt->type != Variant::Type::String)
+        {
+            MOON_RUNTIME_EXCEPTION("to_string() format flag should be a string, "
+                                   "e.g.: \"b\", \"f\", \"h\", \"p\", etc");
+        }
+
+        // Print with specific format:
+        const char * flag = fmt->value.asStringPtr;
+        switch (*flag)
+        {
+        case 'b' : // boolean
+            outputStr = toString(var->toBool());
+            // Anything but zero/null will be true, including negative numbers.
+            break;
+
+        case 'f' : // float
+            if (var->type == Variant::Type::Float)
+            {
+                outputStr = toString(var->value.asFloat);
+            }
+            else if (var->type == Variant::Type::Integer)
+            {
+                outputStr = toString(var->value.asInteger);
+            }
+            else // Not a number
+            {
+                outputStr = "nan";
+            }
+            break;
+
+        case 'l' : // long or
+        case 'i' : // integer
+            if (var->type == Variant::Type::Float)
+            {
+                // Floats will get truncated to integer.
+                outputStr = toString(static_cast<LangInt>(var->value.asFloat));
+            }
+            else if (var->type == Variant::Type::Integer)
+            {
+                outputStr = toString(var->value.asInteger);
+            }
+            else // Not a number
+            {
+                outputStr = "nan";
+            }
+            break;
+
+        case 'h' : // hexadecimal
+            outputStr = strPrintF("0x%016llX", static_cast<std::uint64_t>(var->value.asInteger));
+            break;
+
+        case 'p' : // pointer
+            if (var->type == Variant::Type::Integer || var->type == Variant::Type::Float)
+            {
+                // Types stored directly into the Variant can print the Variant's own address.
+                outputStr = strPrintF("0x%016llX", static_cast<std::uint64_t>(
+                                      reinterpret_cast<std::uintptr_t>(var)));
+            }
+            else // Objects print the address of the object:
+            {
+                outputStr = strPrintF("0x%016llX", static_cast<std::uint64_t>(
+                     reinterpret_cast<std::uintptr_t>(var->value.asVoidPtr)));
+            }
+            break;
+
+        default :
+            MOON_RUNTIME_EXCEPTION("to_string() called with unrecognized format flag '" + toString(flag) + "'");
+        } // switch (*flag)
     }
-
-    // Print with specific format:
-    if (fmt->type != Variant::Type::String)
+    else
     {
-        MOON_RUNTIME_EXCEPTION("to_string() format flag should be a string, e.g.: \"b\", \"h\", \"p\", etc");
+        // Just make the input into a string using
+        // default formatting for its type:
+        outputStr = toString(*var);
     }
-
-    std::string formatted;
-    const auto flag = fmt->value.asStringPtr;
-    switch (*flag)
-    {
-    case 'b' : // boolean
-        formatted = toString(var->toBool());
-        break;
-
-    case 'f' : // float
-        if (var->type == Variant::Type::Float)
-        {
-            formatted = trimTrailingFloatZeros(strPrintF("%f", var->value.asFloat));
-        }
-        else if (var->type == Variant::Type::Integer)
-        {
-            formatted = strPrintF("%i", var->value.asInteger);
-        }
-        else
-        {
-            formatted = "#NAN";
-        }
-        break;
-
-    case 'h' : // hexadecimal
-    case 'p' : // or pointer
-        formatted = strPrintF("0x%016llX", static_cast<std::uint64_t>(var->value.asInteger));
-        break;
-
-    default :
-        MOON_RUNTIME_EXCEPTION("to_string() called with unrecognized format flag '" + toString(flag) + "'");
-    } // switch (*flag)
 
     //FIXME temp: str is never freed for now...
-    auto newStr = new char[formatted.length() + 1];
-    std::strcpy(newStr, formatted.c_str());
+    auto newStr = new char[outputStr.length() + 1];
+    std::strcpy(newStr, outputStr.c_str());
 
     Variant result{ Variant::Type::String };
     result.value.asStringPtr = newStr;
+
+    // Push the return value:
     vm.stack.push(result);
 }
+
+//TODO other nice things to have:
+//
+// - a small strings library (can based on std::string)
+// - a small array handling library (can be based on std::vector)
+// - a small dictionary library (std::unordered_map based)
+// - expose the C-maths library
+// - a library for bit manipulation within integers? We don't have the traditional bitshift ops...
 
 } // namespace native {}
 
@@ -186,11 +214,13 @@ void to_string(VM & vm, Stack::Slice args) // (varargs) -> string
 
 void registerNativeBuiltInFunctions(FunctionTable & funcTable)
 {
-    ADD_VARARGS_FUNC( funcTable, assert    );
-    ADD_VARARGS_FUNC( funcTable, panic     );
-    ADD_VARARGS_FUNC( funcTable, print     );
-    ADD_VARARGS_FUNC( funcTable, println   );
-    ADD_VARARGS_FUNC( funcTable, to_string );
+    const auto RetString = Variant::Type::String;
+
+    ADD_VARARGS_FUNC( funcTable, nullptr,    assert,    Function::VarArgs | Function::AddCallerInfo | Function::DebugOnly );
+    ADD_VARARGS_FUNC( funcTable, nullptr,    panic,     Function::VarArgs | Function::AddCallerInfo );
+    ADD_VARARGS_FUNC( funcTable, nullptr,    print,     Function::VarArgs );
+    ADD_VARARGS_FUNC( funcTable, nullptr,    println,   Function::VarArgs );
+    ADD_VARARGS_FUNC( funcTable, &RetString, to_string, Function::VarArgs );
 }
 
 } // namespace moon {}

@@ -1,10 +1,10 @@
 
 // ================================================================================================
 // -*- C++ -*-
-// File: binary_ops.cpp
+// File: operators.cpp
 // Author: Guilherme R. Lampert
 // Created on: 20/03/16
-// Brief: Validation and execution of binary operators on different type categories.
+// Brief: Validation and execution of unary/binary operators on different type categories.
 // ================================================================================================
 
 #include "runtime.hpp"
@@ -99,6 +99,17 @@ std::string binaryOpToString(const OpCode op)
         return toString(op);
     }
     return color::magenta() + op2string[idxOp - FirstOp] + color::restore();
+}
+
+std::string unaryOpToString(const OpCode op)
+{
+    switch (op)
+    {
+    case OpCode::LogicNot : return color::magenta() + toString("not") + color::restore();
+    case OpCode::Negate   : return color::magenta() + toString("-")   + color::restore();
+    case OpCode::Plus     : return color::magenta() + toString("+")   + color::restore();
+    default               : return toString(op);
+    } // switch (op)
 }
 
 // ========================================================
@@ -410,6 +421,92 @@ Variant performBinaryOp(const OpCode op, const Variant varA, const Variant varB)
     default :
         unreachable(__LINE__);
     } // switch (varA.type)
+}
+
+// ========================================================
+// isUnaryOpValid():
+// ========================================================
+
+bool isUnaryOpValid(const OpCode op, const Variant::Type type) noexcept
+{
+    if (op == OpCode::LogicNot)
+    {
+        return type == VT::Null    ||
+               type == VT::Integer ||
+               type == VT::Float   ||
+               type == VT::Function;
+    }
+
+    // +, -
+    return type == VT::Integer || type == VT::Float;
+}
+
+// ========================================================
+// performUnaryOp():
+// ========================================================
+
+Variant performUnaryOp(const OpCode op, const Variant var)
+{
+    if (!isUnaryOpValid(op, var.type))
+    {
+        MOON_RUNTIME_EXCEPTION("cannot apply unary op " + unaryOpToString(op) +
+                               " on " + toString(var.type));
+    }
+
+    // Produces a boolean result
+    #define CASE1(opType, unaryOp)                                    \
+        case OpCode::opType :                                         \
+        {                                                             \
+            switch (var.type)                                         \
+            {                                                         \
+            case VT::Integer :                                        \
+                result.value.asInteger = unaryOp var.value.asInteger; \
+                result.type = VT::Integer;                            \
+                break;                                                \
+            case VT::Float :                                          \
+                result.value.asInteger = unaryOp var.value.asFloat;   \
+                result.type = VT::Integer;                            \
+                break;                                                \
+            default :                                                 \
+                result.value.asInteger = unaryOp var.value.asVoidPtr; \
+                result.type = VT::Integer;                            \
+                break;                                                \
+            }                                                         \
+            break;                                                    \
+        }
+
+    // Preserves the type of the input
+    #define CASE2(opType, unaryOp)                                    \
+        case OpCode::opType :                                         \
+        {                                                             \
+            switch (var.type)                                         \
+            {                                                         \
+            case VT::Integer :                                        \
+                result.value.asInteger = unaryOp var.value.asInteger; \
+                result.type = VT::Integer;                            \
+                break;                                                \
+            case VT::Float :                                          \
+                result.value.asFloat = unaryOp var.value.asFloat;     \
+                result.type = VT::Float;                              \
+                break;                                                \
+            default :                                                 \
+                unreachable(__LINE__);                                \
+            }                                                         \
+            break;                                                    \
+        }
+
+    Variant result;
+    switch (op)
+    {
+    CASE1( LogicNot, not );
+    CASE2( Negate,   -   );
+    CASE2( Plus,     +   );
+    default : unreachable(__LINE__);
+    } // switch (op)
+    return result;
+
+    #undef CASE1
+    #undef CASE2
 }
 
 // ========================================================

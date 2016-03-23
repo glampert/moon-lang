@@ -8,6 +8,8 @@
 // ================================================================================================
 
 #include "common.hpp"
+#include "pool.hpp"
+#include <cstdarg>
 
 namespace moon
 {
@@ -181,6 +183,39 @@ const char * getEmptyCString() noexcept
     return emptyStr;
 }
 
+std::string strPrintF(const char * format, ...)
+{
+// Suppress "format string is not a string literal" on GCC and Clang.
+#ifdef __GNUC__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-nonliteral"
+#endif // __GNUC__
+
+    va_list vaArgs;
+    char buffer[2048];
+    const int available = arrayLength(buffer);
+
+    va_start(vaArgs, format);
+    int result = std::vsnprintf(buffer, available, format, vaArgs);
+    va_end(vaArgs);
+
+    if (result < 0)
+    {
+        result = 0;
+    }
+    else if (result >= available)
+    {
+        result = available - 1;
+    }
+
+    buffer[result] = '\0';
+    return buffer;
+
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif // __GNUC__
+}
+
 // ========================================================
 // RcString => Reference counted string types:
 // ========================================================
@@ -195,9 +230,9 @@ ConstRcString * newConstRcString(const char * cstr)
 
     const auto strHash    = hashCString(cstr);
     const auto memBytes   = sizeof(ConstRcString) + strLen + 1;
-    std::uint8_t * memPtr = static_cast<std::uint8_t *>(std::malloc(memBytes));
+    std::uint8_t * memPtr = static_cast<std::uint8_t *>(::operator new(memBytes));
 
-    ConstRcString * rstr = reinterpret_cast<ConstRcString *>(memPtr);
+    auto rstr = reinterpret_cast<ConstRcString *>(memPtr);
     memPtr += sizeof(ConstRcString);
 
     char * strClone = reinterpret_cast<char *>(memPtr);
@@ -219,7 +254,7 @@ void releaseRcString(ConstRcString * rstr)
     rstr->refCount--;
     if (rstr->refCount == 0)
     {
-        std::free(rstr);
+        ::operator delete(reinterpret_cast<void *>(rstr));
     }
 }
 
@@ -232,9 +267,9 @@ MutableRcString * newMutableRcString(const char * cstr)
     const std::uint32_t strLen = static_cast<std::uint32_t>(std::strlen(cstr));
 
     const auto memBytes = sizeof(MutableRcString) + strLen + 1;
-    std::uint8_t * memPtr = static_cast<std::uint8_t *>(std::malloc(memBytes));
+    std::uint8_t * memPtr = static_cast<std::uint8_t *>(::operator new(memBytes));
 
-    MutableRcString * rstr = reinterpret_cast<MutableRcString *>(memPtr);
+    auto rstr = reinterpret_cast<MutableRcString *>(memPtr);
     memPtr += sizeof(MutableRcString);
 
     char * strClone = reinterpret_cast<char *>(memPtr);
@@ -256,7 +291,7 @@ void releaseRcString(MutableRcString * rstr)
     rstr->refCount--;
     if (rstr->refCount == 0)
     {
-        std::free(rstr);
+        ::operator delete(reinterpret_cast<void *>(rstr));
     }
 }
 

@@ -48,7 +48,7 @@ std::uint32_t getProgCodeIndex(const InstructionMap & instrMapping, const Interm
     auto && entry = instrMapping.find(instr);
     if (entry == std::end(instrMapping))
     {
-        internalError("Instruction " + toString(instr->op) + " not found in InstructionMap", __LINE__);
+        internalError("instruction " + toString(instr->op) + " not found in InstructionMap", __LINE__);
     }
     return entry->second;
 }
@@ -60,7 +60,7 @@ std::uint32_t getProgDataIndex(const DataMap & dataMapping, const Symbol * sym)
     auto && entry = dataMapping.find(sym);
     if (entry == std::end(dataMapping))
     {
-        internalError("Symbol " + toString(*sym) + " not found in DataMap", __LINE__);
+        internalError("symbol " + toString(*sym) + " not found in DataMap", __LINE__);
     }
     return entry->second;
 }
@@ -84,6 +84,8 @@ std::uint32_t addSymbolToProgData(VM::DataVector & progData, FunctionTable & fun
 {
     Variant var{}; // Default initialized to null.
 
+    printf("adding symbol: %s\n",sym.name);
+
     // Identifies might be variables, function or user defined types.
     if (sym.type == Symbol::Type::Identifier && !sym.isBuiltInTypeId())
     {
@@ -93,9 +95,11 @@ std::uint32_t addSymbolToProgData(VM::DataVector & progData, FunctionTable & fun
         if (type == Variant::Type::Function)
         {
             var.value.asFunctionPtr = funcTable.findFunction(sym.name);
-            //TODO should error if func is undefined?
-            //think so. Better even if we could get file/line info?
-            //Or perhaps better do it at the Parser then?
+            if (var.value.asFunctionPtr == nullptr)
+            {
+                // We should not hit this error. The parser should have already validated undefined func calls.
+                internalError("referencing undefined function '" + toString(sym.name) + "'", __LINE__);
+            }
         }
     }
     else // Literal constants/strings:
@@ -114,7 +118,7 @@ void expectNumChildren(const SyntaxTreeNode * node, const int expected)
     {
         if (node->getChild(n) == nullptr)
         {
-            internalError("Expected " + toString(expected) + " child nodes, got " + toString(n), __LINE__);
+            internalError("expected " + toString(expected) + " child nodes, got " + toString(n), __LINE__);
         }
     }
 }
@@ -124,7 +128,7 @@ void expectChildAtIndex(const SyntaxTreeNode * node, const int childIndex)
     MOON_ASSERT(node != nullptr);
     if (node->getChild(childIndex) == nullptr)
     {
-        internalError("Expected node for child index " + toString(childIndex), __LINE__);
+        internalError("expected node for child index " + toString(childIndex), __LINE__);
     }
 }
 
@@ -133,7 +137,7 @@ void expectSymbol(const SyntaxTreeNode * node)
     MOON_ASSERT(node != nullptr);
     if (node->getSymbol() == nullptr)
     {
-        internalError("Expected symbol for node " + toString(node->getType()), __LINE__);
+        internalError("expected symbol for node " + toString(node->getType()), __LINE__);
     }
 }
 
@@ -225,9 +229,9 @@ IntermediateInstr * emitNOOP(Compiler & compiler, const SyntaxTreeNode *)
     return compiler.newInstruction(OpCode::NoOp);
 }
 
-IntermediateInstr * emitModuleStart(Compiler & compiler, const SyntaxTreeNode * root)
+IntermediateInstr * emitProgStart(Compiler & compiler, const SyntaxTreeNode * root)
 {
-    auto block0 = compiler.newInstruction(OpCode::ModuleStart);
+    auto block0 = compiler.newInstruction(OpCode::ProgStart);
     if (root->getChild(0) != nullptr) // A translation unit might be empty.
     {
         auto block1 = traverseTreeRecursive(compiler, root->getChild(0));
@@ -469,13 +473,17 @@ IntermediateInstr * emitUnaryOp(Compiler & compiler, const SyntaxTreeNode * root
     return linkInstr(argument, operation);
 }
 
-template<OpCode OP>
+// The left-hand-side operand flag is set to true for the
+// compound op+store opcodes, e.g.: AddStore, SubStore, etc.
+// Those must also reference the target symbol that is to receive
+// the result of the operation.
+template<OpCode OP, bool lhsOperand = false>
 IntermediateInstr * emitBinaryOp(Compiler & compiler, const SyntaxTreeNode * root)
 {
     expectNumChildren(root, 2);
     auto arg0 = traverseTreeRecursive(compiler, root->getChild(0));
     auto arg1 = traverseTreeRecursive(compiler, root->getChild(1));
-    auto operation = compiler.newInstruction(OP);
+    auto operation = compiler.newInstruction(OP, lhsOperand ? root->getChild(0)->getSymbol() : nullptr);
     return linkInstr(linkInstr(arg0, arg1), operation);
 }
 
@@ -523,6 +531,9 @@ IntermediateInstr * emitArraySubscript(Compiler & compiler, const SyntaxTreeNode
     return linkInstr(arrayExpr, linkInstr(subscriptExpr, subscriptOp));
 }
 
+//FIXME the argument counting is still broken.
+// it will count unrelated nodes like operators.
+// e.g.: println("a" + to_string("b")) would yield 3 instead of 2
 void countArgsRecursive(const SyntaxTreeNode * root, int & argCountOut, Compiler & compiler)
 {
     if (root == nullptr)
@@ -591,7 +602,7 @@ IntermediateInstr * emitParamChain(Compiler & compiler, const SyntaxTreeNode * r
 IntermediateInstr * emitFunctionDecl(Compiler & compiler, const SyntaxTreeNode * root)
 {
     expectSymbol(root); // Func name
-    auto funcStart = compiler.newInstruction(OpCode::FuncStart, root->getSymbol());
+    auto funcStart = compiler.newInstruction(OpCode::FuncStart, root->getSymbol(), Variant::Type::Function);
     auto funcEnd   = compiler.newInstruction(OpCode::FuncEnd);
 
     // Resolve the function body if any. Parameter list and return type are not relevant here.
@@ -726,7 +737,7 @@ IntermediateInstr * emitMatchDefault(Compiler & compiler, const SyntaxTreeNode *
 // ----------------------------------------------------------------------------
 static const EmitInstrForNodeCB emitInstrCallbacks[]
 {
-    &emitModuleStart,                       // TranslationUnit
+    &emitProgStart,                         // TranslationUnit
     &emitNOOP,                              // ModuleDefinition
     &emitStatement,                         // Statement
     &emitIfThen,                            // IfThenStatement
@@ -769,11 +780,11 @@ static const EmitInstrForNodeCB emitInstrCallbacks[]
     &emitBinaryOp<OpCode::Mod>,             // ExprModulo
     &emitBinaryOp<OpCode::Div>,             // ExprDivide
     &emitBinaryOp<OpCode::Mul>,             // ExprMultiply
-    &emitBinaryOp<OpCode::SubAssign>,       // ExprSubAssign
-    &emitBinaryOp<OpCode::AddAssign>,       // ExprAddAssign
-    &emitBinaryOp<OpCode::ModAssign>,       // ExprModAssign
-    &emitBinaryOp<OpCode::DivAssign>,       // ExprDivAssign
-    &emitBinaryOp<OpCode::MulAssign>,       // ExprMulAssign
+    &emitBinaryOp<OpCode::SubStore, true>,  // ExprSubAssign
+    &emitBinaryOp<OpCode::AddStore, true>,  // ExprAddAssign
+    &emitBinaryOp<OpCode::ModStore, true>,  // ExprModAssign
+    &emitBinaryOp<OpCode::DivStore, true>,  // ExprDivAssign
+    &emitBinaryOp<OpCode::MulStore, true>,  // ExprMulAssign
     &emitUnaryOp<OpCode::Negate>,           // ExprUnaryMinus
     &emitUnaryOp<OpCode::Plus>              // ExprUnaryPlus
 };
@@ -869,7 +880,9 @@ void Compiler::clearVisited() noexcept
     visitedNodes.clear();
 }
 
-void Compiler::intermediateToVM(VM::DataVector & progData, VM::CodeVector & progCode, FunctionTable & funcTable)
+void Compiler::intermediateToVM(VM::DataVector & progData,
+                                VM::CodeVector & progCode,
+                                FunctionTable  & funcTable)
 {
     // We might still eliminate a few noops, but it should
     // be worthwhile reserving the memory beforehand anyway.
@@ -905,31 +918,50 @@ void Compiler::intermediateToVM(VM::DataVector & progData, VM::CodeVector & prog
         }
     }
 
-    // Pad the end with one noop to anchor any potential jumps to the
-    // end of the program, since we have removed all the other noops.
-    progCode.push_back(packInstruction(OpCode::NoOp, 0));
+    // Pad the end with an instruction to anchor any potential jumps to the
+    // end of the program, since we have removed all the other noop anchors.
+    progCode.push_back(packInstruction(OpCode::ProgEnd, 0));
 
     // Now map back the data and instructions into the progCode and progData:
     for (auto instr = instrListHead; instr != nullptr; instr = instr->next)
     {
-        fixReferences(instr, progData, progCode);
+        fixReferences(instr, progData, progCode, funcTable);
     }
 }
 
-void Compiler::fixReferences(const IntermediateInstr * instr, VM::DataVector & progData, VM::CodeVector & progCode)
+void Compiler::fixReferences(const IntermediateInstr * instr,
+                             VM::DataVector & progData,
+                             VM::CodeVector & progCode,
+                             FunctionTable  & funcTable)
 {
     MOON_ASSERT(instr != nullptr);
 
-    (void)progData;
-    //TODO NOTE: we need to update function definitions in the
-    //global function table with the jump address of each script method!!!
+    (void)progData;//TODO remove if unneeded
 
     switch (instr->op)
     {
-    //case OpCode::FuncDecl : //TODO
+    case OpCode::FuncStart :
+        {
+            // Index of this instruction and its data operand (the function object in funcTable):
+            auto selfCodeIdx      = getProgCodeIndex(instrMapping, instr);
+            auto operandDataIndex = getProgDataIndex(dataMapping, instr->operand.symbol);
 
-    case OpCode::Jmp        :
-    case OpCode::JmpIfTrue  :
+            const char * funcName = instr->operand.symbol->name;
+            const auto func = funcTable.findFunction(funcName);
+
+            if (func == nullptr)
+            {
+                internalError("missing function table entry for '" +
+                              toString(funcName) + "'", __LINE__);
+            }
+            MOON_ASSERT(selfCodeIdx < progCode.size() && "Index out-of-bounds!");
+
+            funcTable.setJumpTargetFor(funcName, selfCodeIdx);
+            progCode[selfCodeIdx] = packInstruction(instr->op, operandDataIndex);
+            break;
+        }
+    case OpCode::Jmp :
+    case OpCode::JmpIfTrue :
     case OpCode::JmpIfFalse :
         {
             // Index of this instruction and its jump target:
@@ -937,7 +969,7 @@ void Compiler::fixReferences(const IntermediateInstr * instr, VM::DataVector & p
             auto operandCodeIdx = getProgCodeIndex(instrMapping, instr->operand.jumpTarget);
 
             // Clamp if this instruction jumps to the end of the program.
-            // (happens to removed noops that pointed to the end of a block/if-statement).
+            // (happens to removed noops that pointed to the end of a block/if-else-statement).
             operandCodeIdx = std::min(operandCodeIdx, static_cast<std::uint32_t>(progCode.size() - 1));
 
             MOON_ASSERT(selfCodeIdx < progCode.size() && "Index out-of-bounds!");
@@ -951,6 +983,13 @@ void Compiler::fixReferences(const IntermediateInstr * instr, VM::DataVector & p
 
     case OpCode::Load :
     case OpCode::Store :
+
+    case OpCode::SubStore :
+    case OpCode::AddStore :
+    case OpCode::ModStore :
+    case OpCode::DivStore :
+    case OpCode::MulStore :
+
     case OpCode::Call :
         {
             // Index of this instruction and its data operand:

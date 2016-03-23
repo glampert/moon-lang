@@ -36,16 +36,13 @@
  * +-------------------------------------------------+ */
 
 /* 'Requires' section is added to generated parser header file.
- * Good place for forwad declaration and types used in the yylval union. */
+ * Good place for forward declaration and types used in the yylval union. */
 %code requires
 {
 
 #define INC_PARSER 1
 #include "common.hpp"
 #undef  INC_PARSER
-
-#include "symbol_table.hpp"
-#include "syntax_tree.hpp"
 
 } /* %code requires */
 
@@ -54,45 +51,81 @@
 %code
 {
 
-using STNode = moon::SyntaxTreeNode::Type;
-using STEval = moon::SyntaxTreeNode::Eval;
+#include "symbol_table.hpp"
+#include "syntax_tree.hpp"
+#include "runtime.hpp"
 
-static moon::SyntaxTreeNode * newLiteralNode(moon::ParseContext & ctx, const STEval tid,
-                                             const moon::Symbol * symbol)
+namespace moon
+{
+
+using STNode = SyntaxTreeNode::Type;
+using STEval = SyntaxTreeNode::Eval;
+
+// ------------------------------------------------------------------
+
+static Variant::Type eval2VarType(const STEval evalType)
+{
+    switch (evalType)
+    {
+    case STEval::Int    : return Variant::Type::Integer;
+    case STEval::Long   : return Variant::Type::Integer;
+    case STEval::Bool   : return Variant::Type::Integer;
+    case STEval::Float  : return Variant::Type::Float;
+    case STEval::String : return Variant::Type::String;
+    default :
+        {
+            compilerWarning("can't covert STEval to Variant::Type", __FILE__, __LINE__);
+            return Variant::Type::Null;
+        }
+    } // switch (evalType)
+}
+
+// ------------------------------------------------------------------
+
+static SyntaxTreeNode * newLiteralNode(ParseContext & ctx,
+                                       const STEval tid,
+                                       const Symbol * symbol)
 {
     return ctx.syntTree->newNodeWithEval(STNode::ExprLiteralConst, symbol, tid);
 }
 
-static moon::SyntaxTreeNode * newTypeIdNode(moon::ParseContext & ctx, const STEval tid,
-                                            const moon::Symbol * symbol = nullptr)
+// ------------------------------------------------------------------
+
+static SyntaxTreeNode * newTypeIdNode(ParseContext & ctx,
+                                      const STEval tid,
+                                      const Symbol * symbol = nullptr)
 {
     if (symbol == nullptr)
     {
-        symbol = moon::symbolFromEval(*ctx.symTable, tid);
+        symbol = symbolFromEval(*ctx.symTable, tid);
     }
     return ctx.syntTree->newNodeWithEval(STNode::ExprTypeIdent, symbol, tid);
 }
 
-static moon::SyntaxTreeNode * newCompareNode(moon::ParseContext & ctx, const STNode type,
-                                             const moon::SyntaxTreeNode * child0,
-                                             const moon::SyntaxTreeNode * child1,
-                                             const moon::SyntaxTreeNode * child2)
+// ------------------------------------------------------------------
+
+static SyntaxTreeNode * newCompareNode(ParseContext & ctx, const STNode type,
+                                       const SyntaxTreeNode * child0,
+                                       const SyntaxTreeNode * child1,
+                                       const SyntaxTreeNode * child2)
 {
-    /* Special 'if X then' case: */
+    // Special 'if X then' case:
     if (child0->getType() == STNode::ExprNameIdent)
     {
-        /* Turn it into a compare against zero/null/false expression: */
+        // Turn it into a compare against zero/null/false expression:
         auto zeroNode = newLiteralNode(ctx, STEval::Long, ctx.symTable->findOrDefineValue(0));
         auto compNode = ctx.syntTree->newNode(STNode::ExprCmpNotEqual, child0, zeroNode);
         return ctx.syntTree->newNode(type, compNode, child1, child2);
     }
-    /* Normal 'if X comp Y then' case: */
+    // Normal 'if X comp Y then' case:
     return ctx.syntTree->newNode(type, child0, child1, child2);
 }
 
-static moon::SyntaxTreeNode * newBinaryOpNode(moon::ParseContext & ctx, const STNode type,
-                                              const moon::SyntaxTreeNode * lhs,
-                                              const moon::SyntaxTreeNode * rhs)
+// ------------------------------------------------------------------
+
+static SyntaxTreeNode * newBinaryOpNode(ParseContext & ctx, const STNode type,
+                                        const SyntaxTreeNode * lhs,
+                                        const SyntaxTreeNode * rhs)
 {
     //if (!compatibleTypes(lhs, rhs)
     //{
@@ -101,12 +134,40 @@ static moon::SyntaxTreeNode * newBinaryOpNode(moon::ParseContext & ctx, const ST
     return ctx.syntTree->newNode(type, lhs, rhs, nullptr, rhs->getEval());
 }
 
-static moon::SyntaxTreeNode * newUnaryOpNode(moon::ParseContext & ctx, const STNode type,
-                                             const moon::SyntaxTreeNode * operand)
+// ------------------------------------------------------------------
+
+static SyntaxTreeNode * newUnaryOpNode(ParseContext & ctx, const STNode type,
+                                       const SyntaxTreeNode * operand)
 {
     return ctx.syntTree->newNode(type, operand, nullptr, nullptr, operand->getEval());
 }
 
+// ------------------------------------------------------------------
+
+static void collectFunctionArgTypes(const SyntaxTreeNode * root,
+                                    Variant::Type * argTypesOut,
+                                    std::uint32_t & argCountOut,
+                                    std::uint32_t & extraFlagsOut)
+{
+    if (root == nullptr)
+    {
+        return;
+    }
+
+    auto argNode  = root->getChild(1);
+    auto evalType = argNode->getEval();
+
+    if (evalType == STEval::VarArgs)
+    {
+        extraFlagsOut |= Function::VarArgs;
+        return;
+    }
+
+    argTypesOut[argCountOut++] = eval2VarType(evalType);
+    collectFunctionArgTypes(root->getChild(0), argTypesOut, argCountOut, extraFlagsOut);
+}
+
+} /* namespace moon */
 } /* %code */
 
 /* +-------------------------------------------------+ *
@@ -439,6 +500,37 @@ func_declaration
              * child[1] = function body
              * child[2] = return type */
             $$ = ctx.syntTree->newNodeWithSymbol(STNode::FuncDeclStatement, $2, $4, $7, $6, $6->getEval());
+
+            // Redefinition not allowed. We also don't currently support function overloads.
+            if (ctx.fnTable->findFunction($2->name))
+            {
+                std::string fname = color::white() + toString($2->name) + color::restore();
+                Parser::error("function '" + fname + "' was defined more than once");
+            }
+
+            std::uint32_t extraFlags = 0;
+            std::uint32_t argCount   = 0;
+            Variant::Type argTypes[Function::MaxArguments];
+
+            // nullptr indicates no return type (void).
+            const Variant::Type * pRetType = nullptr;
+            Variant::Type retTypeTemp;
+
+            if ($6->getEval() != STEval::Void)
+            {
+                retTypeTemp = eval2VarType($6->getEval());
+                pRetType = &retTypeTemp;
+            }
+
+            collectFunctionArgTypes($4, argTypes, argCount, extraFlags);
+            if (extraFlags & Function::VarArgs)
+            {
+                argCount = 0;
+            }
+
+            // Register the new function:
+            ctx.fnTable->addFunction($2->name, pRetType, (argCount != 0) ? argTypes : nullptr,
+                                     argCount, 0, extraFlags, nullptr);
         }
     ;
 
@@ -451,9 +543,11 @@ func_parameter_list_declaration
         }
     | IDENTIFIER "..."
         {
+            // Note: In a VarArgs function, the varargs node will be at child 1.
+            // This is to facilitate the traversal in collectFunctionArgTypes().
             auto varArgsNode = newTypeIdNode(ctx, STEval::VarArgs);
             $$ = ctx.syntTree->newNodeWithSymbol(STNode::VarDeclStatement, $1,
-                       varArgsNode, nullptr, nullptr, varArgsNode->getEval());
+                       nullptr, varArgsNode, nullptr, varArgsNode->getEval());
         }
     | %empty
         {
@@ -688,17 +782,17 @@ range_param
     | INT_LITERAL
         {
             $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprLiteralConst, $1,
-                    nullptr, nullptr, nullptr, moon::evalTypeFromSymbol(*$1));
+                          nullptr, nullptr, nullptr, evalTypeFromSymbol(*$1));
         }
     | STR_LITERAL
         {
             auto symbol = $1;
             if (std::strlen(symbol->value.asStringPtr) != 1)
             {
-                Parser::error("only character literals are allowed in range expressions.");
+                Parser::error("only character literals are allowed in range expressions");
             }
             $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprLiteralConst, symbol,
-                    nullptr, nullptr, nullptr, moon::evalTypeFromSymbol(*symbol));
+                          nullptr, nullptr, nullptr, evalTypeFromSymbol(*symbol));
         }
     ;
 
@@ -732,7 +826,7 @@ enum_constant
     | IDENTIFIER "=" INT_LITERAL
         {
             auto enumValNode = ctx.syntTree->newNodeWithSymbol(STNode::ExprLiteralConst, $3,
-                                  nullptr, nullptr, nullptr, moon::evalTypeFromSymbol(*$3));
+                                        nullptr, nullptr, nullptr, evalTypeFromSymbol(*$3));
 
             $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprNameIdent, $1,
                     nullptr, enumValNode, nullptr, enumValNode->getEval());
@@ -797,4 +891,4 @@ void Parser::error(const std::string & message)
     throw ParserException{ "Parser error" };
 }
 
-} // namespace moon {}
+} /* namespace moon */

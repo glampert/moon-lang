@@ -98,8 +98,14 @@ public:
 
 private:
 
-    void intermediateToVM(VM::DataVector & progData, VM::CodeVector & progCode, FunctionTable & funcTable);
-    void fixReferences(const IntermediateInstr * instr, VM::DataVector & progData, VM::CodeVector & progCode);
+    void intermediateToVM(VM::DataVector & progData,
+                          VM::CodeVector & progCode,
+                          FunctionTable  & funcTable);
+
+    void fixReferences(const IntermediateInstr * instr,
+                       VM::DataVector & progData,
+                       VM::CodeVector & progCode,
+                       FunctionTable  & funcTable);
 
     // instructionCount is also the uid.
     std::uint32_t instructionCount;

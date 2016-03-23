@@ -18,7 +18,8 @@ std::string toString(const OpCode op)
     static const std::string opCodeNames[]
     {
         "NOOP",
-        "MODULE_START",
+        "PROG_START",
+        "PROG_END",
         "JMP",
         "JMP_IF_TRUE",
         "JMP_IF_FALSE",
@@ -51,11 +52,11 @@ std::string toString(const OpCode op)
         "MOD",
         "DIV",
         "MUL",
-        "SUB_ASSIGN",
-        "ADD_ASSIGN",
-        "MOD_ASSIGN",
-        "DIV_ASSIGN",
-        "MUL_ASSIGN",
+        "SUB_STORE",
+        "ADD_STORE",
+        "MOD_STORE",
+        "DIV_STORE",
+        "MUL_STORE",
         "LOGIC_NOT",
         "NEGATE",
         "PLUS"

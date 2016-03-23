@@ -20,9 +20,10 @@ namespace moon
 namespace
 {
 
+// Function signature of an opcode handler. See the array of handlers below.
 using OpCodeHandlerCB = void (*)(VM & vm, std::uint32_t operandIndex);
 
-void opNOOP(VM &, const std::uint32_t)
+void opNOOP(VM &, std::uint32_t)
 {
     // Surprisingly, a no-op does nothing :P
 }
@@ -48,31 +49,6 @@ void opJumpIfFalse(VM & vm, const std::uint32_t operandIndex)
     }
 }
 
-void opCall(VM & vm, const std::uint32_t operandIndex)
-{
-    const Variant funcVar  = vm.data[operandIndex];
-    const Variant argCount = vm.stack.pop();
-
-    if (funcVar.type != Variant::Type::Function)
-    {
-        MOON_RUNTIME_EXCEPTION("expected a function object!");
-    }
-    if (funcVar.value.asFunctionPtr == nullptr)
-    {
-        MOON_RUNTIME_EXCEPTION("attempting to call a null function object!");
-    }
-    if (argCount.type != Variant::Type::Integer)
-    {
-        MOON_RUNTIME_EXCEPTION("function arg count sentry should be an integer!");
-    }
-
-    const auto argc = argCount.value.asInteger;
-    const auto argv = vm.stack.slice(vm.stack.getCurrSize() - argc, argc);
-    vm.stack.popN(argc);
-
-    (*funcVar.value.asFunctionPtr)(vm, argv);
-}
-
 void opLoad(VM & vm, const std::uint32_t operandIndex)
 {
     // Push integer operand to the VM stack.
@@ -86,22 +62,52 @@ void opStore(VM & vm, const std::uint32_t operandIndex)
     vm.data[operandIndex] = vm.stack.pop();
 }
 
-template<OpCode OP>
-void opBinary(VM & vm, const std::uint32_t)
+void opCall(VM & vm, const std::uint32_t operandIndex)
 {
-    const auto operandB = vm.stack.pop();
-    const auto operandA = vm.stack.pop();
+    const Variant funcVar = vm.data[operandIndex];
+    const Variant argCVar = vm.stack.pop();
+
+    if (funcVar.type != Variant::Type::Function)
+    {
+        MOON_RUNTIME_EXCEPTION("expected a function object!");
+    }
+    if (funcVar.value.asFunctionPtr == nullptr)
+    {
+        MOON_RUNTIME_EXCEPTION("attempting to call a null function object!");
+    }
+    if (argCVar.type != Variant::Type::Integer)
+    {
+        MOON_RUNTIME_EXCEPTION("function arg count sentry should be an integer!");
+    }
+
+    const auto argc = argCVar.value.asInteger;
+    const auto argv = vm.stack.slice(vm.stack.getCurrSize() - argc, argc);
+    vm.stack.popN(argc);
+
+    funcVar.value.asFunctionPtr->invoke(vm, argv);
+}
+
+template<OpCode OP>
+void opUnary(VM & vm, std::uint32_t)
+{
+    vm.stack.push(performUnaryOp(OP, vm.stack.pop()));
+}
+
+template<OpCode OP>
+void opBinary(VM & vm, std::uint32_t)
+{
+    const Variant operandB = vm.stack.pop();
+    const Variant operandA = vm.stack.pop();
     vm.stack.push(performBinaryOp(OP, operandA, operandB));
 }
 
 template<OpCode OP>
-void opBinaryAssign(VM & vm, const std::uint32_t)
+void opBinaryStore(VM & vm, const std::uint32_t operandIndex)
 {
-    (void)vm;
-//    const auto operandB = vm.stack.pop();
-//    const auto operandA = vm.stack.pop();
-//    const auto result   = performBinaryOp(OP, operandA, operandB);
-//    TODO where to write the result?
+    // Compound op+store operation.
+    const Variant operandB = vm.stack.pop();
+    const Variant operandA = vm.stack.pop();
+    vm.data[operandIndex] = performBinaryOp(OP, operandA, operandB);
 }
 
 // ----------------------------------------------------------------------------
@@ -114,7 +120,8 @@ void opBinaryAssign(VM & vm, const std::uint32_t)
 static const OpCodeHandlerCB opHandlerCallbacks[]
 {
     &opNOOP,                            // NoOp
-    &opNOOP,                            // ModuleStart
+    &opNOOP,                            // ProgStart
+    &opNOOP,                            // ProgEnd
     &opJump,                            // Jmp
     &opJumpIfTrue,                      // JmpIfTrue
     &opJumpIfFalse,                     // JmpIfFalse
@@ -147,14 +154,14 @@ static const OpCodeHandlerCB opHandlerCallbacks[]
     &opBinary<OpCode::Mod>,             // Mod
     &opBinary<OpCode::Div>,             // Div
     &opBinary<OpCode::Mul>,             // Mul
-    &opBinaryAssign<OpCode::Sub>,       // SubAssign
-    &opBinaryAssign<OpCode::Add>,       // AddAssign
-    &opBinaryAssign<OpCode::Mod>,       // ModAssign
-    &opBinaryAssign<OpCode::Div>,       // DivAssign
-    &opBinaryAssign<OpCode::Mul>,       // MulAssign
-    &opNOOP,                            // LogicNot
-    &opNOOP,                            // Negate
-    &opNOOP                             // Plus
+    &opBinaryStore<OpCode::Sub>,        // SubStore
+    &opBinaryStore<OpCode::Add>,        // AddStore
+    &opBinaryStore<OpCode::Mod>,        // ModStore
+    &opBinaryStore<OpCode::Div>,        // DivStore
+    &opBinaryStore<OpCode::Mul>,        // MulStore
+    &opUnary<OpCode::LogicNot>,         // LogicNot
+    &opUnary<OpCode::Negate>,           // Negate
+    &opUnary<OpCode::Plus>              // Plus
 };
 static_assert(arrayLength(opHandlerCallbacks) == unsigned(OpCode::Count),
               "Keep this array in sync with the enum declaration!");
