@@ -28,6 +28,13 @@ void opNOOP(VM &, std::uint32_t)
     // Surprisingly, a no-op does nothing :P
 }
 
+void opProgEnd(VM & vm, std::uint32_t)
+{
+    // Set the program count to the end of the code vector to terminate
+    // execution, even if there was more code after this instruction.
+    vm.setProgramCounter(static_cast<int>(vm.code.size()));
+}
+
 void opJump(VM & vm, const std::uint32_t operandIndex)
 {
     vm.setProgramCounter(operandIndex);
@@ -121,7 +128,7 @@ static const OpCodeHandlerCB opHandlerCallbacks[]
 {
     &opNOOP,                            // NoOp
     &opNOOP,                            // ProgStart
-    &opNOOP,                            // ProgEnd
+    &opProgEnd,                         // ProgEnd
     &opJump,                            // Jmp
     &opJumpIfTrue,                      // JmpIfTrue
     &opJumpIfFalse,                     // JmpIfFalse
@@ -184,7 +191,7 @@ VM::VM(const bool loadBuiltIns, const int stackSize)
 
 void VM::setProgramCounter(const int target) noexcept
 {
-    MOON_ASSERT(target >= 0 && target < code.size() && "Invalid instruction index!");
+    MOON_ASSERT(target >= 0 && target <= code.size() && "Invalid instruction index!");
 
     // The -1 is necessary because the 'for' loop
     // in execute() will still increment the pc after
@@ -235,7 +242,7 @@ static void dumpVariant(const Variant var, const int index, std::ostream & os)
 
     os << color::cyan() << "[ " << std::setw(3) << std::setfill(' ') << index << " ] "
        << color::yellow() << "0x" << std::hex << std::setw(16) << std::setfill('0')
-       << reinterpret_cast<std::uintptr_t>(var.value.asVoidPtr) << color::restore() << " ("
+       << static_cast<std::uint16_t>(var.value.asInteger) << color::restore() << " ("
        << color::red() << std::dec << valStr << color::restore() << ") => "
        << toString(var.type) << "\n";
 }

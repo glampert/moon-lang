@@ -84,8 +84,6 @@ std::uint32_t addSymbolToProgData(VM::DataVector & progData, FunctionTable & fun
 {
     Variant var{}; // Default initialized to null.
 
-    printf("adding symbol: %s\n",sym.name);
-
     // Identifies might be variables, function or user defined types.
     if (sym.type == Symbol::Type::Identifier && !sym.isBuiltInTypeId())
     {
@@ -148,7 +146,7 @@ void printIntermediateInstrListHelper(const IntermediateInstr * head, std::ostre
     int printedItems = 0;
     if (head != nullptr)
     {
-        os << color::white() << "Op-code count: " << static_cast<unsigned>(OpCode::Count)
+        os << color::white() << "opcode count: " << static_cast<unsigned>(OpCode::Count)
            << color::restore() << "\n";
 
         for (auto instr = head; instr != nullptr; instr = instr->next)
@@ -809,6 +807,7 @@ IntermediateInstr * traverseTreeRecursive(Compiler & compiler, const SyntaxTreeN
 Compiler::Compiler()
     : instructionCount   { 0       }
     , instrListHead      { nullptr }
+    , funcListHead       { nullptr }
     , lastLoopStartLabel { nullptr }
     , lastLoopEndLabel   { nullptr }
     , lastFuncEndLabel   { nullptr }
@@ -822,20 +821,16 @@ void Compiler::compile(VM & vm)
 
 void Compiler::printIntermediateInstructions(std::ostream & os) const
 {
+    os << "Global code:\n";
     printIntermediateInstrListHelper(instrListHead, os);
+
+    os << "\nFunction code:\n";
+    printIntermediateInstrListHelper(funcListHead,  os);
 }
 
 void Compiler::printInstructionMapping(std::ostream & os) const
 {
     printInstructionMappingHelper(instrMapping, os);
-}
-
-std::ostream & operator << (std::ostream & os, const Compiler & compiler)
-{
-    compiler.printIntermediateInstructions(os);
-    os << "\n";
-    compiler.printInstructionMapping(os);
-    return os;
 }
 
 void Compiler::setLoopAnchors(const IntermediateInstr * startLabel, const IntermediateInstr * endLabel) noexcept
@@ -880,16 +875,78 @@ void Compiler::clearVisited() noexcept
     visitedNodes.clear();
 }
 
-void Compiler::intermediateToVM(VM::DataVector & progData,
-                                VM::CodeVector & progCode,
-                                FunctionTable  & funcTable)
+void Compiler::intermediateToVM(VM::DataVector & progData, VM::CodeVector & progCode, FunctionTable & funcTable)
 {
     // We might still eliminate a few noops, but it should
     // be worthwhile reserving the memory beforehand anyway.
     progCode.reserve(instructionCount);
 
-    for (auto instr = instrListHead; instr != nullptr; instr = instr->next)
+    // This step removes duplicate data and unneeded noops from the intermediate code.
+    // It also serves to separate the function definition from the rest of the code.
+    createMappings(progData, progCode, funcTable, instrListHead, /* skipFunctions = */ true);
+
+    // Pad the end with an instruction to anchor any potential jumps to the
+    // end of the program, since we have removed all the other noop anchors.
+    progCode.push_back(packInstruction(OpCode::NoOp,    0));
+    progCode.push_back(packInstruction(OpCode::ProgEnd, 0));
+
+    // Now we perform the same mapping for the function that got set aside in the previous step.
+    createMappings(progData, progCode, funcTable, funcListHead, /* skipFunctions = */ false);
+
+    // And map back the instructions into the progCode vector:
+    IntermediateInstr * instr;
+    for (instr = instrListHead; instr != nullptr; instr = instr->next)
     {
+        fixReferences(instr, progCode, funcTable);
+    }
+    for (instr = funcListHead; instr != nullptr; instr = instr->next)
+    {
+        fixReferences(instr, progCode, funcTable);
+    }
+}
+
+void Compiler::createMappings(VM::DataVector & progData, VM::CodeVector & progCode,
+                              FunctionTable & funcTable, IntermediateInstr * listHead,
+                              const bool skipFunctions)
+{
+    IntermediateInstr * funcListTail = nullptr;
+    IntermediateInstr * prevInstr    = listHead;
+
+    for (auto instr = listHead; instr != nullptr;)
+    {
+        // We skip the functions in this pass.
+        // They get processed on the next one.
+        if (skipFunctions && instr->op == OpCode::FuncStart)
+        {
+            if (funcListHead == nullptr)
+            {
+                funcListHead = funcListTail = instr;
+            }
+            else
+            {
+                funcListTail->next = instr;
+            }
+
+            for (; instr != nullptr && instr->op != OpCode::FuncEnd;
+                 instr = instr->next) { }
+
+            if (instr == nullptr)
+            {
+                break;
+            }
+
+            // Unlink this function from the main instruction chain:
+            auto temp    = instr->next;
+            instr->next  = nullptr;
+            funcListTail = instr;
+
+            // Skip FuncEnd:
+            prevInstr->next = temp;
+            prevInstr = instr;
+            instr = temp;
+            continue;
+        }
+
         // On our setup, noops are just placeholders for
         // the jump targets. They can be eliminated now.
         if (instr->op != OpCode::NoOp)
@@ -905,8 +962,7 @@ void Compiler::intermediateToVM(VM::DataVector & progData,
                 }
             }
 
-            // Operand index and size are set later.
-            // For now this instruction is just a placeholder.
+            // Operand index is set later. For now this instruction is just a placeholder.
             progCode.push_back(packInstruction(instr->op, 0));
             instrMapping.emplace(instr, progCode.size() - 1);
         }
@@ -916,40 +972,29 @@ void Compiler::intermediateToVM(VM::DataVector & progData,
             // index of the next instruction to be added to the progCode vector.
             instrMapping.emplace(instr, progCode.size());
         }
-    }
 
-    // Pad the end with an instruction to anchor any potential jumps to the
-    // end of the program, since we have removed all the other noop anchors.
-    progCode.push_back(packInstruction(OpCode::ProgEnd, 0));
-
-    // Now map back the data and instructions into the progCode and progData:
-    for (auto instr = instrListHead; instr != nullptr; instr = instr->next)
-    {
-        fixReferences(instr, progData, progCode, funcTable);
+        // Advance on the list.
+        prevInstr = instr;
+        instr = instr->next;
     }
 }
 
-void Compiler::fixReferences(const IntermediateInstr * instr,
-                             VM::DataVector & progData,
-                             VM::CodeVector & progCode,
-                             FunctionTable  & funcTable)
+void Compiler::fixReferences(const IntermediateInstr * instr, VM::CodeVector & progCode, FunctionTable & funcTable)
 {
     MOON_ASSERT(instr != nullptr);
-
-    (void)progData;//TODO remove if unneeded
-
     switch (instr->op)
     {
+    // Function declarations:
     case OpCode::FuncStart :
         {
             // Index of this instruction and its data operand (the function object in funcTable):
-            auto selfCodeIdx      = getProgCodeIndex(instrMapping, instr);
+            auto selfCodeIdx = getProgCodeIndex(instrMapping, instr);
             auto operandDataIndex = getProgDataIndex(dataMapping, instr->operand.symbol);
 
             const char * funcName = instr->operand.symbol->name;
-            const auto func = funcTable.findFunction(funcName);
+            const auto funcObj = funcTable.findFunction(funcName);
 
-            if (func == nullptr)
+            if (funcObj == nullptr)
             {
                 internalError("missing function table entry for '" +
                               toString(funcName) + "'", __LINE__);
@@ -960,12 +1005,13 @@ void Compiler::fixReferences(const IntermediateInstr * instr,
             progCode[selfCodeIdx] = packInstruction(instr->op, operandDataIndex);
             break;
         }
-    case OpCode::Jmp :
-    case OpCode::JmpIfTrue :
+    // Instructions that reference a code address:
+    case OpCode::Jmp        :
+    case OpCode::JmpIfTrue  :
     case OpCode::JmpIfFalse :
         {
             // Index of this instruction and its jump target:
-            auto selfCodeIdx    = getProgCodeIndex(instrMapping, instr);
+            auto selfCodeIdx = getProgCodeIndex(instrMapping, instr);
             auto operandCodeIdx = getProgCodeIndex(instrMapping, instr->operand.jumpTarget);
 
             // Clamp if this instruction jumps to the end of the program.
@@ -976,31 +1022,24 @@ void Compiler::fixReferences(const IntermediateInstr * instr,
             progCode[selfCodeIdx] = packInstruction(instr->op, operandCodeIdx);
             break;
         }
-
-    // this rule can actually be shared by several instruction types...
-
-    case OpCode::NewVar :
-
-    case OpCode::Load :
-    case OpCode::Store :
-
+    // Instructions that reference some data:
+    case OpCode::NewVar   :
+    case OpCode::Load     :
+    case OpCode::Store    :
     case OpCode::SubStore :
     case OpCode::AddStore :
     case OpCode::ModStore :
     case OpCode::DivStore :
     case OpCode::MulStore :
-
-    case OpCode::Call :
+    case OpCode::Call     :
         {
             // Index of this instruction and its data operand:
-            auto selfCodeIdx      = getProgCodeIndex(instrMapping, instr);
+            auto selfCodeIdx = getProgCodeIndex(instrMapping, instr);
             auto operandDataIndex = getProgDataIndex(dataMapping, instr->operand.symbol);
-
             MOON_ASSERT(selfCodeIdx < progCode.size() && "Index out-of-bounds!");
             progCode[selfCodeIdx] = packInstruction(instr->op, operandDataIndex);
             break;
         }
-
     default :
         break;
     } // switch (instr->op)

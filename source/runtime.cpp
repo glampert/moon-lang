@@ -7,8 +7,11 @@
 // Brief: Runtime support structures and code.
 // ================================================================================================
 
+#include "vm.hpp"
 #include "runtime.hpp"
 #include "symbol_table.hpp"
+
+// For std::is_pod<T>
 #include <type_traits>
 
 namespace moon
@@ -89,14 +92,18 @@ std::string toString(const Variant::Type type)
 void Function::invoke(VM & vm, Stack::Slice args) const
 {
     validateArguments(args);
+
     if (nativeCallback != nullptr)
     {
         nativeCallback(vm, args);
     }
+    else if (jumpTarget != TargetNative)
+    {
+        vm.setProgramCounter(jumpTarget);
+    }
     else
     {
-        //TODO jumpTarget? error?
-        //TODO return type?
+        MOON_RUNTIME_EXCEPTION("function has no native callback or jump target!");
     }
 }
 
@@ -111,7 +118,7 @@ void Function::validateArguments(Stack::Slice args) const
     const std::uint32_t argsIn = args.getSize();
     if (argsIn != argumentCount)
     {
-        MOON_RUNTIME_EXCEPTION("function '" + toString(name) + "()' expected " +
+        MOON_RUNTIME_EXCEPTION("function '" + toString(name) + "' expected " +
                                toString(argumentCount) + " argument(s) but " +
                                toString(argsIn) + " where provided.");
     }
@@ -123,7 +130,7 @@ void Function::validateArguments(Stack::Slice args) const
 
         if (typeIn != typeExpected)
         {
-            MOON_RUNTIME_EXCEPTION("function '" + toString(name) + "()' expected " +
+            MOON_RUNTIME_EXCEPTION("function '" + toString(name) + "' expected " +
                                    toString(typeExpected) + " for argument " + toString(a) +
                                    " but " + toString(typeIn) + " was provided.");
         }

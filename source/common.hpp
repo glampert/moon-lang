@@ -65,6 +65,9 @@ static_assert(sizeof(LangFloat) == 4, "Expected 32-bits float!");
 // Parser/Lexer aux types:
 // ========================================================
 
+// We inherit from yyFlexLexer to be able to declare the
+// ParseContext member, which will be needed to pass some
+// information around that the Parser and Lexer must share.
 class Lexer final
     : public yyFlexLexer
 {
@@ -115,7 +118,7 @@ struct ParseContext final
 // Bison needs this #define.
 #define YYSTYPE SemanticVal
 
-// This is the function called by the parser to get a token from the lexer.
+// This is the function called by the Parser to get a token from the Lexer.
 // Bison requires it to be named yylex(), but we can control which parameters it takes.
 int yylex(SemanticVal * yylval, ParseContext & ctx);
 

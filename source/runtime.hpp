@@ -17,9 +17,7 @@ namespace moon
 {
 
 // Forward declarations for the Variant union below.
-struct Type;
 struct Function;
-struct Object;
 
 // ========================================================
 // Runtime Variant (the common data type):

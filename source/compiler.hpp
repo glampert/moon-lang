@@ -102,14 +102,22 @@ private:
                           VM::CodeVector & progCode,
                           FunctionTable  & funcTable);
 
+    void createMappings(VM::DataVector & progData,
+                        VM::CodeVector & progCode,
+                        FunctionTable  & funcTable,
+                        IntermediateInstr * listHead,
+                        bool skipFunctions);
+
     void fixReferences(const IntermediateInstr * instr,
-                       VM::DataVector & progData,
                        VM::CodeVector & progCode,
                        FunctionTable  & funcTable);
+
+private:
 
     // instructionCount is also the uid.
     std::uint32_t instructionCount;
     IntermediateInstr * instrListHead;
+    IntermediateInstr * funcListHead;
 
     // Somewhat hackish way of keeping track of the
     // head and tail of a loop for break/continue jumps.
@@ -133,8 +141,12 @@ private:
     ObjectPool<IntermediateInstr, MOON_INTERMEDIATE_INSTR_POOL_GRANULARITY> instrPool;
 };
 
-// Prints the intermediate instructions and their mappings (instrListHead & instrMapping).
-std::ostream & operator << (std::ostream & os, const Compiler & compiler);
+// Prints the instrListHead and funcListHead.
+inline std::ostream & operator << (std::ostream & os, const Compiler & compiler)
+{
+    compiler.printIntermediateInstructions(os);
+    return os;
+}
 
 } // namespace moon {}
 
