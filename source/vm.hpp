@@ -36,9 +36,11 @@ public:
 
     // Program context:
     Stack         stack;
+    Stack         locals;
     DataVector    data;
     CodeVector    code;
     FunctionTable functions;
+    Stack::Slice  funcArgv;
 
     //
     // VM interface:
@@ -52,8 +54,14 @@ public:
     VM(const VM &) = delete;
     VM & operator = (const VM &) = delete;
 
-    void setProgramCounter(int target) noexcept;
-    int  getProgramCounter() const noexcept;
+    void setProgramCounter(int target);
+    int getProgramCounter() const noexcept { return pc; }
+
+    void setReturnAddress(int target);
+    int getReturnAddress() const noexcept { return retAddr; }
+
+    void setReturnValue(Variant retVal) noexcept { rvr = retVal; }
+    Variant getReturnValue() const noexcept { return rvr; }
 
     void execute();
     void executeSingleInstruction(OpCode op, std::uint32_t operandIndex);
@@ -66,6 +74,14 @@ private:
     // The "Program Counter" (index of the next
     // instruction to be executed from the code vector).
     int pc;
+
+    // Saved by CALL instructions so that we can push it
+    // into the stack when entering a script function.
+    // Native functions don't require setting the return address.
+    int retAddr;
+
+    // The "Return Value Register" (holds the latest return value from a func call).
+    Variant rvr;
 };
 
 // ========================================================

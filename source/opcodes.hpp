@@ -78,8 +78,17 @@ enum class OpCode : std::uint8_t
     ArraySubscript, // pops the array ref and subscript from the stack[array_ref, sub]
                     // pushes the resulting value into the stack
 
-    Load,  // push operand into stack
-    Store, // store stack top into operand and pop
+    // Return Value Register
+    LoadRVR,  // push RVR into stack
+    StoreRVR, // store stack top into RVR
+
+    // global variable/constant
+    LoadGlob,  // push operand into stack
+    StoreGlob, // store stack top into operand and pop
+
+    // local variable (function scope)
+    LoadLocal,
+    StoreLocal,
 
     CmpNotEqual,
     CmpEqual,
@@ -97,6 +106,7 @@ enum class OpCode : std::uint8_t
     Div,
     Mul,
 
+    //TODO probably deprecate these because of the new glob/local model...
     SubStore,
     AddStore,
     ModStore,
@@ -117,17 +127,21 @@ enum class OpCode : std::uint8_t
 // must also fit in a byte. Hence the name "bytecode" sometimes used.
 static_assert(unsigned(OpCode::Count) <= 255, "Too many opcodes! Value must fit in a byte!");
 
-// Return a printable string for debug dumping or disassembly.
-std::string toString(OpCode op);
-
-// Shorthand helper:
-inline bool isJumpInstruction(const OpCode op) noexcept
+inline bool isJumpOpCode(const OpCode op) noexcept
 {
-    return (op == OpCode::Jmp        ||
-            op == OpCode::JmpIfFalse ||
-            op == OpCode::JmpIfTrue  ||
-            op == OpCode::JmpReturn);
+    return op == OpCode::Jmp        ||
+           op == OpCode::JmpIfFalse ||
+           op == OpCode::JmpIfTrue  ||
+           op == OpCode::JmpReturn;
 }
+
+inline bool referencesStackData(const OpCode op) noexcept
+{
+    return op == OpCode::LoadLocal ||
+           op == OpCode::StoreLocal;
+}
+
+std::string toString(OpCode op);
 
 // ========================================================
 // VM instruction representation:
@@ -154,11 +168,12 @@ inline bool isJumpInstruction(const OpCode op) noexcept
 // 8 bits opcode, 24 bits data/jump index.
 using Instruction = std::uint32_t;
 
-// Pack unpack into integer:
+// Pack/unpack into integer:
 inline Instruction packInstruction(const OpCode op, const std::uint32_t operandIndex) noexcept
 {
     return (static_cast<std::uint32_t>(op) << 24) | (operandIndex & 0x00FFFFFF);
 }
+
 inline void unpackInstruction(const Instruction instr, OpCode & op, std::uint32_t & operandIndex) noexcept
 {
     op = static_cast<OpCode>((instr & 0xFF000000) >> 24); // 8

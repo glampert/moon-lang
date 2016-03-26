@@ -30,7 +30,7 @@ class Compiler final
 public:
 
     //
-    // Intermediate code representation:
+    // Intermediate code generation:
     //
 
     struct IntermediateInstr final
@@ -44,6 +44,7 @@ public:
         IntermediateInstr * next;
         Operand             operand;
         std::uint32_t       uid;
+        std::uint16_t       paramIdx;
         Variant::Type       type;
         OpCode              op;
     };
@@ -66,10 +67,16 @@ public:
     bool nodeWasVisited(const SyntaxTreeNode * node) const;
     void clearVisited() noexcept;
 
+    void beginFunction(const IntermediateInstr * endLabel, const SyntaxTreeNode * root);
+    bool symbolIsFunctionLocal(const Symbol * symbol, std::uint16_t & paramIdx);
+    void addFunctionLocalSymbol(const Symbol * symbol);
+    void endFunction();
+
     //
     // Helper types:
     //
 
+    using SymbolList     = std::vector<const Symbol *>;
     using STNodeList     = std::vector<const SyntaxTreeNode *>;
     using DataMap        = std::unordered_map<const Symbol *, std::uint32_t>;
     using InstructionMap = std::unordered_map<const IntermediateInstr *, std::uint32_t>;
@@ -112,6 +119,9 @@ private:
                        VM::CodeVector & progCode,
                        FunctionTable  & funcTable);
 
+    void collectFunctionVarSymbols(const SyntaxTreeNode * root);
+    void collectFunctionArgSymbols(const SyntaxTreeNode * root);
+
 private:
 
     // instructionCount is also the uid.
@@ -131,6 +141,9 @@ private:
     // (e.g.: counting function parameter lists). This temporary array
     // is used for such cases.
     STNodeList visitedNodes;
+
+    // Temp store we use to gather local vars and function parameters.
+    SymbolList funcScopeIdentifiers;
 
     // These are used to combine repeated program data/symbols
     // and to optimize away noops in the intermediateToVM step.

@@ -56,6 +56,17 @@ Variant Variant::fromSymbol(const Symbol & sym)
     return var;
 }
 
+Variant::Type Variant::fromTypeId(const char * tid)
+{
+    MOON_ASSERT(tid != nullptr);
+    if (std::strcmp(tid, "int"   ) == 0) { return Variant::Type::Integer; }
+    if (std::strcmp(tid, "long"  ) == 0) { return Variant::Type::Integer; }
+    if (std::strcmp(tid, "bool"  ) == 0) { return Variant::Type::Integer; }
+    if (std::strcmp(tid, "float" ) == 0) { return Variant::Type::Float;   }
+    if (std::strcmp(tid, "string") == 0) { return Variant::Type::String;  }
+    MOON_RUNTIME_EXCEPTION("bad variable type id!");
+}
+
 std::string toString(const Variant var)
 {
     switch (var.type)
@@ -91,19 +102,36 @@ std::string toString(const Variant::Type type)
 
 void Function::invoke(VM & vm, Stack::Slice args) const
 {
+    // Extra validation for safety, but the compiler should
+    // have already checked that the provided argCount
+    // matches the expected # and expected types.
     validateArguments(args);
 
-    if (nativeCallback != nullptr)
+    // Return to whatever is after the CALL instruction
+    // (the current one being executed). This is only
+    // relevant for the script functions, since the
+    // native callback will return immediately, but
+    // we set for both just to be consistent.
+    vm.setReturnAddress(vm.getProgramCounter() + 1);
+
+    // Dispatch to the appropriate handler:
+    if (isNative())
     {
         nativeCallback(vm, args);
+        // Validate the return value here because we will not hit
+        // a FuncEnd instruction when returning from a native call.
+        validateReturnValue(vm.getReturnValue());
     }
-    else if (jumpTarget != TargetNative)
+    else if (isScript())
     {
         vm.setProgramCounter(jumpTarget);
+        // Now the next instruction executed will be this function's FuncStart.
+        // Next FuncEnd instruction will validated the return value, if any.
     }
     else
     {
-        MOON_RUNTIME_EXCEPTION("function has no native callback or jump target!");
+        MOON_RUNTIME_EXCEPTION("function '" + toString(name) +
+                               "' has no native callback or script jump target!");
     }
 }
 
@@ -134,6 +162,15 @@ void Function::validateArguments(Stack::Slice args) const
                                    toString(typeExpected) + " for argument " + toString(a) +
                                    " but " + toString(typeIn) + " was provided.");
         }
+    }
+}
+
+void Function::validateReturnValue(const Variant retVal) const
+{
+    if (hasReturnVal() && (*returnType != retVal.type))
+    {
+        MOON_RUNTIME_EXCEPTION("function '" + toString(name) + "' was expected to return " +
+                               toString(*returnType) + " but instead returned " + toString(retVal.type));
     }
 }
 

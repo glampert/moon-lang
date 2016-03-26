@@ -154,7 +154,7 @@ void printIntermediateInstrListHelper(const IntermediateInstr * head, std::ostre
             os << color::cyan() << "[ " << std::setw(3) << instr->uid << " ] "
                << color::red() << toString(instr->op) << color::restore();
 
-            if (!isJumpInstruction(instr->op))
+            if (!isJumpOpCode(instr->op))
             {
                 if (instr->operand.symbol != nullptr)
                 {
@@ -490,13 +490,25 @@ IntermediateInstr * emitLoad(Compiler & compiler, const SyntaxTreeNode * root)
     expectSymbol(root);
     auto symbol = root->getSymbol();
 
-    // Booleans are converted to integer Variants (0=false, 1=true).
+    OpCode op = OpCode::LoadGlob;
+    std::uint16_t paramIdx = 0;
+
+    // Booleans are converted to integer (0=false, 1=true).
     if (symbol->type == Symbol::Type::BoolLiteral)
     {
         const char * symVal = (symbol->value.asBoolean ? "1" : "0");
-        symbol = compiler.symTable.findIntLiteral(symVal); // Relies on the 0,1 literals being always defined build-ins
+        symbol = compiler.symTable.findIntLiteral(symVal); // Note: Relies on the 0,1 literals being always defined build-ins
     }
-    auto operation = compiler.newInstruction(OpCode::Load, symbol);
+    else if (symbol->type == Symbol::Type::Identifier)
+    {
+        if (compiler.symbolIsFunctionLocal(symbol, paramIdx)) // A local variable or function parameter?
+        {
+            op = OpCode::LoadLocal;
+        }
+    }
+
+    auto operation = compiler.newInstruction(op, symbol);
+    operation->paramIdx = paramIdx;
 
     // Function calls consist of a chain of load instructions followed by one CALL instruction.
     if (root->getChild(0) != nullptr)
@@ -504,6 +516,7 @@ IntermediateInstr * emitLoad(Compiler & compiler, const SyntaxTreeNode * root)
         auto argList = traverseTreeRecursive(compiler, root->getChild(0));
         return linkInstr(operation, argList); // <-- NOTE: Change this to alter func parameter passing order!
     }
+
     return operation;
 }
 
@@ -513,9 +526,30 @@ IntermediateInstr * emitStore(Compiler & compiler, const SyntaxTreeNode * root)
     expectSymbol(root->getChild(0));
     auto symbol    = root->getChildSymbol(0);
     auto symbType  = varTypeForNodeEval(root);
-    auto operation = compiler.newInstruction(OpCode::Store, symbol, symbType);
     auto argument  = traverseTreeRecursive(compiler, root->getChild(1));
-    return linkInstr(argument, operation);
+
+    OpCode op = OpCode::StoreGlob;
+    std::uint16_t paramIdx = 0;
+
+    if (symbol->type == Symbol::Type::Identifier &&
+        compiler.symbolIsFunctionLocal(symbol, paramIdx)) // A local variable or function parameter?
+    {
+        op = OpCode::StoreLocal;
+    }
+
+    auto operation = compiler.newInstruction(op, symbol, symbType);
+    operation->paramIdx = paramIdx;
+
+    // Storing from the return value of a function references the Return Value Register (RVR).
+    if (root->getChild(1)->getType() == STNode::ExprFuncCall)
+    {
+        auto getRVR = compiler.newInstruction(OpCode::LoadRVR);
+        return linkInstr(argument, linkInstr(getRVR, operation));
+    }
+    else // Normal store:
+    {
+        return linkInstr(argument, operation);
+    }
 }
 
 IntermediateInstr * emitArraySubscript(Compiler & compiler, const SyntaxTreeNode * root)
@@ -584,7 +618,7 @@ IntermediateInstr * emitParamChain(Compiler & compiler, const SyntaxTreeNode * r
 
     // Argument count is appended as a literal integer:
     auto argCountLiteral = compiler.symTable.findOrDefineValue(argumentCount);
-    auto loadArgCountOp  = compiler.newInstruction(OpCode::Load, argCountLiteral);
+    auto loadArgCountOp  = compiler.newInstruction(OpCode::LoadGlob, argCountLiteral);
 
     // Wrap it up!
     if (myArgs != nullptr)
@@ -601,14 +635,14 @@ IntermediateInstr * emitFunctionDecl(Compiler & compiler, const SyntaxTreeNode *
 {
     expectSymbol(root); // Func name
     auto funcStart = compiler.newInstruction(OpCode::FuncStart, root->getSymbol(), Variant::Type::Function);
-    auto funcEnd   = compiler.newInstruction(OpCode::FuncEnd);
+    auto funcEnd   = compiler.newInstruction(OpCode::FuncEnd, root->getSymbol());
 
     // Resolve the function body if any. Parameter list and return type are not relevant here.
-    compiler.setReturnAnchor(funcEnd);
+    compiler.beginFunction(funcEnd, root);
     auto funcBody = ((root->getChild(1) != nullptr) ?
                      traverseTreeRecursive(compiler, root->getChild(1)) :
                      compiler.newInstruction(OpCode::NoOp));
-    compiler.clearReturnAnchor();
+    compiler.endFunction();
 
     // Chain everything together:
     return linkInstr(funcStart, linkInstr(funcBody, funcEnd));
@@ -617,14 +651,30 @@ IntermediateInstr * emitFunctionDecl(Compiler & compiler, const SyntaxTreeNode *
 IntermediateInstr * emitReturn(Compiler & compiler, const SyntaxTreeNode * root)
 {
     MOON_ASSERT(compiler.getReturnAnchor() != nullptr);
+    auto retJump = compiler.newInstruction(OpCode::JmpReturn, compiler.getReturnAnchor());
 
     // Return simply resolves its child expression if it has one.
-    auto retExpr = ((root->getChild(0) != nullptr) ?
-                    traverseTreeRecursive(compiler, root->getChild(0)) :
-                    compiler.newInstruction(OpCode::NoOp));
+    if (root->getChild(0) != nullptr)
+    {
+        auto retExpr = traverseTreeRecursive(compiler, root->getChild(0));
 
-    auto retJump = compiler.newInstruction(OpCode::JmpReturn, compiler.getReturnAnchor());
-    return linkInstr(retExpr, retJump);
+        // We only need to set the Return Value Register when the return
+        // expression is not itself another call. If it is a call, the
+        // leaf function in the call tree will set the register.
+        if (root->getChild(0)->getType() != STNode::ExprFuncCall)
+        {
+            auto setRVR = compiler.newInstruction(OpCode::StoreRVR);
+            return linkInstr(retExpr, linkInstr(setRVR, retJump));
+        }
+        else
+        {
+            return linkInstr(retExpr, retJump);
+        }
+    }
+    else // Void return:
+    {
+        return retJump;
+    }
 }
 
 IntermediateInstr * emitNewVar(Compiler & compiler, const SyntaxTreeNode * root)
@@ -650,14 +700,25 @@ IntermediateInstr * emitNewVar(Compiler & compiler, const SyntaxTreeNode * root)
         argumentCount = 1;
     }
 
+    const Symbol * symbol = root->getSymbol();
+    OpCode op = OpCode::StoreGlob;
+    std::uint16_t paramIdx = 0;
+
+    if (symbol->type == Symbol::Type::Identifier &&
+        compiler.symbolIsFunctionLocal(symbol, paramIdx)) // A local variable or function parameter?
+    {
+        op = OpCode::StoreLocal;
+    }
+
     auto newOp   = compiler.newInstruction(OpCode::NewVar, type);
-    auto storeOp = compiler.newInstruction(OpCode::Store, root->getSymbol(), varTypeForNodeEval(root));
+    auto storeOp = compiler.newInstruction(op, symbol, varTypeForNodeEval(root));
+    storeOp->paramIdx = paramIdx;
 
     // A load instruction is appended to indicate if we should pop one
     // value from the stack to initialize the new var or if it was left
     // uninitialized.
     auto argCountLiteral = compiler.symTable.findOrDefineValue(argumentCount);
-    auto loadArgCountOp  = compiler.newInstruction(OpCode::Load, argCountLiteral);
+    auto loadArgCountOp  = compiler.newInstruction(OpCode::LoadGlob, argCountLiteral);
 
     if (argument != nullptr)
     {
@@ -875,6 +936,67 @@ void Compiler::clearVisited() noexcept
     visitedNodes.clear();
 }
 
+void Compiler::collectFunctionArgSymbols(const SyntaxTreeNode * root)
+{
+    if (root == nullptr)
+    {
+        return;
+    }
+    addFunctionLocalSymbol(root->getSymbol());
+    collectFunctionArgSymbols(root->getChild(0));
+}
+
+void Compiler::collectFunctionVarSymbols(const SyntaxTreeNode * root)
+{
+    if (root == nullptr)
+    {
+        return;
+    }
+    if (root->getType() == STNode::VarDeclStatement)
+    {
+        addFunctionLocalSymbol(root->getSymbol());
+    }
+    collectFunctionVarSymbols(root->getChild(0));
+    collectFunctionVarSymbols(root->getChild(1));
+}
+
+void Compiler::beginFunction(const IntermediateInstr * endLabel, const SyntaxTreeNode * root)
+{
+    if (getReturnAnchor() != nullptr)
+    {
+        internalError("Nested functions not supported yet!", __LINE__);
+    }
+
+    collectFunctionArgSymbols(root->getChild(0));
+    collectFunctionVarSymbols(root->getChild(1));
+    setReturnAnchor(endLabel);
+}
+
+bool Compiler::symbolIsFunctionLocal(const Symbol * symbol, std::uint16_t & paramIdx)
+{
+    const int symbolCount = static_cast<int>(funcScopeIdentifiers.size());
+    for (int index = 0; index < symbolCount; ++index)
+    {
+        if (funcScopeIdentifiers[index] == symbol)
+        {
+            paramIdx = index;
+            return true;
+        }
+    }
+    return false;
+}
+
+void Compiler::addFunctionLocalSymbol(const Symbol * symbol)
+{
+    funcScopeIdentifiers.push_back(symbol);
+}
+
+void Compiler::endFunction()
+{
+    clearReturnAnchor();
+    funcScopeIdentifiers.clear();
+}
+
 void Compiler::intermediateToVM(VM::DataVector & progData, VM::CodeVector & progCode, FunctionTable & funcTable)
 {
     // We might still eliminate a few noops, but it should
@@ -909,16 +1031,17 @@ void Compiler::createMappings(VM::DataVector & progData, VM::CodeVector & progCo
                               FunctionTable & funcTable, IntermediateInstr * listHead,
                               const bool skipFunctions)
 {
-    IntermediateInstr * funcListTail = nullptr;
+    IntermediateInstr * instr        = listHead;
     IntermediateInstr * prevInstr    = listHead;
+    IntermediateInstr * funcListTail = nullptr;
 
-    for (auto instr = listHead; instr != nullptr;)
+    while (instr != nullptr)
     {
         // We skip the functions in this pass.
         // They get processed on the next one.
         if (skipFunctions && instr->op == OpCode::FuncStart)
         {
-            if (funcListHead == nullptr)
+            if (funcListTail == nullptr)
             {
                 funcListHead = funcListTail = instr;
             }
@@ -935,15 +1058,11 @@ void Compiler::createMappings(VM::DataVector & progData, VM::CodeVector & progCo
                 break;
             }
 
-            // Unlink this function from the main instruction chain:
-            auto temp    = instr->next;
-            instr->next  = nullptr;
-            funcListTail = instr;
-
-            // Skip FuncEnd:
-            prevInstr->next = temp;
-            prevInstr = instr;
-            instr = temp;
+            // Remove from main instruction chain and link to the functions chain:
+            funcListTail       = instr;
+            instr              = instr->next;
+            prevInstr->next    = instr;
+            funcListTail->next = nullptr;
             continue;
         }
 
@@ -952,7 +1071,7 @@ void Compiler::createMappings(VM::DataVector & progData, VM::CodeVector & progCo
         if (instr->op != OpCode::NoOp)
         {
             // References any data? (Jumps reference other instructions)
-            if (!isJumpInstruction(instr->op) && instr->operand.symbol != nullptr)
+            if (instr->operand.symbol != nullptr && !isJumpOpCode(instr->op) && !referencesStackData(instr->op))
             {
                 // Each symbol is added once.
                 if (dataMapping.find(instr->operand.symbol) == std::end(dataMapping))
@@ -973,7 +1092,7 @@ void Compiler::createMappings(VM::DataVector & progData, VM::CodeVector & progCo
             instrMapping.emplace(instr, progCode.size());
         }
 
-        // Advance on the list.
+        // Advance to the next on list:
         prevInstr = instr;
         instr = instr->next;
     }
@@ -986,10 +1105,12 @@ void Compiler::fixReferences(const IntermediateInstr * instr, VM::CodeVector & p
     {
     // Function declarations:
     case OpCode::FuncStart :
+    case OpCode::FuncEnd   :
         {
             // Index of this instruction and its data operand (the function object in funcTable):
             auto selfCodeIdx = getProgCodeIndex(instrMapping, instr);
             auto operandDataIndex = getProgDataIndex(dataMapping, instr->operand.symbol);
+            MOON_ASSERT(selfCodeIdx < progCode.size() && "Index out-of-bounds!");
 
             const char * funcName = instr->operand.symbol->name;
             const auto funcObj = funcTable.findFunction(funcName);
@@ -999,16 +1120,18 @@ void Compiler::fixReferences(const IntermediateInstr * instr, VM::CodeVector & p
                 internalError("missing function table entry for '" +
                               toString(funcName) + "'", __LINE__);
             }
-            MOON_ASSERT(selfCodeIdx < progCode.size() && "Index out-of-bounds!");
-
-            funcTable.setJumpTargetFor(funcName, selfCodeIdx);
+            if (instr->op == OpCode::FuncStart)
+            {
+                funcTable.setJumpTargetFor(funcName, selfCodeIdx);
+            }
             progCode[selfCodeIdx] = packInstruction(instr->op, operandDataIndex);
             break;
         }
     // Instructions that reference a code address:
     case OpCode::Jmp        :
-    case OpCode::JmpIfTrue  :
     case OpCode::JmpIfFalse :
+    case OpCode::JmpIfTrue  :
+    case OpCode::JmpReturn  :
         {
             // Index of this instruction and its jump target:
             auto selfCodeIdx = getProgCodeIndex(instrMapping, instr);
@@ -1022,22 +1145,31 @@ void Compiler::fixReferences(const IntermediateInstr * instr, VM::CodeVector & p
             progCode[selfCodeIdx] = packInstruction(instr->op, operandCodeIdx);
             break;
         }
-    // Instructions that reference some data:
-    case OpCode::NewVar   :
-    case OpCode::Load     :
-    case OpCode::Store    :
-    case OpCode::SubStore :
-    case OpCode::AddStore :
-    case OpCode::ModStore :
-    case OpCode::DivStore :
-    case OpCode::MulStore :
-    case OpCode::Call     :
+    // Instructions that reference some global data or constant:
+    case OpCode::NewVar    :
+    case OpCode::LoadGlob  :
+    case OpCode::StoreGlob :
+    case OpCode::SubStore  ://FIXME would need the local/param handling as well
+    case OpCode::AddStore  :// just remove and switch to compound load a,b + op + store?
+    case OpCode::ModStore  :
+    case OpCode::DivStore  :
+    case OpCode::MulStore  :
+    case OpCode::Call      :
         {
             // Index of this instruction and its data operand:
             auto selfCodeIdx = getProgCodeIndex(instrMapping, instr);
             auto operandDataIndex = getProgDataIndex(dataMapping, instr->operand.symbol);
             MOON_ASSERT(selfCodeIdx < progCode.size() && "Index out-of-bounds!");
             progCode[selfCodeIdx] = packInstruction(instr->op, operandDataIndex);
+            break;
+        }
+    // Instructions referencing local function-level data:
+    case OpCode::LoadLocal  :
+    case OpCode::StoreLocal :
+        {
+            auto selfCodeIdx = getProgCodeIndex(instrMapping, instr);
+            MOON_ASSERT(selfCodeIdx < progCode.size() && "Index out-of-bounds!");
+            progCode[selfCodeIdx] = packInstruction(instr->op, instr->paramIdx);
             break;
         }
     default :
@@ -1055,6 +1187,7 @@ Compiler::IntermediateInstr * Compiler::newInstruction(const OpCode op)
     instr->next               = nullptr;
     instr->operand.symbol     = nullptr;
     instr->uid                = instructionCount++;
+    instr->paramIdx           = 0;
     instr->type               = Variant::Type::Null;
     instr->op                 = op;
     return instr;
@@ -1066,6 +1199,7 @@ Compiler::IntermediateInstr * Compiler::newInstruction(const OpCode op, const Sy
     instr->next               = nullptr;
     instr->operand.symbol     = symbol;
     instr->uid                = instructionCount++;
+    instr->paramIdx           = 0;
     instr->type               = type;
     instr->op                 = op;
     return instr;
@@ -1077,6 +1211,7 @@ Compiler::IntermediateInstr * Compiler::newInstruction(const OpCode op, const In
     instr->next               = nullptr;
     instr->operand.jumpTarget = jumpTarget;
     instr->uid                = instructionCount++;
+    instr->paramIdx           = 0;
     instr->type               = Variant::Type::Null;
     instr->op                 = op;
     return instr;

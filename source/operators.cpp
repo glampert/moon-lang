@@ -510,6 +510,108 @@ Variant performUnaryOp(const OpCode op, const Variant var)
 }
 
 // ========================================================
+// isAssignmentValid():
+// ========================================================
+
+bool isAssignmentValid(const Variant::Type destType, const Variant::Type srcType) noexcept
+{
+    // Integers and floats convert implicitly.
+    if (destType == VT::Integer || destType == VT::Float)
+    {
+        return srcType == VT::Integer || srcType == VT::Float;
+    }
+    else // Types must match exactly.
+    {
+        return destType == srcType;
+    }
+}
+
+// ========================================================
+// performAssignmentWithConversion():
+// ========================================================
+
+void performAssignmentWithConversion(Variant & dest, const Variant source)
+{
+    if (!isAssignmentValid(dest.type, source.type))
+    {
+        MOON_RUNTIME_EXCEPTION("cannot assign " + toString(source.type) + " to " + toString(dest.type));
+    }
+
+    switch (dest.type)
+    {
+    case VT::Integer :
+        {
+            switch (source.type)
+            {
+            case VT::Integer :
+                dest.value.asInteger = source.value.asInteger;
+                break;
+            case VT::Float :
+                dest.value.asInteger = source.value.asFloat;
+                break;
+            default :
+                unreachable(__LINE__);
+            } // switch (source.type)
+            break;
+        }
+    case VT::Float :
+        {
+            switch (source.type)
+            {
+            case VT::Integer :
+                dest.value.asFloat = source.value.asInteger;
+                break;
+            case VT::Float :
+                dest.value.asFloat = source.value.asFloat;
+                break;
+            default :
+                unreachable(__LINE__);
+            } // switch (source.type)
+            break;
+        }
+    case VT::String :
+        {
+            if (source.type == VT::String)
+            {
+                //TODO need to add ref counting or some such...
+                dest.value.asStringPtr = source.value.asStringPtr;
+            }
+            else
+            {
+                unreachable(__LINE__);
+            }
+            break;
+        }
+    case VT::Function :
+        {
+            if (source.type == VT::Function)
+            {
+                dest.value.asFunctionPtr = source.value.asFunctionPtr;
+            }
+            else
+            {
+                unreachable(__LINE__);
+            }
+            break;
+        }
+    case VT::Null :
+        {
+            if (source.type == VT::Null)
+            {
+                dest.value.asVoidPtr = source.value.asVoidPtr;
+            }
+            else
+            {
+                unreachable(__LINE__);
+            }
+            break;
+        }
+    default :
+        unreachable(__LINE__);
+    } // switch (dest.type)
+}
+
+// ========================================================
 // Minimal unit tests:
 // ========================================================
 

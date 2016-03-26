@@ -176,6 +176,10 @@ void to_string(VM & vm, Stack::Slice args) // (varargs) -> string
             }
             break;
 
+        case 't' : // type tag
+            outputStr = toString(var->type);
+            break;
+
         default :
             MOON_RUNTIME_EXCEPTION("to_string() called with unrecognized format flag '" + toString(flag) + "'");
         } // switch (*flag)
@@ -194,8 +198,7 @@ void to_string(VM & vm, Stack::Slice args) // (varargs) -> string
     Variant result{ Variant::Type::String };
     result.value.asStringPtr = newStr;
 
-    // Push the return value:
-    vm.stack.push(result);
+    vm.setReturnValue(result);
 }
 
 //TODO other nice things to have:
@@ -205,6 +208,7 @@ void to_string(VM & vm, Stack::Slice args) // (varargs) -> string
 // - a small dictionary library (std::unordered_map based)
 // - expose the C-maths library
 // - a library for bit manipulation within integers? We don't have the traditional bitshift ops...
+// - env library to get things like cmdline and env vars
 
 } // namespace native {}
 

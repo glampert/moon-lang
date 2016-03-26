@@ -40,7 +40,7 @@ struct Variant final
     union Value
     {
         LangLong         asInteger;
-        LangFloat        asFloat;
+        LangFloat        asFloat; //FIXME should use a double instead. sizeof(Variant) already = 16
         const Function * asFunctionPtr;
         const char     * asStringPtr;
         void           * asVoidPtr;
@@ -64,8 +64,14 @@ struct Variant final
     //
     bool isZero() const noexcept { return value.asInteger == 0; }
     bool toBool() const noexcept { return !!value.asInteger;    }
+
     static Variant fromSymbol(const Symbol & sym);
+    static Variant::Type fromTypeId(const char * tid);
 };
+
+// ========================================================
+// Variant helpers:
+// ========================================================
 
 // Debug printing helpers:
 std::string toString(Variant v);          // Prints just the value
@@ -80,6 +86,10 @@ Variant performBinaryOp(OpCode op, Variant varA, Variant varB);
 // Unary operator on Variant (not, -, +):
 bool isUnaryOpValid(OpCode op, Variant::Type type) noexcept;
 Variant performUnaryOp(OpCode op, Variant var);
+
+// Assigns with integer<=>float implicit conversions.
+bool isAssignmentValid(Variant::Type destType, Variant::Type srcType) noexcept;
+void performAssignmentWithConversion(Variant & dest, Variant source);
 
 // ========================================================
 // The Program Stack:
@@ -111,6 +121,7 @@ public:
 
     int getMaxSize()  const noexcept { return size; }
     int getCurrSize() const noexcept { return top;  }
+    int getMemoryBytesUsed() const noexcept { return getMaxSize() * sizeof(Variant); }
 
     void push(const Variant & v)
     {
@@ -189,8 +200,8 @@ public:
     {
         if (first < 0)
         {
-            MOON_RUNTIME_EXCEPTION("bad stack slice index " + toString(first) +
-                                   " for stack size " + toString(top));
+            MOON_RUNTIME_EXCEPTION("bad stack slice index=" + toString(first) +
+                                   " for stack size=" + toString(top));
         }
         if (count == 0)
         {
@@ -205,7 +216,8 @@ public:
         }
         if ((slicePtr + count) > endPtr)
         {
-            MOON_RUNTIME_EXCEPTION("invalid stack slice size!");
+            MOON_RUNTIME_EXCEPTION("invalid stack slice count=" + toString(count) +
+                                   " for stack size=" + toString(top));
         }
         return { slicePtr, count };
     }
@@ -253,12 +265,17 @@ struct Function final
     // expected number and type of arguments for the function.
     void validateArguments(Stack::Slice args) const;
 
+    // Check that the type of the passed variant matches the expected
+    // for returnType. If not, it throws a runtime exception.
+    void validateReturnValue(Variant retVal) const;
+
     // Miscellaneous queries:
-    bool isNative()      const noexcept { return nativeCallback != nullptr; }
-    bool isVarArgs()     const noexcept { return flags & VarArgs;           }
-    bool isDebugOnly()   const noexcept { return flags & DebugOnly;         }
-    bool hasCallerInfo() const noexcept { return flags & AddCallerInfo;     }
-    bool hasReturnVal()  const noexcept { return returnType != nullptr;     }
+    bool isScript()      const noexcept { return jumpTarget != TargetNative; }
+    bool isNative()      const noexcept { return nativeCallback != nullptr;  }
+    bool isVarArgs()     const noexcept { return flags & VarArgs;            }
+    bool isDebugOnly()   const noexcept { return flags & DebugOnly;          }
+    bool hasCallerInfo() const noexcept { return flags & AddCallerInfo;      }
+    bool hasReturnVal()  const noexcept { return returnType != nullptr;      }
 
     // Prints the function record as a table row for use by FunctionTable::print().
     void print(std::ostream & os = std::cout) const;
