@@ -17,30 +17,27 @@ namespace moon
 // Opcode handlers:
 // ========================================================
 
-namespace
-{
-
 // Function signature of an opcode handler. See the array of handlers below.
 using OpCodeHandlerCB = void (*)(VM & vm, std::uint32_t operandIndex);
 
-void opNOOP(VM &, std::uint32_t)
+static void opNOOP(VM &, std::uint32_t)
 {
     // Surprisingly, a no-op does nothing :P
 }
 
-void opProgEnd(VM & vm, std::uint32_t)
+static void opProgEnd(VM & vm, std::uint32_t)
 {
     // Set the program count to the end of the code vector to terminate
     // execution, even if there was more code after this instruction.
     vm.setProgramCounter(static_cast<int>(vm.code.size()));
 }
 
-void opJump(VM & vm, const std::uint32_t operandIndex)
+static void opJump(VM & vm, const std::uint32_t operandIndex)
 {
     vm.setProgramCounter(operandIndex);
 }
 
-void opJumpIfTrue(VM & vm, const std::uint32_t operandIndex)
+static void opJumpIfTrue(VM & vm, const std::uint32_t operandIndex)
 {
     if (!vm.stack.pop().isZero())
     {
@@ -48,7 +45,7 @@ void opJumpIfTrue(VM & vm, const std::uint32_t operandIndex)
     }
 }
 
-void opJumpIfFalse(VM & vm, const std::uint32_t operandIndex)
+static void opJumpIfFalse(VM & vm, const std::uint32_t operandIndex)
 {
     if (vm.stack.pop().isZero())
     {
@@ -56,56 +53,93 @@ void opJumpIfFalse(VM & vm, const std::uint32_t operandIndex)
     }
 }
 
-void opLoadRVR(VM & vm, std::uint32_t)
+static void opLoadRVR(VM & vm, std::uint32_t)
 {
     vm.stack.push(vm.getReturnValue());
 }
 
-void opStoreRVR(VM & vm, std::uint32_t)
+static void opStoreRVR(VM & vm, std::uint32_t)
 {
     vm.setReturnValue(vm.stack.pop());
 }
 
-void opLoadGlob(VM & vm, const std::uint32_t operandIndex)
+static void opLoadGlob(VM & vm, const std::uint32_t operandIndex)
 {
     // Push integer operand to the VM stack.
     vm.stack.push(vm.data[operandIndex]);
 }
 
-void opStoreGlob(VM & vm, const std::uint32_t operandIndex)
+static void opStoreGlob(VM & vm, const std::uint32_t operandIndex)
 {
     // Stores the current stack top to the data index of
     // this instruction, then pop the VM stack.
-    vm.data[operandIndex] = vm.stack.pop();
+    performAssignmentWithConversion(vm.data[operandIndex], vm.stack.pop());
 }
 
-void opLoadLocal(VM & vm, const std::uint32_t operandIndex)
+static void opLoadLocal(VM & vm, const std::uint32_t operandIndex)
 {
-    const auto argc = vm.locals.getTopVar().value.asInteger;
+    const auto argc = vm.locals.getTopVar().getAsInteger();
     const auto args = vm.locals.slice(vm.locals.getCurrSize() - argc - 1, argc);
     vm.stack.push(args[operandIndex]);
 }
 
-void opStoreLocal(VM & vm, const std::uint32_t operandIndex)
+static void opStoreLocal(VM & vm, const std::uint32_t operandIndex)
 {
-    const auto argc = vm.locals.getTopVar().value.asInteger;
+    const auto argc = vm.locals.getTopVar().getAsInteger();
     auto args = vm.locals.slice(vm.locals.getCurrSize() - argc - 1, argc);
-    args[operandIndex] = vm.stack.pop();
+    performAssignmentWithConversion(args[operandIndex], vm.stack.pop());
 }
 
-void opCall(VM & vm, const std::uint32_t operandIndex)
+static void opMemberStoreCommon(VM & vm, Variant objRef)
+{
+    const auto memberCount = vm.stack.pop().getAsInteger();
+    const auto offsets = vm.stack.slice(vm.stack.getCurrSize() - memberCount, memberCount);
+    vm.stack.popN(memberCount);
+
+    const Variant storeValue = vm.stack.pop();
+    Object::Member * memberRef = nullptr;
+
+    // We have a list of member offsets in the stack, so
+    // we start from the head object and keep going down
+    // until the last member reference that is the target
+    // of this store instruction.
+    for (int o = 0; o < offsets.getSize(); ++o)
+    {
+        memberRef = &objRef.getAsObject()->getMemberAt(offsets[o].getAsInteger());
+        objRef = memberRef->data;
+    }
+
+    MOON_ASSERT(memberRef != nullptr);
+    performAssignmentWithConversion(memberRef->data, storeValue);
+}
+
+static void opMemberStoreGlob(VM & vm, const std::uint32_t operandIndex)
+{
+    // Source the target object from the global program data.
+    opMemberStoreCommon(vm, vm.data[operandIndex]);
+}
+
+static void opMemberStoreLocal(VM & vm, const std::uint32_t operandIndex)
+{
+    // Source the target object from the function-local stack.
+    const auto argc = vm.locals.getTopVar().getAsInteger();
+    auto args = vm.locals.slice(vm.locals.getCurrSize() - argc - 1, argc);
+    opMemberStoreCommon(vm, args[operandIndex]);
+}
+
+static void opCall(VM & vm, const std::uint32_t operandIndex)
 {
     const Variant argcVar = vm.stack.getTopVar();
-    vm.funcArgv = vm.stack.slice(vm.stack.getCurrSize() - argcVar.value.asInteger - 1, argcVar.value.asInteger + 1);
+    vm.funcArgv = vm.stack.slice(vm.stack.getCurrSize() - argcVar.getAsInteger() - 1, argcVar.getAsInteger() + 1);
 
     const Variant funcVar = vm.data[operandIndex];
     vm.stack.pop(); // the argCount
 
     if (funcVar.type != Variant::Type::Function)
     {
-        MOON_RUNTIME_EXCEPTION("expected a function object!");
+        MOON_RUNTIME_EXCEPTION("opCall: expected a function object!");
     }
-    if (funcVar.value.asFunctionPtr == nullptr)
+    if (funcVar.value.asFunction == nullptr)
     {
         MOON_RUNTIME_EXCEPTION("attempting to call a null function object!");
     }
@@ -115,13 +149,13 @@ void opCall(VM & vm, const std::uint32_t operandIndex)
     }
 
     const auto argc = argcVar.value.asInteger;
-    const auto argv = vm.stack.slice(vm.stack.getCurrSize() - argc, argc);
+    const auto args = vm.stack.slice(vm.stack.getCurrSize() - argc, argc);
     vm.stack.popN(argc);
 
-    funcVar.value.asFunctionPtr->invoke(vm, argv);
+    funcVar.value.asFunction->invoke(vm, args);
 }
 
-void opFuncStart(VM & vm, std::uint32_t)
+static void opFuncStart(VM & vm, std::uint32_t)
 {
     // Copy from the main work stack to the function-local stack (including the argCount):
     for (auto var = vm.funcArgv.first(); var; var = vm.funcArgv.next())
@@ -135,26 +169,25 @@ void opFuncStart(VM & vm, std::uint32_t)
     vm.stack.push(retAddr);
 }
 
-void opFuncEnd(VM & vm, const std::uint32_t operandIndex)
+static void opFuncEnd(VM & vm, const std::uint32_t operandIndex)
 {
-    const auto argc = vm.locals.getTopVar().value.asInteger;
+    const auto argc = vm.locals.getTopVar().getAsInteger();
     vm.locals.popN(argc + 1); // +1 to also pop the argCount
 
     // Pop the return address pushed by FuncStart and jump to it.
-    Variant retAddr = vm.stack.pop();
-    MOON_ASSERT(retAddr.type == Variant::Type::Integer);
-    vm.setProgramCounter(retAddr.value.asInteger);
+    const Variant retAddr = vm.stack.pop();
+    vm.setProgramCounter(retAddr.getAsInteger());
 
     // We can double check this here, but the compiler should have
     // already validated the return type against the return statements.
     const Variant funcVar = vm.data[operandIndex];
-    funcVar.value.asFunctionPtr->validateReturnValue(vm.getReturnValue());
+    funcVar.value.asFunction->validateReturnValue(vm.getReturnValue());
 }
 
-void opNewVar(VM & vm, const std::uint32_t operandIndex)
+static void opNewVar(VM & vm, const std::uint32_t operandIndex)
 {
     const Variant tid = vm.data[operandIndex];
-    Variant initVal{ Variant::fromTypeId(tid.value.asStringPtr) };
+    Variant initVal{ variantTypeFromTypeId(tid.getAsTypeId()) };
 
     const Variant hasInitializer = vm.stack.pop();
     if (hasInitializer.toBool())
@@ -174,14 +207,44 @@ void opNewVar(VM & vm, const std::uint32_t operandIndex)
     }
 }
 
+static void opNewObj(VM & vm, const std::uint32_t operandIndex)
+{
+    const Variant tid = vm.data[operandIndex];
+    if (tid.type != Variant::Type::Tid || tid.value.asTypeId == nullptr)
+    {
+        MOON_RUNTIME_EXCEPTION("opNewObj: expected a type id!");
+    }
+
+    const Variant constructorArgCount = vm.stack.pop();
+    const auto argc = constructorArgCount.getAsInteger();
+    const auto args = vm.stack.slice(vm.stack.getCurrSize() - argc, argc);
+
+    Variant newObj{ Variant::Type::Object };
+    newObj.value.asObject = newRuntimeObject(tid.value.asTypeId, &vm.gcListHead, args);
+
+    vm.stack.popN(argc);
+    vm.stack.push(newObj);
+}
+
+static void opMemberRef(VM & vm, std::uint32_t)
+{
+    // Pop the object and its member index from
+    // the stack and push the member var back:
+    const Variant memberIdx = vm.stack.pop();
+    const Variant objRef    = vm.stack.pop();
+
+    const auto member = objRef.getAsObject()->getMemberAt(memberIdx.getAsInteger());
+    vm.stack.push(member.data);
+}
+
 template<OpCode OP>
-void opUnary(VM & vm, std::uint32_t)
+static void opUnary(VM & vm, std::uint32_t)
 {
     vm.stack.push(performUnaryOp(OP, vm.stack.pop()));
 }
 
 template<OpCode OP>
-void opBinary(VM & vm, std::uint32_t)
+static void opBinary(VM & vm, std::uint32_t)
 {
     const Variant operandB = vm.stack.pop();
     const Variant operandA = vm.stack.pop();
@@ -189,7 +252,7 @@ void opBinary(VM & vm, std::uint32_t)
 }
 
 template<OpCode OP>
-void opBinaryStore(VM & vm, const std::uint32_t operandIndex)
+static void opBinaryStore(VM & vm, const std::uint32_t operandIndex)
 {
     // Compound op+store operation.
     const Variant operandB = vm.stack.pop();
@@ -217,7 +280,7 @@ static const OpCodeHandlerCB opHandlerCallbacks[]
     &opNewVar,                          // NewVar
     &opNOOP,                            // NewRange
     &opNOOP,                            // NewArray
-    &opNOOP,                            // NewObj
+    &opNewObj,                          // NewObj
     &opFuncStart,                       // FuncStart
     &opFuncEnd,                         // FuncEnd
     &opNOOP,                            // ForLoopPrep
@@ -226,12 +289,15 @@ static const OpCodeHandlerCB opHandlerCallbacks[]
     &opNOOP,                            // MatchPrep
     &opNOOP,                            // MatchTest
     &opNOOP,                            // ArraySubscript
+    &opMemberRef,                       // MemberRef
     &opLoadRVR,                         // LoadRVR
     &opStoreRVR,                        // StoreRVR
     &opLoadGlob,                        // LoadGlob
     &opStoreGlob,                       // StoreGlob
+    &opMemberStoreGlob,                 // MemberStoreGlob
     &opLoadLocal,                       // LoadLocal
     &opStoreLocal,                      // StoreLocal
+    &opMemberStoreLocal,                // MemberStoreLocal
     &opBinary<OpCode::CmpNotEqual>,     // CmpNotEqual
     &opBinary<OpCode::CmpEqual>,        // CmpEqual
     &opBinary<OpCode::CmpGreaterEqual>, // CmpGreaterEqual
@@ -257,17 +323,17 @@ static const OpCodeHandlerCB opHandlerCallbacks[]
 static_assert(arrayLength(opHandlerCallbacks) == unsigned(OpCode::Count),
               "Keep this array in sync with the enum declaration!");
 
-} // namespace {}
-
 // ========================================================
 // VM class methods:
 // ========================================================
 
 VM::VM(const bool loadBuiltIns, const int stackSize)
-    : stack   { stackSize }
-    , locals  { stackSize }
-    , pc      { 0 }
-    , retAddr { 0 }
+    : stack        { stackSize   }
+    , locals       { stackSize   }
+    , gcListHead   { nullptr     }
+    , runtimeTypes { &gcListHead }
+    , pc           { 0           }
+    , retAddr      { 0           }
 {
     if (loadBuiltIns)
     {
@@ -329,17 +395,18 @@ void VM::executeSingleInstruction(const OpCode op, const std::uint32_t operandIn
 
 static void dumpVariant(const Variant var, const int index, std::ostream & os)
 {
-    auto valStr = toString(var);
+    auto valStr  = toString(var);
+    auto typeStr = toString(var.type);
+
     if (var.type == Variant::Type::String)
     {
         valStr = unescapeString(valStr.c_str());
     }
 
-    os << color::cyan() << "[ " << std::setw(3) << std::setfill(' ') << index << " ] "
-       << color::yellow() << "0x" << std::hex << std::setw(16) << std::setfill('0')
-       << static_cast<std::uint64_t>(var.value.asInteger) << color::restore() << " ("
-       << color::red() << std::dec << valStr << color::restore() << ") => "
-       << toString(var.type) << "\n";
+    os << strPrintF("%s[ %3i ]%s %s0x%016llX%s (%s%s%s) => %s\n",
+                    color::cyan(), index, color::restore(), color::yellow(),
+                    static_cast<std::uint64_t>(var.value.asInteger), color::restore(),
+                    color::red(), valStr.c_str(), color::restore(), typeStr.c_str());
 }
 
 void printCodeVector(const VM::CodeVector & code, std::ostream & os)

@@ -12,6 +12,7 @@
 namespace moon
 {
 
+//TODO replace this with the universal TypeId list
 static const char * builtInTypeNames[]
 {
     // Built-in type names:
@@ -19,7 +20,7 @@ static const char * builtInTypeNames[]
     "long",
     "float",
     "bool",
-    "string",
+    "str",
     "array",
     "range",
     "any",
@@ -35,17 +36,8 @@ static const char * builtInTypeNames[]
 };
 
 // ========================================================
-// Symbol methods and helpers:
+// Symbol struct and helpers:
 // ========================================================
-
-Symbol::Symbol(const char * nameRef, const int declLineNum, const Type symType, const Value symVal) noexcept
-    : name    { nameRef     }
-    , value   { symVal      }
-    , lineNum { declLineNum }
-    , type    { symType     }
-{
-    MOON_ASSERT(name != nullptr);
-}
 
 bool Symbol::cmpEqual(const Type otherType, const Value otherValue) const noexcept
 {
@@ -58,12 +50,12 @@ bool Symbol::cmpEqual(const Type otherType, const Value otherValue) const noexce
     if (type == Type::StrLiteral)
     {
         // Optimize for same memory:
-        if (value.asStringPtr == otherValue.asStringPtr)
+        if (value.asString == otherValue.asString)
         {
             return true;
         }
 
-        const char * otherStr = otherValue.asStringPtr;
+        const char * otherStr = otherValue.asString;
         auto otherStrLen = std::strlen(otherStr);
         if (otherStrLen > 1)
         {
@@ -81,17 +73,17 @@ bool Symbol::cmpEqual(const Type otherType, const Value otherValue) const noexce
 
         if (otherStrLen == 0) // Empty string?
         {
-            return std::strlen(value.asStringPtr) == 0;
+            return std::strlen(value.asString) == 0;
         }
 
-        const auto myStrLen = std::strlen(value.asStringPtr);
+        const auto myStrLen = std::strlen(value.asString);
         if (myStrLen != otherStrLen) // Different lengths?
         {
             return false;
         }
 
         // General case:
-        return std::strncmp(value.asStringPtr, otherStr, myStrLen) == 0;
+        return std::strncmp(value.asString, otherStr, myStrLen) == 0;
     }
 
     // Compare the widest integral values:
@@ -114,34 +106,36 @@ void Symbol::print(std::ostream & os) const
 {
     std::string temp1;
     std::string temp2;
-    char formatStr[512] = {'\0'};
+    std::string formatStr;
 
-    #define CASE(typeId, colorCmd, typeName, value)                                                  \
-        case Symbol::Type::typeId :                                                                  \
-        {                                                                                            \
-            temp1 = (lineNum != LineNumBuiltIn) ? toString(lineNum) : "built-in";                    \
-            temp2 = unescapeString(toString(value).c_str());                                         \
-            std::snprintf(formatStr, arrayLength(formatStr), "| %-30s | %-8s | %s%-9s%s | %s\n",     \
-                          name, temp1.c_str(), colorCmd, typeName, color::restore(), temp2.c_str()); \
-        }                                                                                            \
+    #define CASE(typeId, colorCmd, typeName, value)                               \
+        case Symbol::Type::typeId :                                               \
+        {                                                                         \
+            temp1 = (lineNum != LineNumBuiltIn) ? toString(lineNum) : "built-in"; \
+            temp2 = unescapeString(toString(value).c_str());                      \
+            formatStr = strPrintF("| %-30s | %-8s | %s%-9s%s | %s\n",             \
+                                  name, temp1.c_str(), colorCmd,                  \
+                                  typeName, color::restore(), temp2.c_str());     \
+        }                                                                         \
         break
 
-    #define CASE_DEFAULT()                                                                        \
-        default :                                                                                 \
-        {                                                                                         \
-            std::snprintf(formatStr, arrayLength(formatStr), "| %-30s | %-8d | %s%-9s%s | ???\n", \
-                          name, lineNum, color::red(), "undefined", color::restore());            \
-        }                                                                                         \
+    #define CASE_DEFAULT()                                             \
+        default :                                                      \
+        {                                                              \
+            formatStr = strPrintF("| %-30s | %-8d | %s%-9s%s | ???\n", \
+                                  name, lineNum, color::red(),         \
+                                  "undefined", color::restore());      \
+        }                                                              \
         break
 
     // NOTE: This has to be updated if Symbol::Type changes!
     switch (type)
     {
-        CASE( IntLiteral,   color::blue(),    "int",    value.asInteger   );
-        CASE( FloatLiteral, color::yellow(),  "float",  value.asFloat     );
-        CASE( BoolLiteral,  color::cyan(),    "bool",   value.asBoolean   );
-        CASE( StrLiteral,   color::white(),   "string", value.asStringPtr );
-        CASE( Identifier,   color::magenta(), "ident",  value.asStringPtr );
+        CASE( IntLiteral,   color::blue(),    "int",    value.asInteger );
+        CASE( FloatLiteral, color::yellow(),  "float",  value.asFloat   );
+        CASE( BoolLiteral,  color::cyan(),    "bool",   value.asBoolean );
+        CASE( StrLiteral,   color::white(),   "str",    value.asString  );
+        CASE( Identifier,   color::magenta(), "ident",  value.asString  );
         CASE_DEFAULT( ); // Catches Type::Undefined and anything else.
     } // switch (type)
 
@@ -208,14 +202,8 @@ Symbol::Value Symbol::valueFromCStr(const char * cstr)
 {
     MOON_ASSERT(cstr != nullptr);
     Symbol::Value valOut;
-    valOut.asStringPtr = cstr;
+    valOut.asString = cstr;
     return valOut;
-}
-
-std::ostream & operator << (std::ostream & os, const Symbol & sym)
-{
-    sym.print(os);
-    return os;
 }
 
 std::string toString(const Symbol & sym)
@@ -225,10 +213,27 @@ std::string toString(const Symbol & sym)
     case Symbol::Type::IntLiteral   : return toString(sym.value.asInteger);
     case Symbol::Type::FloatLiteral : return toString(sym.value.asFloat);
     case Symbol::Type::BoolLiteral  : return toString(sym.value.asBoolean);
-    case Symbol::Type::StrLiteral   : return toString(sym.value.asStringPtr);
-    case Symbol::Type::Identifier   : return toString(sym.value.asStringPtr);
+    case Symbol::Type::StrLiteral   : return toString(sym.value.asString);
+    case Symbol::Type::Identifier   : return toString(sym.value.asString);
     default                         : return "???";
     } // switch (sym.type)
+}
+
+std::string toString(const Symbol::Type type)
+{
+    static const std::string typeNames[]
+    {
+        color::red()     + std::string("undefined") + color::restore(),
+        color::blue()    + std::string("int")       + color::restore(),
+        color::yellow()  + std::string("float")     + color::restore(),
+        color::cyan()    + std::string("bool")      + color::restore(),
+        color::white()   + std::string("str")       + color::restore(),
+        color::magenta() + std::string("ident")     + color::restore()
+    };
+    static_assert(arrayLength(typeNames) == unsigned(Symbol::Type::Count),
+                  "Keep this array in sync with the enum declaration!");
+
+    return typeNames[unsigned(type)];
 }
 
 // ========================================================
@@ -240,7 +245,7 @@ template
     Symbol::Type TypeTag,
     Symbol::Value (* ConvFunc)(const char *)
 >
-const Symbol * findSymInTable(const char * value, const SymbolTable::SymTable & table)
+static const Symbol * findSymInTable(const char * value, const SymbolTable::SymTable & table)
 {
     MOON_ASSERT(value != nullptr);
     const auto testVal = ConvFunc(value);
@@ -383,8 +388,7 @@ const Symbol * SymbolTable::addSymbol(const char * name, const int declLineNum,
 {
     MOON_ASSERT(!findSymbol(name));
     Symbol * sym = symbolPool.allocate();
-    construct(sym, name, declLineNum, type, value);
-    table[name] = sym;
+    table[name] = construct(sym, { name, value, declLineNum, type });
     return sym;
 }
 
@@ -419,17 +423,17 @@ const char * SymbolTable::cloneCStringNoQuotes(const char * sourcePtr)
 
 const char * SymbolTable::makeLiteralConstName(const Symbol::Type type)
 {
-    char temp[256] = {'\0'};
+    char temp[512] = {'\0'};
     const char * typeId;
 
     switch (type)
     {
-    case Symbol::Type::IntLiteral   : { typeId = "I"; break; }
-    case Symbol::Type::FloatLiteral : { typeId = "F"; break; }
-    case Symbol::Type::BoolLiteral  : { typeId = "B"; break; }
-    case Symbol::Type::StrLiteral   : { typeId = "S"; break; }
-    case Symbol::Type::Identifier   : { typeId = "X"; break; }
-    default                         : { typeId = "?"; break; }
+    case Symbol::Type::IntLiteral   : typeId = "I"; break;
+    case Symbol::Type::FloatLiteral : typeId = "F"; break;
+    case Symbol::Type::BoolLiteral  : typeId = "B"; break;
+    case Symbol::Type::StrLiteral   : typeId = "S"; break;
+    case Symbol::Type::Identifier   : typeId = "X"; break;
+    default                         : typeId = "?"; break;
     } // switch (type)
 
     std::snprintf(temp, arrayLength(temp), "$%s_lit_%u", typeId, nextLiteralIndex++);
@@ -464,12 +468,6 @@ void SymbolTable::print(std::ostream & os) const
         os << "(empty)\n";
     }
     os << color::white() << "[[ listed " << table.size() << " symbols ]]" << color::restore() << "\n";
-}
-
-std::ostream & operator << (std::ostream & os, const SymbolTable & symTable)
-{
-    symTable.print(os);
-    return os;
 }
 
 } // namespace moon {}

@@ -10,15 +10,15 @@
 #ifndef MOON_OUTPUT_HPP
 #define MOON_OUTPUT_HPP
 
-#include <iostream>
 #include <string>
 #include <cstdio>
+#include <ostream>
 
 // ========================================================
 // isatty() only needed if colored text output is desired.
 // ========================================================
 
-#ifdef MOON_PRINT_USE_ANSI_COLOR_CODES
+#if MOON_PRINT_USE_ANSI_COLOR_CODES
     // For isatty()/fileno()
     #if defined(__APPLE__) || defined(__linux__) || defined(__unix__)
         #include <unistd.h>
@@ -47,7 +47,7 @@ namespace color
 inline bool colorPrintEnabled() noexcept
 {
 // Only attempt color print if none of the streams we use were redirected.
-#ifdef MOON_PRINT_USE_ANSI_COLOR_CODES
+#if MOON_PRINT_USE_ANSI_COLOR_CODES
     return isatty(fileno(stdout)) && isatty(fileno(stderr));
 #else // !MOON_PRINT_USE_ANSI_COLOR_CODES
     return false;
@@ -67,39 +67,81 @@ inline const char * white()   noexcept { return colorPrintEnabled() ? "\033[37;1
 } // namespace color {}
 
 // ========================================================
+// Error and log output streams:
+// ========================================================
+
+std::ostream & logStream() noexcept; // std::cout by default
+std::ostream & errStream() noexcept; // std::cerr by default
+void setStreams(std::ostream * outStr, std::ostream * errStr) noexcept;
+
+// ========================================================
 // Compiler/runtime output and error reporting:
 // ========================================================
 
-// Use this for compiler/parser error output only.
-// Justs logs to stderr (std::cerr). Doesn't throw.
-void compilerError(const std::string & errorMessage, const std::string & srcFile,
-                   int srcLineNum, const std::string * offendingCode = nullptr);
+// Use this for non-fatal Lexer/Parser/Compiler warning messages.
+// Justs logs to the error output (stderr/std::cerr by default). Doesn't throw.
+void warning(const std::string & warnMessage,
+             const std::string & srcFile,
+             const int srcLineNum,
+             const std::string * offendingCode = nullptr);
 
-// Use this for compiler/parser warning messages.
-// Justs logs to stderr (std::cerr). Doesn't throw.
-void compilerWarning(const std::string & warnMessage, const std::string & srcFile,
-                     int srcLineNum, const std::string * offendingCode = nullptr);
+// Use this for the native script error handlers (script panic/assert/etc).
+// The input message should already carry the script source location info.
+// Logs to the error output (stderr/std::cerr by default) and throws
+// ScriptException (with the error message).
+[[noreturn]] void scriptError(const std::string & errorMessage) noexcept(false);
+
+// Use this for Lexer error output only. Logs to stderr and throws
+// LexerException. Source location should come from the offending script.
+[[noreturn]] void lexerError(const std::string & errorMessage,
+                             const std::string & srcFile,
+                             const int srcLineNum,
+                             const std::string * offendingCode = nullptr) noexcept(false);
+
+// Use this for Parser error output only. Logs to stderr and throws
+// ParserException. Source location should come from the offending script.
+[[noreturn]] void parserError(const std::string & errorMessage,
+                              const std::string & srcFile,
+                              const int srcLineNum,
+                              const std::string * offendingCode = nullptr) noexcept(false);
 
 // Use this to report fatal runtime/VM errors on the C++ side.
 // Logs to stderr and throws RuntimeException.
 [[noreturn]] void runtimeError(const std::string & errorMessage,
                                const std::string & srcFile,
-                               int srcLineNum);
+                               const int srcLineNum) noexcept(false);
+
+// Use this to halt on internal errors or failed preconditions on the C++ side.
+// Logs to stderr and throws CompilerException.
+[[noreturn]] void internalError(const std::string & errorMessage,
+                                const std::string & srcFile,
+                                const int srcLineNum) noexcept(false);
 
 // Use this to report assertion failures on the C++ side.
 // Logs to stderr and calls std::abort().
 [[noreturn]] void runtimeAssertionError(const std::string & errorMessage,
                                         const std::string & srcFile,
-                                        int srcLineNum);
+                                        const int srcLineNum);
+
+// Call this to please then compiler when we have unreachable code in
+// switch statements and the like. Logs to stderr and calls std::abort().
+[[noreturn]] void unreachable(const std::string & srcFile,
+                              const int lineNum);
 
 // ========================================================
 // Helper macros:
 // ========================================================
 
-// Convenience helper that adds the source file info:
-#define MOON_RUNTIME_EXCEPTION(error) ::moon::runtimeError((error), __FILE__, __LINE__)
+//
+// Convenience helpers that adds the source location info for us:
+//
+#define MOON_UNREACHABLE()               ::moon::unreachable(__FILE__, __LINE__)
+#define MOON_RUNTIME_EXCEPTION(message)  ::moon::runtimeError((message), __FILE__, __LINE__)
+#define MOON_INTERNAL_EXCEPTION(message) ::moon::internalError((message), __FILE__, __LINE__)
 
+//
 // Replacement for standard assert():
+//
 #if MOON_ENABLE_ASSERT
     #define MOON_ASSERT(expr)                                             \
         do                                                                \

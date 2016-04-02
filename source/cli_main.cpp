@@ -27,6 +27,9 @@ TODO NOTES:
 
 - Custom, user supplied, memory allocator? Could integrate with a std::allocator perhaps?...
 
+- Probably review some uses of `noexcept`. Function that have a precondition (call assert())
+  should probably not be marked as noexcept...
+
 *****
 
 NOTES ON THE LANGUAGE SYNTAX SIDE:
@@ -52,6 +55,14 @@ NOTES ON THE LANGUAGE SYNTAX SIDE:
 
 int main(int argc, const char * argv[])
 {
+    #if MOON_DEBUG
+    moon::logStream() << "Moon: This is a debug build.\n";
+    #endif // MOON_DEBUG
+
+    #if MOON_ENABLE_ASSERT
+    moon::logStream() << "Moon: Runtime asserts are enabled.\n";
+    #endif // MOON_ENABLE_ASSERT
+
     (void)argc;
     (void)argv;
     using namespace moon;
@@ -76,27 +87,33 @@ int main(int argc, const char * argv[])
 
     // Misc temporary tests
     {
-        std::cout << "sizeof(Compiler::IntermediateInstr) = " << sizeof(Compiler::IntermediateInstr) << std::endl;
-        std::cout << "sizeof(Variant)  = " << sizeof(Variant) << std::endl;
-        std::cout << "sizeof(Function) = " << sizeof(Function) << std::endl;
-
-        std::cout << "sizeof(ConstRcString)   = " << sizeof(ConstRcString) << std::endl;
-        std::cout << "sizeof(MutableRcString) = " << sizeof(MutableRcString) << std::endl;
+        logStream() << "sizeof(VM)                = " << sizeof(VM) << std::endl;
+        logStream() << "sizeof(Compiler)          = " << sizeof(Compiler) << std::endl;
+        logStream() << "sizeof(IntermediateInstr) = " << sizeof(IntermediateInstr) << std::endl;
+        logStream() << "sizeof(Variant)           = " << sizeof(Variant) << std::endl;
+        logStream() << "sizeof(Function)          = " << sizeof(Function) << std::endl;
+        logStream() << "sizeof(ConstRcString)     = " << sizeof(ConstRcString) << std::endl;
+        logStream() << "sizeof(MutableRcString)   = " << sizeof(MutableRcString) << std::endl;
+        logStream() << "sizeof(Object)            = " << sizeof(Object) << std::endl;
+        logStream() << "sizeof(LangStruct)        = " << sizeof(LangStruct) << std::endl;
+        logStream() << "sizeof(LangString)        = " << sizeof(LangString) << std::endl;
+        logStream() << "sizeof(LangArray)         = " << sizeof(LangArray) << std::endl;
+        logStream() << "sizeof(LangEnum)          = " << sizeof(LangEnum) << std::endl;
 
         auto rstr1 = newConstRcString("\'testing, 1234\'");
         auto rstr2 = newMutableRcString("\'testing, 1234\'");
 
-        std::cout << "s: " << rstr1->chars << std::endl;
-        std::cout << "l: " << rstr1->length << std::endl;
-        std::cout << "h: " << rstr1->hashVal << std::endl;
-        std::cout << "r: " << rstr1->refCount << std::endl;
-        std::cout << std::endl;
-        std::cout << "s: " << rstr2->chars << std::endl;
-        std::cout << "l: " << rstr2->length << std::endl;
-        std::cout << "r: " << rstr2->refCount << std::endl;
+        logStream() << "s: " << rstr1->chars << std::endl;
+        logStream() << "l: " << rstr1->length << std::endl;
+        logStream() << "h: " << rstr1->hashVal << std::endl;
+        logStream() << "r: " << rstr1->refCount << std::endl;
+        logStream() << std::endl;
+        logStream() << "s: " << rstr2->chars << std::endl;
+        logStream() << "l: " << rstr2->length << std::endl;
+        logStream() << "r: " << rstr2->refCount << std::endl;
 
-        HashTableCRcStr<int> ht1;
-        HashTableMRcStr<int> ht2;
+        HashTableConstRcStr<int> ht1;
+        HashTableMutableRcStr<int> ht2;
         ht1.emplace(rstr1, 1);
         ht2.emplace(rstr2, 2);
 
@@ -114,10 +131,13 @@ int main(int argc, const char * argv[])
         v1.value.asInteger = 3;
 
         auto res = performBinaryOp(OpCode::Mod, v0, v1);
-        std::cout << std::endl;
-        std::cout << toString(res.type) << std::endl;
-        std::cout << toString(res) << std::endl;
-        std::cout << std::endl;
+        logStream() << std::endl;
+        logStream() << toString(res.type) << std::endl;
+        logStream() << toString(res) << std::endl;
+        logStream() << std::endl;
+
+        void * pv = v0.getAsVoidPointer();
+        (void)pv;
     }
 
     try
@@ -132,30 +152,44 @@ int main(int argc, const char * argv[])
         Lexer    lexer  { parseCtx, std::cin };
         Parser   parser { parseCtx };
 
-        parseCtx.yylval   = nullptr;
-        parseCtx.lexer    = &lexer;
-        parseCtx.parser   = &parser;
-        parseCtx.symTable = &compiler.symTable;
-        parseCtx.fnTable  = &vm.functions;
-        parseCtx.syntTree = &compiler.syntTree;
-        parseCtx.currText = &currText;
-        parseCtx.srcFile  = &srcFile;
+        parseCtx.yylval    = nullptr;
+        parseCtx.lexer     = &lexer;
+        parseCtx.parser    = &parser;
+        parseCtx.symTable  = &compiler.symTable;
+        parseCtx.fnTable   = &vm.functions;
+        parseCtx.typeTable = &vm.runtimeTypes;
+        parseCtx.syntTree  = &compiler.syntTree;
+        parseCtx.objList   = &vm.gcListHead;
+        parseCtx.currText  = &currText;
+        parseCtx.srcFile   = &srcFile;
 
-        std::cout << (parser.parse() == 0 ? "\n-- FINISHED OK --" : "\n-- FINISHED WITH PARSE ERROR --") << "\n\n";
-        std::cout << compiler.symTable << "\n";
-        std::cout << compiler.syntTree << "\n";
+        logStream() << (parser.parse() == 0 ? "\n-- FINISHED OK --" : "\n-- FINISHED WITH PARSE ERROR --") << "\n\n";
+        logStream() << compiler.symTable << "\n";
+        logStream() << vm.runtimeTypes << "\n";
+        logStream() << compiler.syntTree << "\n";
 
         compiler.compile(vm);
-        std::cout << compiler << "\n";
-        std::cout << vm.functions << "\n";
-        std::cout << vm.code << "\n";
-        std::cout << vm.data << "\n";
+        logStream() << compiler << "\n";
+        logStream() << vm.functions << "\n";
+        logStream() << vm.code << "\n";
+        logStream() << vm.data << "\n";
 
         vm.execute();
-        std::cout << vm << "\n";
+        logStream() << vm << "\n";
+
+        /*
+        logStream() << "----------------------------------" << std::endl;
+        logStream() << "GC OBJECTS:\n" << std::endl;
+        for (auto obj = vm.gcListHead; obj != nullptr; obj = obj->next)
+        {
+            obj->print();
+            logStream() << std::endl;
+        }
+        logStream() << "----------------------------------" << std::endl;
+        //*/
     }
     catch (const moon::BaseException & e)
     {
-        std::cout << e.what() << std::endl;
+        logStream() << e.what() << std::endl;
     }
 }

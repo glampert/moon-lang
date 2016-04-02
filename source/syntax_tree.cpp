@@ -45,6 +45,7 @@ std::string toString(const SyntaxTreeNode::Type nodeType)
         color::cyan()    + std::string("EXPR_ARRAY_LITERAL")        + color::restore(),
         color::cyan()    + std::string("EXPR_ARRAY_SUBSCRIPT")      + color::restore(),
         color::cyan()    + std::string("EXPR_FUNC_CALL")            + color::restore(),
+        color::cyan()    + std::string("EXPR_MEMBER_REF")           + color::restore(),
         color::cyan()    + std::string("EXPR_NAME_IDENT")           + color::restore(),
         color::cyan()    + std::string("EXPR_TYPE_IDENT")           + color::restore(),
         color::cyan()    + std::string("EXPR_LITERAL_CONST")        + color::restore(),
@@ -125,7 +126,7 @@ const Symbol * symbolFromEval(const SymbolTable & symTable, const SyntaxTreeNode
     case SyntaxTreeNode::Eval::Long    : return symTable.findSymbol("long");
     case SyntaxTreeNode::Eval::Float   : return symTable.findSymbol("float");
     case SyntaxTreeNode::Eval::Bool    : return symTable.findSymbol("bool");
-    case SyntaxTreeNode::Eval::String  : return symTable.findSymbol("string");
+    case SyntaxTreeNode::Eval::String  : return symTable.findSymbol("str");
     case SyntaxTreeNode::Eval::Array   : return symTable.findSymbol("array");
     case SyntaxTreeNode::Eval::Range   : return symTable.findSymbol("range");
     case SyntaxTreeNode::Eval::Any     : return symTable.findSymbol("any");
@@ -191,38 +192,13 @@ void SyntaxTreeNode::print(const int level, const int childIndex, std::ostream &
 // SyntaxTree class methods:
 // ========================================================
 
-SyntaxTree::SyntaxTree()
-    : root      { nullptr }
-    , nodeCount { 0 }
-{ }
-
-bool SyntaxTree::isEmpty() const noexcept
-{
-    return nodeCount == 0;
-}
-
-const SyntaxTreeNode * SyntaxTree::getRoot() const noexcept
-{
-    return root;
-}
-
-void SyntaxTree::setRoot(const SyntaxTreeNode * newRoot) noexcept
-{
-    root = newRoot;
-}
-
-std::size_t SyntaxTree::getSize() const noexcept
-{
-    return nodeCount;
-}
-
 SyntaxTreeNode * SyntaxTree::newNode(const SyntaxTreeNode::Type type,
                                      const SyntaxTreeNode * child0,
                                      const SyntaxTreeNode * child1,
                                      const SyntaxTreeNode * child2,
                                      const SyntaxTreeNode::Eval eval)
 {
-    return construct(allocNode(), type, nullptr, child0, child1, child2, eval);
+    return construct(nodePool.allocate(), type, nullptr, child0, child1, child2, eval);
 }
 
 SyntaxTreeNode * SyntaxTree::newNodeWithSymbol(const SyntaxTreeNode::Type type,
@@ -232,27 +208,20 @@ SyntaxTreeNode * SyntaxTree::newNodeWithSymbol(const SyntaxTreeNode::Type type,
                                                const SyntaxTreeNode * child2,
                                                const SyntaxTreeNode::Eval eval)
 {
-    return construct(allocNode(), type, symbol, child0, child1, child2, eval);
+    return construct(nodePool.allocate(), type, symbol, child0, child1, child2, eval);
 }
 
 SyntaxTreeNode * SyntaxTree::newNodeWithEval(const SyntaxTreeNode::Type type,
                                              const Symbol * symbol,
                                              const SyntaxTreeNode::Eval eval)
 {
-    return construct(allocNode(), type, symbol, nullptr, nullptr, nullptr, eval);
-}
-
-SyntaxTreeNode * SyntaxTree::allocNode()
-{
-    auto node = nodePool.allocate();
-    ++nodeCount;
-    return node;
+    return construct(nodePool.allocate(), type, symbol, nullptr, nullptr, nullptr, eval);
 }
 
 void SyntaxTree::print(std::ostream & os) const
 {
     os << color::white() << "[[ begin syntax tree dump ]]" << color::restore() << "\n";
-    if (nodeCount != 0 && root != nullptr)
+    if (!isEmpty() && root != nullptr)
     {
         root->print(0, 0, os);
     }
@@ -260,13 +229,7 @@ void SyntaxTree::print(std::ostream & os) const
     {
         os << "(empty)\n";
     }
-    os << color::white() << "[[ listed " << nodeCount << " tree nodes ]]" << color::restore() << "\n";
-}
-
-std::ostream & operator << (std::ostream & os, const SyntaxTree & syntaxTree)
-{
-    syntaxTree.print(os);
-    return os;
+    os << color::white() << "[[ listed " << getSize() << " tree nodes ]]" << color::restore() << "\n";
 }
 
 } // namespace moon {}

@@ -8,64 +8,79 @@
 // ================================================================================================
 
 #include "compiler.hpp"
-
 #include <algorithm>
 #include <iomanip> // For std::setw & friends
 
 namespace moon
-{
-namespace
 {
 
 // ========================================================
 // Local helpers:
 // ========================================================
 
-using IntermediateInstr = Compiler::IntermediateInstr;
-using InstructionMap    = Compiler::InstructionMap;
-using DataMap           = Compiler::DataMap;
-using STNode            = SyntaxTreeNode::Type;
+#define EXPECT_NUM_CHILDREN(node, expected)                                  \
+    do                                                                       \
+    {                                                                        \
+        MOON_ASSERT((node) != nullptr);                                      \
+        for (int n = 0; n < (expected); ++n)                                 \
+        {                                                                    \
+            if ((node)->getChild(n) == nullptr)                              \
+            {                                                                \
+                MOON_INTERNAL_EXCEPTION("expected " + toString((expected)) + \
+                                        " child nodes, got " + toString(n)); \
+            }                                                                \
+        }                                                                    \
+    } while (0)
 
-// NOTES:
-// The exceptions we throw in here are only meant to shield
-// from internal programming errors. If we hit one, there's
-// a bug in the compiler. The syntax tree should already
-// represent a 100% valid program when we get here.
+#define EXPECT_CHILD_AT_INDEX(node, childIndex)                        \
+    do                                                                 \
+    {                                                                  \
+        MOON_ASSERT((node) != nullptr);                                \
+        if ((node)->getChild((childIndex)) == nullptr)                 \
+        {                                                              \
+            MOON_INTERNAL_EXCEPTION("expected node for child index " + \
+                                    toString((childIndex)));           \
+        }                                                              \
+    } while (0)
 
-void internalError(const std::string & errorMessage, const int srcLineNum)
-{
-    const std::string errorTag = color::red() + toString("internal compiler error:") + color::restore();
-    const std::string message  = toString(__FILE__) + "(" + toString(srcLineNum) + "): " + errorTag + " " + errorMessage;
+#define EXPECT_SYMBOL(node)                                       \
+    do                                                            \
+    {                                                             \
+        MOON_ASSERT((node) != nullptr);                           \
+        if ((node)->getSymbol() == nullptr)                       \
+        {                                                         \
+            MOON_INTERNAL_EXCEPTION("expected symbol for node " + \
+                                    toString((node)->getType())); \
+        }                                                         \
+    } while (0)
 
-    std::cerr << message << std::endl;
-    throw CompilerException{ "Internal compiler error" };
-}
+// ========================================================
 
-std::uint32_t getProgCodeIndex(const InstructionMap & instrMapping, const IntermediateInstr * instr)
+static std::uint32_t getProgCodeIndex(const InstrMap & instrMapping, const IntermediateInstr * instr)
 {
     MOON_ASSERT(instr != nullptr);
 
     auto && entry = instrMapping.find(instr);
     if (entry == std::end(instrMapping))
     {
-        internalError("instruction " + toString(instr->op) + " not found in InstructionMap", __LINE__);
+        MOON_INTERNAL_EXCEPTION("instruction " + toString(instr->op) + " not found in InstructionMap");
     }
     return entry->second;
 }
 
-std::uint32_t getProgDataIndex(const DataMap & dataMapping, const Symbol * sym)
+static std::uint32_t getProgDataIndex(const DataMap & dataMapping, const Symbol * sym)
 {
     MOON_ASSERT(sym != nullptr);
 
     auto && entry = dataMapping.find(sym);
     if (entry == std::end(dataMapping))
     {
-        internalError("symbol " + toString(*sym) + " not found in DataMap", __LINE__);
+        MOON_INTERNAL_EXCEPTION("symbol " + toString(*sym) + " not found in DataMap");
     }
     return entry->second;
 }
 
-Variant::Type varTypeForNodeEval(const SyntaxTreeNode * node)
+static Variant::Type varTypeForNodeEval(const Compiler & compiler, const SyntaxTreeNode * node)
 {
     const auto eval = node->getEval();
     switch (eval)
@@ -75,71 +90,62 @@ Variant::Type varTypeForNodeEval(const SyntaxTreeNode * node)
     case SyntaxTreeNode::Eval::Float  : return Variant::Type::Float;
     case SyntaxTreeNode::Eval::Bool   : return Variant::Type::Integer;
     case SyntaxTreeNode::Eval::String : return Variant::Type::String;
-    default                           : return Variant::Type::Null;
+    case SyntaxTreeNode::Eval::UDT    :
+        {
+            const Symbol * symbol = node->getSymbol();
+            if (symbol == nullptr)
+            {
+                symbol = node->getChildSymbol(1);
+            }
+            return compiler.symbolToTypeId(symbol) ? Variant::Type::Tid : Variant::Type::Object;
+        }
+    default :
+        MOON_INTERNAL_EXCEPTION("eval type '" + toString(eval) + "' doesn't map directly to a variant!");
     } // switch (eval)
 }
 
-std::uint32_t addSymbolToProgData(VM::DataVector & progData, FunctionTable & funcTable,
-                                  const Symbol & sym, const Variant::Type type)
+static std::uint32_t addSymbolToProgData(VM::DataVector & progData,
+                                         FunctionTable & funcTable,
+                                         TypeTable & typeTable,
+                                         const Symbol & sym,
+                                         const Variant::Type type)
 {
     Variant var{}; // Default initialized to null.
 
     // Identifies might be variables, function or user defined types.
-    if (sym.type == Symbol::Type::Identifier && !sym.isBuiltInTypeId())
+    if (sym.type == Symbol::Type::Identifier)
     {
         var.type = type;
 
         // Some of the types require special handing:
         if (type == Variant::Type::Function)
         {
-            var.value.asFunctionPtr = funcTable.findFunction(sym.name);
-            if (var.value.asFunctionPtr == nullptr)
+            var.value.asFunction = funcTable.findFunction(sym.name);
+            if (var.value.asFunction == nullptr)
             {
                 // We should not hit this error. The parser should have already validated undefined func calls.
-                internalError("referencing undefined function '" + toString(sym.name) + "'", __LINE__);
+                MOON_INTERNAL_EXCEPTION("referencing undefined function '" + toString(sym.name) + "'");
+            }
+        }
+        else if (type == Variant::Type::Tid)
+        {
+            var.value.asTypeId = typeTable.findTypeId(sym.name);
+            if (var.value.asTypeId == nullptr)
+            {
+                MOON_INTERNAL_EXCEPTION("referencing undefined type '" + toString(sym.name) + "'");
             }
         }
     }
     else // Literal constants/strings:
     {
-        var = Variant::fromSymbol(sym);
+        var = variantFromSymbol(sym);
     }
 
     progData.push_back(var);
     return static_cast<std::uint32_t>(progData.size() - 1);
 }
 
-void expectNumChildren(const SyntaxTreeNode * node, const int expected)
-{
-    MOON_ASSERT(node != nullptr);
-    for (int n = 0; n < expected; ++n)
-    {
-        if (node->getChild(n) == nullptr)
-        {
-            internalError("expected " + toString(expected) + " child nodes, got " + toString(n), __LINE__);
-        }
-    }
-}
-
-void expectChildAtIndex(const SyntaxTreeNode * node, const int childIndex)
-{
-    MOON_ASSERT(node != nullptr);
-    if (node->getChild(childIndex) == nullptr)
-    {
-        internalError("expected node for child index " + toString(childIndex), __LINE__);
-    }
-}
-
-void expectSymbol(const SyntaxTreeNode * node)
-{
-    MOON_ASSERT(node != nullptr);
-    if (node->getSymbol() == nullptr)
-    {
-        internalError("expected symbol for node " + toString(node->getType()), __LINE__);
-    }
-}
-
-void printIntermediateInstrListHelper(const IntermediateInstr * head, std::ostream & os)
+static void printIntermediateInstrListHelper(const IntermediateInstr * head, std::ostream & os)
 {
     os << color::white() << "[[ begin intermediate instruction dump ]]" << color::restore() << "\n";
 
@@ -158,8 +164,16 @@ void printIntermediateInstrListHelper(const IntermediateInstr * head, std::ostre
             {
                 if (instr->operand.symbol != nullptr)
                 {
-                    os << " \'" << color::magenta() << unescapeString(toString(*(instr->operand.symbol)).c_str())
-                       << color::restore() << "\'";
+                    if (instr->type != Variant::Type::Null)
+                    {
+                        os << " \'" << color::magenta() << unescapeString(toString(*(instr->operand.symbol)).c_str())
+                           << color::restore() << "\'" << " (" << toString(instr->type) << ")" << color::restore();
+                    }
+                    else
+                    {
+                        os << " \'" << color::magenta() << unescapeString(toString(*(instr->operand.symbol)).c_str())
+                           << color::restore() << "\'";
+                    }
                 }
             }
             else // Jump instruction. Operand is another instruction.
@@ -188,7 +202,7 @@ void printIntermediateInstrListHelper(const IntermediateInstr * head, std::ostre
        << color::restore() << "\n";
 }
 
-void printInstructionMappingHelper(const InstructionMap & instrMapping, std::ostream & os)
+static void printInstructionMappingHelper(const InstrMap & instrMapping, std::ostream & os)
 {
     os << color::white() << "[[ begin instruction map dump ]]" << color::restore() << "\n";
 
@@ -207,9 +221,9 @@ void printInstructionMappingHelper(const InstructionMap & instrMapping, std::ost
 // ========================================================
 
 using EmitInstrForNodeCB = IntermediateInstr * (*)(Compiler & compiler, const SyntaxTreeNode * root);
-IntermediateInstr * traverseTreeRecursive(Compiler & compiler, const SyntaxTreeNode * root);
+static IntermediateInstr * traverseTreeRecursive(Compiler & compiler, const SyntaxTreeNode * root);
 
-IntermediateInstr * linkInstr(IntermediateInstr * head, IntermediateInstr * newTail)
+static IntermediateInstr * linkInstr(IntermediateInstr * head, IntermediateInstr * newTail)
 {
     // Instruction chains where we use this function are short.
     // The longest would be from a big if/elseif construct, which
@@ -221,13 +235,13 @@ IntermediateInstr * linkInstr(IntermediateInstr * head, IntermediateInstr * newT
     return head;
 }
 
-IntermediateInstr * emitNOOP(Compiler & compiler, const SyntaxTreeNode *)
+static IntermediateInstr * emitNOOP(Compiler & compiler, const SyntaxTreeNode *)
 {
     // For the node types that generate no code.
     return compiler.newInstruction(OpCode::NoOp);
 }
 
-IntermediateInstr * emitProgStart(Compiler & compiler, const SyntaxTreeNode * root)
+static IntermediateInstr * emitProgStart(Compiler & compiler, const SyntaxTreeNode * root)
 {
     auto block0 = compiler.newInstruction(OpCode::ProgStart);
     if (root->getChild(0) != nullptr) // A translation unit might be empty.
@@ -238,9 +252,9 @@ IntermediateInstr * emitProgStart(Compiler & compiler, const SyntaxTreeNode * ro
     return block0;
 }
 
-IntermediateInstr * emitStatement(Compiler & compiler, const SyntaxTreeNode * root)
+static IntermediateInstr * emitStatement(Compiler & compiler, const SyntaxTreeNode * root)
 {
-    expectChildAtIndex(root, 1);
+    EXPECT_CHILD_AT_INDEX(root, 1);
     if (root->getChild(0) != nullptr)
     {
         auto block0 = traverseTreeRecursive(compiler, root->getChild(0));
@@ -250,12 +264,12 @@ IntermediateInstr * emitStatement(Compiler & compiler, const SyntaxTreeNode * ro
     return traverseTreeRecursive(compiler, root->getChild(1));
 }
 
-IntermediateInstr * emitIfThen(Compiler & compiler, const SyntaxTreeNode * root)
+static IntermediateInstr * emitIfThen(Compiler & compiler, const SyntaxTreeNode * root)
 {
     // If the then-statement ('if' body) is not empty:
     if (root->getChild(1) != nullptr)
     {
-        expectNumChildren(root, 2);
+        EXPECT_NUM_CHILDREN(root, 2);
         auto condition     = traverseTreeRecursive(compiler, root->getChild(0));
         auto thenStatement = traverseTreeRecursive(compiler, root->getChild(1));
         auto noop          = compiler.newInstruction(OpCode::NoOp);
@@ -278,14 +292,14 @@ IntermediateInstr * emitIfThen(Compiler & compiler, const SyntaxTreeNode * root)
     }
 }
 
-IntermediateInstr * emitIfThenElse(Compiler & compiler, const SyntaxTreeNode * root)
+static IntermediateInstr * emitIfThenElse(Compiler & compiler, const SyntaxTreeNode * root)
 {
     // child[0] = condition/expression (must have)
     // child[1] = if-body/then-statement (may be empty)
     // child[2] = else-body/statement (may be empty)
 
     // Must have a if-condition part:
-    expectChildAtIndex(root, 0);
+    EXPECT_CHILD_AT_INDEX(root, 0);
     auto condition = traverseTreeRecursive(compiler, root->getChild(0));
 
     // If the then-statement body and else-statement body are not empty, resolve them:
@@ -324,7 +338,7 @@ IntermediateInstr * emitIfThenElse(Compiler & compiler, const SyntaxTreeNode * r
     //     jump-end => else-body => noop[jump-target/end]
 }
 
-IntermediateInstr * emitIfThenElseIf(Compiler & compiler, const SyntaxTreeNode * root)
+static IntermediateInstr * emitIfThenElseIf(Compiler & compiler, const SyntaxTreeNode * root)
 {
     // When entering the if/elseif chain for the first time:
     //
@@ -339,7 +353,7 @@ IntermediateInstr * emitIfThenElseIf(Compiler & compiler, const SyntaxTreeNode *
     // child[2] = terminal else-statement or another elseif (which may have empty bodies)
 
     // Must have a if-condition part:
-    expectChildAtIndex(root, 0);
+    EXPECT_CHILD_AT_INDEX(root, 0);
     auto condition = traverseTreeRecursive(compiler, root->getChild(0));
 
     // If the then-statement body and elseif body are not empty, resolve them:
@@ -362,7 +376,7 @@ IntermediateInstr * emitIfThenElseIf(Compiler & compiler, const SyntaxTreeNode *
     //     jump-end => [repeat till an else] => noop[jump-target/end]
 }
 
-IntermediateInstr * emitLoop(Compiler & compiler, const SyntaxTreeNode * root)
+static IntermediateInstr * emitLoop(Compiler & compiler, const SyntaxTreeNode * root)
 {
     // Anchor the start and ends of the loop with noops we can jump to.
     auto noopLabelStart = compiler.newInstruction(OpCode::NoOp);
@@ -384,10 +398,10 @@ IntermediateInstr * emitLoop(Compiler & compiler, const SyntaxTreeNode * root)
     return linkInstr(noopLabelStart, linkInstr(loopContinue, noopLabelEnd));
 }
 
-IntermediateInstr * emitWhileLoop(Compiler & compiler, const SyntaxTreeNode * root)
+static IntermediateInstr * emitWhileLoop(Compiler & compiler, const SyntaxTreeNode * root)
 {
     // The conditional expression:
-    expectChildAtIndex(root, 0);
+    EXPECT_CHILD_AT_INDEX(root, 0);
     auto loopCond     = traverseTreeRecursive(compiler, root->getChild(0));
     auto noopLabelEnd = compiler.newInstruction(OpCode::NoOp);
     auto loopContinue = compiler.newInstruction(OpCode::Jmp, loopCond);
@@ -411,12 +425,12 @@ IntermediateInstr * emitWhileLoop(Compiler & compiler, const SyntaxTreeNode * ro
     return linkInstr(loopCond, linkInstr(loopContinue, noopLabelEnd));
 }
 
-IntermediateInstr * emitForLoop(Compiler & compiler, const SyntaxTreeNode * root)
+static IntermediateInstr * emitForLoop(Compiler & compiler, const SyntaxTreeNode * root)
 {
     // Must have the counter (i) and a range/call/name expression:
-    expectChildAtIndex(root, 0);
-    expectChildAtIndex(root, 1);
-    expectSymbol(root->getChild(0));
+    EXPECT_CHILD_AT_INDEX(root, 0);
+    EXPECT_CHILD_AT_INDEX(root, 1);
+    EXPECT_SYMBOL(root->getChild(0));
 
     auto forIndex = root->getChild(0)->getSymbol();
     auto forInit  = traverseTreeRecursive(compiler, root->getChild(1));
@@ -450,22 +464,22 @@ IntermediateInstr * emitForLoop(Compiler & compiler, const SyntaxTreeNode * root
     return linkInstr(forInit, linkInstr(block1, linkInstr(forCont, forEnd)));
 }
 
-IntermediateInstr * emitBreak(Compiler & compiler, const SyntaxTreeNode *)
+static IntermediateInstr * emitBreak(Compiler & compiler, const SyntaxTreeNode *)
 {
-    MOON_ASSERT(compiler.getLoopEndAnchor() != nullptr);
-    return compiler.newInstruction(OpCode::Jmp, compiler.getLoopEndAnchor());
+    MOON_ASSERT(compiler.lastLoopEndAnchor != nullptr);
+    return compiler.newInstruction(OpCode::Jmp, compiler.lastLoopEndAnchor);
 }
 
-IntermediateInstr * emitContinue(Compiler & compiler, const SyntaxTreeNode *)
+static IntermediateInstr * emitContinue(Compiler & compiler, const SyntaxTreeNode *)
 {
-    MOON_ASSERT(compiler.getLoopStartAnchor() != nullptr);
-    return compiler.newInstruction(OpCode::Jmp, compiler.getLoopStartAnchor());
+    MOON_ASSERT(compiler.lastLoopStartAnchor != nullptr);
+    return compiler.newInstruction(OpCode::Jmp, compiler.lastLoopStartAnchor);
 }
 
 template<OpCode OP>
-IntermediateInstr * emitUnaryOp(Compiler & compiler, const SyntaxTreeNode * root)
+static IntermediateInstr * emitUnaryOp(Compiler & compiler, const SyntaxTreeNode * root)
 {
-    expectNumChildren(root, 1);
+    EXPECT_NUM_CHILDREN(root, 1);
     auto argument  = traverseTreeRecursive(compiler, root->getChild(0));
     auto operation = compiler.newInstruction(OP);
     return linkInstr(argument, operation);
@@ -476,18 +490,18 @@ IntermediateInstr * emitUnaryOp(Compiler & compiler, const SyntaxTreeNode * root
 // Those must also reference the target symbol that is to receive
 // the result of the operation.
 template<OpCode OP, bool lhsOperand = false>
-IntermediateInstr * emitBinaryOp(Compiler & compiler, const SyntaxTreeNode * root)
+static IntermediateInstr * emitBinaryOp(Compiler & compiler, const SyntaxTreeNode * root)
 {
-    expectNumChildren(root, 2);
+    EXPECT_NUM_CHILDREN(root, 2);
     auto arg0 = traverseTreeRecursive(compiler, root->getChild(0));
     auto arg1 = traverseTreeRecursive(compiler, root->getChild(1));
     auto operation = compiler.newInstruction(OP, lhsOperand ? root->getChild(0)->getSymbol() : nullptr);
     return linkInstr(linkInstr(arg0, arg1), operation);
 }
 
-IntermediateInstr * emitLoad(Compiler & compiler, const SyntaxTreeNode * root)
+static IntermediateInstr * emitLoad(Compiler & compiler, const SyntaxTreeNode * root)
 {
-    expectSymbol(root);
+    EXPECT_SYMBOL(root);
     auto symbol = root->getSymbol();
 
     OpCode op = OpCode::LoadGlob;
@@ -520,43 +534,261 @@ IntermediateInstr * emitLoad(Compiler & compiler, const SyntaxTreeNode * root)
     return operation;
 }
 
-IntermediateInstr * emitStore(Compiler & compiler, const SyntaxTreeNode * root)
+static IntermediateInstr * makeLoadMemberOffsetInstr(Compiler & compiler,
+                                                     const Symbol * objSymbol,
+                                                     const Symbol * memSymbol,
+                                                     const TypeId ** typeIdOut = nullptr,
+                                                     int * memberOffsetOut = nullptr)
 {
-    expectNumChildren(root, 2);
-    expectSymbol(root->getChild(0));
-    auto symbol    = root->getChildSymbol(0);
-    auto symbType  = varTypeForNodeEval(root);
-    auto argument  = traverseTreeRecursive(compiler, root->getChild(1));
-
-    OpCode op = OpCode::StoreGlob;
-    std::uint16_t paramIdx = 0;
-
-    if (symbol->type == Symbol::Type::Identifier &&
-        compiler.symbolIsFunctionLocal(symbol, paramIdx)) // A local variable or function parameter?
+    const TypeId * typeId;
+    if (compiler.insideFunctionDecl)
     {
-        op = OpCode::StoreLocal;
+        typeId = compiler.findFunctionLocalSymbolTypeId(objSymbol);
+    }
+    else
+    {
+        typeId = compiler.findGlobalSymbolTypeId(objSymbol);
     }
 
-    auto operation = compiler.newInstruction(op, symbol, symbType);
-    operation->paramIdx = paramIdx;
-
-    // Storing from the return value of a function references the Return Value Register (RVR).
-    if (root->getChild(1)->getType() == STNode::ExprFuncCall)
+    if (typeId == nullptr || typeId->templateObject == nullptr)
     {
-        auto getRVR = compiler.newInstruction(OpCode::LoadRVR);
-        return linkInstr(argument, linkInstr(getRVR, operation));
+        MOON_INTERNAL_EXCEPTION("'" + toString(objSymbol->name) + "' is not a type or has no dynamic members table!");
     }
-    else // Normal store:
+
+    const int memberOffset = typeId->templateObject->findMemberIndex(memSymbol->name);
+    if (memberOffset < 0)
     {
-        return linkInstr(argument, operation);
+        MOON_INTERNAL_EXCEPTION("object has no member '" + toString(memSymbol->name) + "'");
+    }
+
+    if (typeIdOut)       { *typeIdOut       = typeId;       }
+    if (memberOffsetOut) { *memberOffsetOut = memberOffset; }
+
+    auto offsetLiteral = compiler.symTable.findOrDefineValue(memberOffset);
+    return compiler.newInstruction(OpCode::LoadGlob, offsetLiteral);
+}
+
+static void collectMemberRefs(std::vector<const Symbol *> & memberList, const SyntaxTreeNode * root)
+{
+    if (root == nullptr)
+    {
+        return;
+    }
+
+    collectMemberRefs(memberList, root->getChild(0));
+    collectMemberRefs(memberList, root->getChild(1));
+
+    if (root->getSymbol() != nullptr)
+    {
+        memberList.push_back(root->getSymbol());
     }
 }
 
-IntermediateInstr * emitArraySubscript(Compiler & compiler, const SyntaxTreeNode * root)
+static IntermediateInstr * setUpMemberOffsetLoadChain(Compiler & compiler, const Symbol * objSymbol)
+{
+    MOON_ASSERT(objSymbol != nullptr);
+
+    int lastMemberOffset = 0;
+    const TypeId * lastMemberTypeId = nullptr;
+
+    auto memOffsetInstr = makeLoadMemberOffsetInstr(compiler, objSymbol,
+        compiler.memberRefList[1], &lastMemberTypeId, &lastMemberOffset);
+
+    if (compiler.memberRefList.size() > 2)
+    {
+        const auto & member = lastMemberTypeId->templateObject->getMemberAt(lastMemberOffset);
+        if (member.data.type == Variant::Type::Object)
+        {
+            lastMemberTypeId = member.data.value.asObject->typeId;
+        }
+
+        // [0:1] is the first obj.member pair. A chain might follow.
+        for (unsigned i = 2; i < compiler.memberRefList.size(); ++i)
+        {
+            MOON_ASSERT(lastMemberTypeId != nullptr);
+            const Symbol * memSymbol = compiler.memberRefList[i];
+
+            lastMemberOffset = lastMemberTypeId->templateObject->findMemberIndex(memSymbol->name);
+            if (lastMemberOffset < 0)
+            {
+                MOON_INTERNAL_EXCEPTION("sub object of type '" + toString(lastMemberTypeId->name) +
+                                        "' has no member '" + toString(memSymbol->name) + "'");
+            }
+
+            auto offsetLiteral = compiler.symTable.findOrDefineValue(lastMemberOffset);
+            auto loadMemOffs = compiler.newInstruction(OpCode::LoadGlob, offsetLiteral);
+            linkInstr(memOffsetInstr, loadMemOffs);
+
+            const auto & subMember = lastMemberTypeId->templateObject->getMemberAt(lastMemberOffset);
+            if (subMember.data.type == Variant::Type::Object)
+            {
+                lastMemberTypeId = subMember.data.value.asObject->typeId;
+            }
+        }
+    }
+
+    return memOffsetInstr;
+}
+
+static IntermediateInstr * emitStore(Compiler & compiler, const SyntaxTreeNode * root)
+{
+    EXPECT_NUM_CHILDREN(root, 2);
+
+    unsigned numMemberOffsets = 0;
+    const Symbol * objSymbol  = nullptr;
+    Variant::Type symbType    = Variant::Type::Null;
+
+    compiler.memberRefList.clear();
+    if (root->getChild(0)->getType() == SyntaxTreeNode::Type::ExprMemberRef)
+    {
+        collectMemberRefs(compiler.memberRefList, root->getChild(0));
+        MOON_ASSERT(compiler.memberRefList.size() >= 2); // obj.member pair at least
+
+        objSymbol = compiler.memberRefList[0];
+        numMemberOffsets = compiler.memberRefList.size() - 1;
+    }
+    else
+    {
+        objSymbol = root->getChildSymbol(0);
+        MOON_ASSERT(objSymbol != nullptr);
+    }
+
+    // Don't enter if doing a obj.member store
+    if (root->getEval() == SyntaxTreeNode::Eval::Undefined && numMemberOffsets == 0)
+    {
+        // Assignments from a local/global var
+        const Symbol * lhsSymbol = root->getChildSymbol(1);
+        MOON_ASSERT(lhsSymbol != nullptr);
+
+        const TypeId * typeId = (compiler.insideFunctionDecl ?
+                compiler.findFunctionLocalSymbolTypeId(lhsSymbol) :
+                compiler.findGlobalSymbolTypeId(lhsSymbol));
+
+        // We want the specific type-id for the native types.
+        // UDTs just decay to 'object'.
+        MOON_ASSERT(typeId != nullptr);
+        if (!typeId->isBuiltIn)
+        {
+            typeId = compiler.symbolToTypeId(compiler.symTable.findSymbol("object"));
+        }
+
+        symbType = variantTypeFromTypeId(typeId);
+    }
+    else
+    {
+        // obj.member stores will overwrite symbType below. No need to set it.
+        if (numMemberOffsets == 0)
+        {
+            symbType = varTypeForNodeEval(compiler, root);
+        }
+    }
+
+    OpCode op;
+    std::uint16_t paramIdx = 0;
+    IntermediateInstr * memOffsetInstr = nullptr;
+    IntermediateInstr * argument = traverseTreeRecursive(compiler, root->getChild(1));
+
+    // A local variable or function parameter?
+    if (compiler.symbolIsFunctionLocal(objSymbol, paramIdx))
+    {
+        if (numMemberOffsets > 0)
+        {
+            memOffsetInstr = setUpMemberOffsetLoadChain(compiler, objSymbol);
+            op = OpCode::MemberStoreLocal;
+            symbType = Variant::Type::Object;
+        }
+        else
+        {
+            op = OpCode::StoreLocal;
+        }
+    }
+    else // Global symbol
+    {
+        if (numMemberOffsets > 0)
+        {
+            memOffsetInstr = setUpMemberOffsetLoadChain(compiler, objSymbol);
+            op = OpCode::MemberStoreGlob;
+            symbType = Variant::Type::Object;
+        }
+        else
+        {
+            op = OpCode::StoreGlob;
+        }
+    }
+
+    if (numMemberOffsets > 0)
+    {
+        auto offsetCountLiteral = compiler.symTable.findOrDefineValue(numMemberOffsets);
+        auto offsCount = compiler.newInstruction(OpCode::LoadGlob, offsetCountLiteral);
+
+        MOON_ASSERT(memOffsetInstr != nullptr);
+        memOffsetInstr = linkInstr(memOffsetInstr, offsCount);
+    }
+
+    auto operation = compiler.newInstruction(op, objSymbol, symbType);
+    operation->paramIdx = paramIdx;
+
+    // Storing from the return value of a function references the Return Value Register (RVR).
+    if (root->getChild(1)->getType() == SyntaxTreeNode::Type::ExprFuncCall)
+    {
+        auto getRVR = compiler.newInstruction(OpCode::LoadRVR);
+        return linkInstr(linkInstr(argument, memOffsetInstr), linkInstr(getRVR, operation));
+    }
+    else // Normal store:
+    {
+        return linkInstr(linkInstr(argument, memOffsetInstr), operation);
+    }
+}
+
+static IntermediateInstr * emitMemberRef(Compiler & compiler, const SyntaxTreeNode * root)
+{
+    EXPECT_NUM_CHILDREN(root, 2);
+    EXPECT_SYMBOL(root->getChild(1));
+
+    auto objLoad = traverseTreeRecursive(compiler, root->getChild(0));
+    const Symbol * objSymbol = root->getChildSymbol(0);
+    const Symbol * memSymbol = root->getChildSymbol(1);
+
+    IntermediateInstr * loadMemOffs;
+    if (objSymbol != nullptr) // First pass
+    {
+        int memberOffset = 0;
+        loadMemOffs = makeLoadMemberOffsetInstr(compiler, objSymbol, memSymbol, &compiler.lastMemberTypeId, &memberOffset);
+
+        const auto & member = compiler.lastMemberTypeId->templateObject->getMemberAt(memberOffset);
+        if (member.data.type == Variant::Type::Object)
+        {
+            compiler.lastMemberTypeId = member.data.value.asObject->typeId;
+        }
+    }
+    else // Going down a chain of obj.member.member.member ...
+    {
+        MOON_ASSERT(compiler.lastMemberTypeId != nullptr);
+        const int memberOffset = compiler.lastMemberTypeId->templateObject->findMemberIndex(memSymbol->name);
+        if (memberOffset < 0)
+        {
+            MOON_INTERNAL_EXCEPTION("sub object of type '" + toString(compiler.lastMemberTypeId->name) +
+                                    "' has no member '" + toString(memSymbol->name) + "'");
+        }
+
+        auto offsetLiteral = compiler.symTable.findOrDefineValue(memberOffset);
+        loadMemOffs = compiler.newInstruction(OpCode::LoadGlob, offsetLiteral);
+
+        const auto & member = compiler.lastMemberTypeId->templateObject->getMemberAt(memberOffset);
+        if (member.data.type == Variant::Type::Object)
+        {
+            compiler.lastMemberTypeId = member.data.value.asObject->typeId;
+        }
+    }
+
+    return linkInstr(linkInstr(objLoad, loadMemOffs), compiler.newInstruction(OpCode::MemberRef));
+}
+
+static IntermediateInstr * emitArraySubscript(Compiler & compiler, const SyntaxTreeNode * root)
 {
     // child[0] is reserved for parameter lists and may be null.
-    expectChildAtIndex(root, 1);
-    expectChildAtIndex(root, 2);
+    EXPECT_CHILD_AT_INDEX(root, 1);
+    EXPECT_CHILD_AT_INDEX(root, 2);
     auto arrayExpr     = traverseTreeRecursive(compiler, root->getChild(1));
     auto subscriptExpr = traverseTreeRecursive(compiler, root->getChild(2));
     auto subscriptOp   = compiler.newInstruction(OpCode::ArraySubscript);
@@ -566,7 +798,7 @@ IntermediateInstr * emitArraySubscript(Compiler & compiler, const SyntaxTreeNode
 //FIXME the argument counting is still broken.
 // it will count unrelated nodes like operators.
 // e.g.: println("a" + to_string("b")) would yield 3 instead of 2
-void countArgsRecursive(const SyntaxTreeNode * root, int & argCountOut, Compiler & compiler)
+static void countArgsRecursive(const SyntaxTreeNode * root, int & argCountOut, Compiler & compiler)
 {
     if (root == nullptr)
     {
@@ -589,10 +821,10 @@ void countArgsRecursive(const SyntaxTreeNode * root, int & argCountOut, Compiler
 // This function is used to resolve parameter chains for function calls,
 // constructor calls and array literals. The OP template parameter is the
 // instruction ending the list (i.e.: a Call, NewObj, NewArray, etc).
-template<OpCode OP>
-IntermediateInstr * emitParamChain(Compiler & compiler, const SyntaxTreeNode * root)
+template<OpCode OP, Variant::Type OperandType>
+static IntermediateInstr * emitParamChain(Compiler & compiler, const SyntaxTreeNode * root)
 {
-    auto operation = compiler.newInstruction(OP, root->getSymbol(), Variant::Type::Function);//FIXME probably not Function for everything!!!
+    auto operation = compiler.newInstruction(OP, root->getSymbol(), OperandType);
 
     // We have to keep track of the visited nodes to be able to properly
     // compute the argument counts. Some nodes will be visited more than
@@ -631,9 +863,9 @@ IntermediateInstr * emitParamChain(Compiler & compiler, const SyntaxTreeNode * r
     }
 }
 
-IntermediateInstr * emitFunctionDecl(Compiler & compiler, const SyntaxTreeNode * root)
+static IntermediateInstr * emitFunctionDecl(Compiler & compiler, const SyntaxTreeNode * root)
 {
-    expectSymbol(root); // Func name
+    EXPECT_SYMBOL(root); // Func name
     auto funcStart = compiler.newInstruction(OpCode::FuncStart, root->getSymbol(), Variant::Type::Function);
     auto funcEnd   = compiler.newInstruction(OpCode::FuncEnd, root->getSymbol());
 
@@ -648,10 +880,10 @@ IntermediateInstr * emitFunctionDecl(Compiler & compiler, const SyntaxTreeNode *
     return linkInstr(funcStart, linkInstr(funcBody, funcEnd));
 }
 
-IntermediateInstr * emitReturn(Compiler & compiler, const SyntaxTreeNode * root)
+static IntermediateInstr * emitReturn(Compiler & compiler, const SyntaxTreeNode * root)
 {
-    MOON_ASSERT(compiler.getReturnAnchor() != nullptr);
-    auto retJump = compiler.newInstruction(OpCode::JmpReturn, compiler.getReturnAnchor());
+    MOON_ASSERT(compiler.lastFuncEndAnchor != nullptr);
+    auto retJump = compiler.newInstruction(OpCode::JmpReturn, compiler.lastFuncEndAnchor);
 
     // Return simply resolves its child expression if it has one.
     if (root->getChild(0) != nullptr)
@@ -661,7 +893,7 @@ IntermediateInstr * emitReturn(Compiler & compiler, const SyntaxTreeNode * root)
         // We only need to set the Return Value Register when the return
         // expression is not itself another call. If it is a call, the
         // leaf function in the call tree will set the register.
-        if (root->getChild(0)->getType() != STNode::ExprFuncCall)
+        if (root->getChild(0)->getType() != SyntaxTreeNode::Type::ExprFuncCall)
         {
             auto setRVR = compiler.newInstruction(OpCode::StoreRVR);
             return linkInstr(retExpr, linkInstr(setRVR, retJump));
@@ -677,20 +909,43 @@ IntermediateInstr * emitReturn(Compiler & compiler, const SyntaxTreeNode * root)
     }
 }
 
-IntermediateInstr * emitNewVar(Compiler & compiler, const SyntaxTreeNode * root)
+static IntermediateInstr * emitNewVar(Compiler & compiler, const SyntaxTreeNode * root)
 {
-    expectSymbol(root); // Var name
+    EXPECT_SYMBOL(root); // Var name
 
-    const Symbol * type = nullptr;
-    IntermediateInstr * argument = nullptr;
+    const Symbol * typeSymbol       = nullptr;
+    const Symbol * objectTypeSymbol = nullptr;
+    IntermediateInstr * argument    = nullptr;
 
     if (root->getChild(1) != nullptr) // Type node
     {
-        type = root->getChild(1)->getSymbol();
+        // We just want 'object' for the NEW_VAR instruction.
+        // If it is a dynamic object, the NEW_OBJ instr handles the type.
+        if (root->getChild(1)->getEval() == SyntaxTreeNode::Eval::UDT)
+        {
+            typeSymbol = compiler.symTable.findSymbol("object");
+        }
+        else
+        {
+            typeSymbol = root->getChild(1)->getSymbol();
+        }
     }
-    if (type == nullptr)
+
+    if (typeSymbol == nullptr)
     {
-        type = symbolFromEval(compiler.symTable, root->getEval());
+        typeSymbol = symbolFromEval(compiler.symTable, root->getEval());
+        if (root->getEval() == SyntaxTreeNode::Eval::UDT)
+        {
+            // Find out the exact type of the UDT by looking at the constructor call:
+            auto initExpr = root->getChild(0);
+            MOON_ASSERT(initExpr != nullptr && "Expected a constructor call!");
+            objectTypeSymbol = initExpr->getSymbol();
+        }
+    }
+
+    if (objectTypeSymbol == nullptr)
+    {
+        objectTypeSymbol = typeSymbol;
     }
 
     int argumentCount = 0;
@@ -704,14 +959,18 @@ IntermediateInstr * emitNewVar(Compiler & compiler, const SyntaxTreeNode * root)
     OpCode op = OpCode::StoreGlob;
     std::uint16_t paramIdx = 0;
 
-    if (symbol->type == Symbol::Type::Identifier &&
-        compiler.symbolIsFunctionLocal(symbol, paramIdx)) // A local variable or function parameter?
+    if (compiler.symbolIsFunctionLocal(symbol, paramIdx)) // A local variable or function parameter?
     {
         op = OpCode::StoreLocal;
     }
+    else // A global identifier
+    {
+        const auto typeId = compiler.symbolToTypeId(objectTypeSymbol);
+        compiler.addGlobalSymbol(symbol, typeId);
+    }
 
-    auto newOp   = compiler.newInstruction(OpCode::NewVar, type);
-    auto storeOp = compiler.newInstruction(op, symbol, varTypeForNodeEval(root));
+    auto newOp   = compiler.newInstruction(OpCode::NewVar, typeSymbol, Variant::Type::Tid);
+    auto storeOp = compiler.newInstruction(op, symbol, varTypeForNodeEval(compiler, root));
     storeOp->paramIdx = paramIdx;
 
     // A load instruction is appended to indicate if we should pop one
@@ -730,10 +989,10 @@ IntermediateInstr * emitNewVar(Compiler & compiler, const SyntaxTreeNode * root)
     }
 }
 
-IntermediateInstr * emitNewRange(Compiler & compiler, const SyntaxTreeNode * root)
+static IntermediateInstr * emitNewRange(Compiler & compiler, const SyntaxTreeNode * root)
 {
-    expectChildAtIndex(root, 1); // range start
-    expectChildAtIndex(root, 2); // range end
+    EXPECT_CHILD_AT_INDEX(root, 1); // range start
+    EXPECT_CHILD_AT_INDEX(root, 2); // range end
 
     auto startExpr  = traverseTreeRecursive(compiler, root->getChild(1));
     auto endExpr    = traverseTreeRecursive(compiler, root->getChild(2));
@@ -742,9 +1001,9 @@ IntermediateInstr * emitNewRange(Compiler & compiler, const SyntaxTreeNode * roo
     return linkInstr(linkInstr(startExpr, endExpr), newRangeOp);
 }
 
-IntermediateInstr * emitMatchPrep(Compiler & compiler, const SyntaxTreeNode * root)
+static IntermediateInstr * emitMatchPrep(Compiler & compiler, const SyntaxTreeNode * root)
 {
-    expectChildAtIndex(root, 0); // The param to match with
+    EXPECT_CHILD_AT_INDEX(root, 0); // The param to match with
 
     auto matchParam  = traverseTreeRecursive(compiler, root->getChild(0));
     auto matchPrepOp = compiler.newInstruction(OpCode::MatchPrep);
@@ -758,16 +1017,16 @@ IntermediateInstr * emitMatchPrep(Compiler & compiler, const SyntaxTreeNode * ro
     return linkInstr(linkInstr(linkInstr(matchParam, matchPrepOp), matchBody), matchEndOp);
 }
 
-IntermediateInstr * emitMatchTest(Compiler & compiler, const SyntaxTreeNode * root)
+static IntermediateInstr * emitMatchTest(Compiler & compiler, const SyntaxTreeNode * root)
 {
-    MOON_ASSERT(compiler.getReturnAnchor() != nullptr);
-    expectChildAtIndex(root, 0); // The expression to match against
+    MOON_ASSERT(compiler.lastFuncEndAnchor != nullptr);
+    EXPECT_CHILD_AT_INDEX(root, 0); // The expression to match against
 
     auto caseExpr     = traverseTreeRecursive(compiler, root->getChild(0));
     auto caseBody     = root->getChild(1) ? traverseTreeRecursive(compiler, root->getChild(1)) : nullptr;
     auto caseEnd      = compiler.newInstruction(OpCode::NoOp);
     auto caseEndJump  = compiler.newInstruction(OpCode::JmpIfFalse, caseEnd);
-    auto matchEndJump = compiler.newInstruction(OpCode::Jmp, compiler.getReturnAnchor());
+    auto matchEndJump = compiler.newInstruction(OpCode::Jmp, compiler.lastFuncEndAnchor);
     auto matchTestOp  = compiler.newInstruction(OpCode::MatchTest);
 
     auto block0 = linkInstr(linkInstr(caseExpr, matchTestOp), caseEndJump);
@@ -777,7 +1036,7 @@ IntermediateInstr * emitMatchTest(Compiler & compiler, const SyntaxTreeNode * ro
     return linkInstr(linkInstr(block1, caseEnd), siblingCase);
 }
 
-IntermediateInstr * emitMatchDefault(Compiler & compiler, const SyntaxTreeNode * root)
+static IntermediateInstr * emitMatchDefault(Compiler & compiler, const SyntaxTreeNode * root)
 {
     if (root->getChild(1))
     {
@@ -796,95 +1055,92 @@ IntermediateInstr * emitMatchDefault(Compiler & compiler, const SyntaxTreeNode *
 // ----------------------------------------------------------------------------
 static const EmitInstrForNodeCB emitInstrCallbacks[]
 {
-    &emitProgStart,                         // TranslationUnit
-    &emitNOOP,                              // ModuleDefinition
-    &emitStatement,                         // Statement
-    &emitIfThen,                            // IfThenStatement
-    &emitIfThenElse,                        // IfThenElseStatement
-    &emitIfThenElseIf,                      // IfThenElseIfStatement
-    &emitLoop,                              // LoopStatement
-    &emitWhileLoop,                         // WhileStatement
-    &emitForLoop,                           // ForStatement
-    &emitMatchPrep,                         // MatchStatement
-    &emitMatchTest,                         // MatchCaseStatement
-    &emitMatchDefault,                      // MatchDefaultStatement
-    &emitFunctionDecl,                      // FuncDeclStatement
-    &emitNOOP,                              // EnumDeclStatement
-    &emitNOOP,                              // StructDeclStatement
-    &emitNOOP,                              // TypeAliasDeclStatement
-    &emitNewVar,                            // VarDeclStatement
-    &emitReturn,                            // ReturnStatement
-    &emitBreak,                             // BreakStatement
-    &emitContinue,                          // ContinueStatement
-    &emitNewRange,                          // ExprRange
-    &emitParamChain<OpCode::NewArray>,      // ExprArrayLiteral
-    &emitArraySubscript,                    // ExprArraySubscript
-    &emitParamChain<OpCode::Call>,          // ExprFuncCall
-    &emitLoad,                              // ExprNameIdent
-    &emitNOOP,                              // ExprTypeIdent
-    &emitLoad,                              // ExprLiteralConst
-    &emitParamChain<OpCode::NewObj>,        // ExprObjectConstructor
-    &emitStore,                             // ExprAssign
-    &emitBinaryOp<OpCode::CmpNotEqual>,     // ExprCmpNotEqual
-    &emitBinaryOp<OpCode::CmpEqual>,        // ExprCmpEqual
-    &emitBinaryOp<OpCode::CmpGreaterEqual>, // ExprCmpGreaterEqual
-    &emitBinaryOp<OpCode::CmpGreater>,      // ExprCmpGreaterThan
-    &emitBinaryOp<OpCode::CmpLessEqual>,    // ExprCmpLessEqual
-    &emitBinaryOp<OpCode::CmpLess>,         // ExprCmpLessThan
-    &emitBinaryOp<OpCode::LogicOr>,         // ExprLogicOr
-    &emitBinaryOp<OpCode::LogicAnd>,        // ExprLogicAnd
-    &emitUnaryOp<OpCode::LogicNot>,         // ExprLogicNot
-    &emitBinaryOp<OpCode::Sub>,             // ExprSubtract
-    &emitBinaryOp<OpCode::Add>,             // ExprAdd
-    &emitBinaryOp<OpCode::Mod>,             // ExprModulo
-    &emitBinaryOp<OpCode::Div>,             // ExprDivide
-    &emitBinaryOp<OpCode::Mul>,             // ExprMultiply
-    &emitBinaryOp<OpCode::SubStore, true>,  // ExprSubAssign
-    &emitBinaryOp<OpCode::AddStore, true>,  // ExprAddAssign
-    &emitBinaryOp<OpCode::ModStore, true>,  // ExprModAssign
-    &emitBinaryOp<OpCode::DivStore, true>,  // ExprDivAssign
-    &emitBinaryOp<OpCode::MulStore, true>,  // ExprMulAssign
-    &emitUnaryOp<OpCode::Negate>,           // ExprUnaryMinus
-    &emitUnaryOp<OpCode::Plus>              // ExprUnaryPlus
+    &emitProgStart,                                         // TranslationUnit
+    &emitNOOP,                                              // ModuleDefinition
+    &emitStatement,                                         // Statement
+    &emitIfThen,                                            // IfThenStatement
+    &emitIfThenElse,                                        // IfThenElseStatement
+    &emitIfThenElseIf,                                      // IfThenElseIfStatement
+    &emitLoop,                                              // LoopStatement
+    &emitWhileLoop,                                         // WhileStatement
+    &emitForLoop,                                           // ForStatement
+    &emitMatchPrep,                                         // MatchStatement
+    &emitMatchTest,                                         // MatchCaseStatement
+    &emitMatchDefault,                                      // MatchDefaultStatement
+    &emitFunctionDecl,                                      // FuncDeclStatement
+    &emitNOOP,                                              // EnumDeclStatement
+    &emitNOOP,                                              // StructDeclStatement
+    &emitNOOP,                                              // TypeAliasDeclStatement
+    &emitNewVar,                                            // VarDeclStatement
+    &emitReturn,                                            // ReturnStatement
+    &emitBreak,                                             // BreakStatement
+    &emitContinue,                                          // ContinueStatement
+    &emitNewRange,                                          // ExprRange
+    &emitParamChain<OpCode::NewArray, Variant::Type::Tid>,  // ExprArrayLiteral
+    &emitArraySubscript,                                    // ExprArraySubscript
+    &emitParamChain<OpCode::Call, Variant::Type::Function>, // ExprFuncCall
+    &emitMemberRef,                                         // ExprMemberRef
+    &emitLoad,                                              // ExprNameIdent
+    &emitNOOP,                                              // ExprTypeIdent
+    &emitLoad,                                              // ExprLiteralConst
+    &emitParamChain<OpCode::NewObj, Variant::Type::Tid>,    // ExprObjectConstructor
+    &emitStore,                                             // ExprAssign
+    &emitBinaryOp<OpCode::CmpNotEqual>,                     // ExprCmpNotEqual
+    &emitBinaryOp<OpCode::CmpEqual>,                        // ExprCmpEqual
+    &emitBinaryOp<OpCode::CmpGreaterEqual>,                 // ExprCmpGreaterEqual
+    &emitBinaryOp<OpCode::CmpGreater>,                      // ExprCmpGreaterThan
+    &emitBinaryOp<OpCode::CmpLessEqual>,                    // ExprCmpLessEqual
+    &emitBinaryOp<OpCode::CmpLess>,                         // ExprCmpLessThan
+    &emitBinaryOp<OpCode::LogicOr>,                         // ExprLogicOr
+    &emitBinaryOp<OpCode::LogicAnd>,                        // ExprLogicAnd
+    &emitUnaryOp<OpCode::LogicNot>,                         // ExprLogicNot
+    &emitBinaryOp<OpCode::Sub>,                             // ExprSubtract
+    &emitBinaryOp<OpCode::Add>,                             // ExprAdd
+    &emitBinaryOp<OpCode::Mod>,                             // ExprModulo
+    &emitBinaryOp<OpCode::Div>,                             // ExprDivide
+    &emitBinaryOp<OpCode::Mul>,                             // ExprMultiply
+    &emitBinaryOp<OpCode::SubStore, true>,                  // ExprSubAssign
+    &emitBinaryOp<OpCode::AddStore, true>,                  // ExprAddAssign
+    &emitBinaryOp<OpCode::ModStore, true>,                  // ExprModAssign
+    &emitBinaryOp<OpCode::DivStore, true>,                  // ExprDivAssign
+    &emitBinaryOp<OpCode::MulStore, true>,                  // ExprMulAssign
+    &emitUnaryOp<OpCode::Negate>,                           // ExprUnaryMinus
+    &emitUnaryOp<OpCode::Plus>                              // ExprUnaryPlus
 };
-static_assert(arrayLength(emitInstrCallbacks) == unsigned(STNode::Count),
+static_assert(arrayLength(emitInstrCallbacks) == unsigned(SyntaxTreeNode::Type::Count),
               "Keep this array in sync with the enum declaration!");
 
 // Calls the appropriate handler according to the node type (which in turn might call this function again)
-IntermediateInstr * traverseTreeRecursive(Compiler & compiler, const SyntaxTreeNode * root)
+static IntermediateInstr * traverseTreeRecursive(Compiler & compiler, const SyntaxTreeNode * root)
 {
     MOON_ASSERT(root != nullptr);
     const auto handlerIndex  = static_cast<unsigned>(root->getType());
-    MOON_ASSERT(handlerIndex < static_cast<unsigned>(STNode::Count));
+    MOON_ASSERT(handlerIndex < static_cast<unsigned>(SyntaxTreeNode::Type::Count));
     return emitInstrCallbacks[handlerIndex](compiler, root);
 }
-
-} // namespace {}
 
 // ========================================================
 // Compiler class methods:
 // ========================================================
 
-Compiler::Compiler()
-    : instructionCount   { 0       }
-    , instrListHead      { nullptr }
-    , funcListHead       { nullptr }
-    , lastLoopStartLabel { nullptr }
-    , lastLoopEndLabel   { nullptr }
-    , lastFuncEndLabel   { nullptr }
-{ }
-
 void Compiler::compile(VM & vm)
 {
+    runtimeTypes  = &vm.runtimeTypes;
     instrListHead = traverseTreeRecursive(*this, syntTree.getRoot());
-    intermediateToVM(vm.data, vm.code, vm.functions);
+    intermediateToVM(vm);
+}
+
+void Compiler::print(std::ostream & os) const
+{
+    printIntermediateInstructions(os);
+    os << "\n";
+    printInstructionMapping(os);
 }
 
 void Compiler::printIntermediateInstructions(std::ostream & os) const
 {
     os << "Global code:\n";
     printIntermediateInstrListHelper(instrListHead, os);
-
     os << "\nFunction code:\n";
     printIntermediateInstrListHelper(funcListHead,  os);
 }
@@ -894,26 +1150,27 @@ void Compiler::printInstructionMapping(std::ostream & os) const
     printInstructionMappingHelper(instrMapping, os);
 }
 
-void Compiler::setLoopAnchors(const IntermediateInstr * startLabel, const IntermediateInstr * endLabel) noexcept
+void Compiler::setLoopAnchors(const IntermediateInstr * startLabel,
+                              const IntermediateInstr * endLabel) noexcept
 {
-    lastLoopStartLabel = startLabel;
-    lastLoopEndLabel   = endLabel;
+    lastLoopStartAnchor = startLabel;
+    lastLoopEndAnchor   = endLabel;
 }
 
 void Compiler::clearLoopAnchors() noexcept
 {
-    lastLoopStartLabel = nullptr;
-    lastLoopEndLabel   = nullptr;
+    lastLoopStartAnchor = nullptr;
+    lastLoopEndAnchor   = nullptr;
 }
 
 void Compiler::setReturnAnchor(const IntermediateInstr * endLabel) noexcept
 {
-    lastFuncEndLabel = endLabel;
+    lastFuncEndAnchor = endLabel;
 }
 
 void Compiler::clearReturnAnchor() noexcept
 {
-    lastFuncEndLabel = nullptr;
+    lastFuncEndAnchor = nullptr;
 }
 
 void Compiler::markVisited(const SyntaxTreeNode * node)
@@ -936,13 +1193,44 @@ void Compiler::clearVisited() noexcept
     visitedNodes.clear();
 }
 
+const TypeId * Compiler::guessTypeId(const SyntaxTreeNode * root)
+{
+    const Symbol * typeSymbol       = nullptr;
+    const Symbol * objectTypeSymbol = nullptr;
+
+    if (root->getChild(1) != nullptr) // Type node
+    {
+        typeSymbol = root->getChild(1)->getSymbol();
+    }
+
+    if (typeSymbol == nullptr)
+    {
+        typeSymbol = symbolFromEval(symTable, root->getEval());
+        if (root->getEval() == SyntaxTreeNode::Eval::UDT)
+        {
+            // Find out the exact type of the UDT by looking at the constructor call:
+            auto initExpr = root->getChild(0);
+            MOON_ASSERT(initExpr != nullptr && "Expected a constructor call!");
+            objectTypeSymbol = initExpr->getSymbol();
+        }
+    }
+
+    if (objectTypeSymbol == nullptr)
+    {
+        objectTypeSymbol = typeSymbol;
+    }
+
+    return symbolToTypeId(objectTypeSymbol);
+}
+
 void Compiler::collectFunctionArgSymbols(const SyntaxTreeNode * root)
 {
     if (root == nullptr)
     {
         return;
     }
-    addFunctionLocalSymbol(root->getSymbol());
+
+    addFunctionLocalSymbol(root->getSymbol(), guessTypeId(root));
     collectFunctionArgSymbols(root->getChild(0));
 }
 
@@ -952,32 +1240,77 @@ void Compiler::collectFunctionVarSymbols(const SyntaxTreeNode * root)
     {
         return;
     }
-    if (root->getType() == STNode::VarDeclStatement)
+
+    if (root->getType() == SyntaxTreeNode::Type::VarDeclStatement)
     {
-        addFunctionLocalSymbol(root->getSymbol());
+        addFunctionLocalSymbol(root->getSymbol(), guessTypeId(root));
     }
+
     collectFunctionVarSymbols(root->getChild(0));
     collectFunctionVarSymbols(root->getChild(1));
 }
 
 void Compiler::beginFunction(const IntermediateInstr * endLabel, const SyntaxTreeNode * root)
 {
-    if (getReturnAnchor() != nullptr)
+    if (lastFuncEndAnchor != nullptr)
     {
-        internalError("Nested functions not supported yet!", __LINE__);
+        MOON_INTERNAL_EXCEPTION("Nested functions not supported yet!");
     }
 
     collectFunctionArgSymbols(root->getChild(0));
     collectFunctionVarSymbols(root->getChild(1));
+
     setReturnAnchor(endLabel);
+    insideFunctionDecl = true;
 }
 
-bool Compiler::symbolIsFunctionLocal(const Symbol * symbol, std::uint16_t & paramIdx)
+void Compiler::endFunction()
 {
-    const int symbolCount = static_cast<int>(funcScopeIdentifiers.size());
-    for (int index = 0; index < symbolCount; ++index)
+    clearReturnAnchor();
+    funcLocalIdentifiers.clear();
+    insideFunctionDecl = false;
+}
+
+void Compiler::addFunctionLocalSymbol(const Symbol * symbol, const TypeId * tid)
+{
+    funcLocalIdentifiers.push_back(std::make_pair(symbol, tid));
+}
+
+void Compiler::addGlobalSymbol(const Symbol * symbol, const TypeId * tid)
+{
+    globalIdentifiers.push_back(std::make_pair(symbol, tid));
+}
+
+const TypeId * Compiler::findFunctionLocalSymbolTypeId(const Symbol * symbol) const
+{
+    for (auto && entry : funcLocalIdentifiers)
     {
-        if (funcScopeIdentifiers[index] == symbol)
+        if (entry.first == symbol)
+        {
+            return entry.second;
+        }
+    }
+    return nullptr;
+}
+
+const TypeId * Compiler::findGlobalSymbolTypeId(const Symbol * symbol) const
+{
+    for (auto && entry : globalIdentifiers)
+    {
+        if (entry.first == symbol)
+        {
+            return entry.second;
+        }
+    }
+    return nullptr;
+}
+
+bool Compiler::symbolIsFunctionLocal(const Symbol * symbol, std::uint16_t & paramIdx) const
+{
+    const unsigned symbolCount = funcLocalIdentifiers.size();
+    for (unsigned index = 0; index < symbolCount; ++index)
+    {
+        if (funcLocalIdentifiers[index].first == symbol)
         {
             paramIdx = index;
             return true;
@@ -986,50 +1319,48 @@ bool Compiler::symbolIsFunctionLocal(const Symbol * symbol, std::uint16_t & para
     return false;
 }
 
-void Compiler::addFunctionLocalSymbol(const Symbol * symbol)
+const TypeId * Compiler::symbolToTypeId(const Symbol * symbol) const
 {
-    funcScopeIdentifiers.push_back(symbol);
+    MOON_ASSERT(symbol       != nullptr);
+    MOON_ASSERT(runtimeTypes != nullptr);
+    return runtimeTypes->findTypeId(symbol->name);
 }
 
-void Compiler::endFunction()
-{
-    clearReturnAnchor();
-    funcScopeIdentifiers.clear();
-}
-
-void Compiler::intermediateToVM(VM::DataVector & progData, VM::CodeVector & progCode, FunctionTable & funcTable)
+void Compiler::intermediateToVM(VM & vm)
 {
     // We might still eliminate a few noops, but it should
     // be worthwhile reserving the memory beforehand anyway.
-    progCode.reserve(instructionCount);
+    vm.code.reserve(instructionCount);
 
     // This step removes duplicate data and unneeded noops from the intermediate code.
     // It also serves to separate the function definition from the rest of the code.
-    createMappings(progData, progCode, funcTable, instrListHead, /* skipFunctions = */ true);
+    createMappings(vm.data, vm.code, vm.functions, vm.runtimeTypes,
+                   instrListHead, /* skipFunctions = */ true);
 
     // Pad the end with an instruction to anchor any potential jumps to the
     // end of the program, since we have removed all the other noop anchors.
-    progCode.push_back(packInstruction(OpCode::NoOp,    0));
-    progCode.push_back(packInstruction(OpCode::ProgEnd, 0));
+    vm.code.push_back(packInstruction(OpCode::NoOp,    0));
+    vm.code.push_back(packInstruction(OpCode::ProgEnd, 0));
 
     // Now we perform the same mapping for the function that got set aside in the previous step.
-    createMappings(progData, progCode, funcTable, funcListHead, /* skipFunctions = */ false);
+    createMappings(vm.data, vm.code, vm.functions, vm.runtimeTypes,
+                   funcListHead, /* skipFunctions = */ false);
 
-    // And map back the instructions into the progCode vector:
+    // And map back the instructions into the code vector:
     IntermediateInstr * instr;
     for (instr = instrListHead; instr != nullptr; instr = instr->next)
     {
-        fixReferences(instr, progCode, funcTable);
+        fixReferences(instr, vm.code, vm.functions);
     }
     for (instr = funcListHead; instr != nullptr; instr = instr->next)
     {
-        fixReferences(instr, progCode, funcTable);
+        fixReferences(instr, vm.code, vm.functions);
     }
 }
 
 void Compiler::createMappings(VM::DataVector & progData, VM::CodeVector & progCode,
-                              FunctionTable & funcTable, IntermediateInstr * listHead,
-                              const bool skipFunctions)
+                              FunctionTable  & funcTable, TypeTable & typeTable,
+                              IntermediateInstr * listHead, const bool skipFunctions)
 {
     IntermediateInstr * instr        = listHead;
     IntermediateInstr * prevInstr    = listHead;
@@ -1076,7 +1407,8 @@ void Compiler::createMappings(VM::DataVector & progData, VM::CodeVector & progCo
                 // Each symbol is added once.
                 if (dataMapping.find(instr->operand.symbol) == std::end(dataMapping))
                 {
-                    auto index = addSymbolToProgData(progData, funcTable, *(instr->operand.symbol), instr->type);
+                    auto index = addSymbolToProgData(progData, funcTable, typeTable,
+                                                     *(instr->operand.symbol), instr->type);
                     dataMapping.emplace(instr->operand.symbol, index);
                 }
             }
@@ -1105,7 +1437,7 @@ void Compiler::fixReferences(const IntermediateInstr * instr, VM::CodeVector & p
     {
     // Function declarations:
     case OpCode::FuncStart :
-    case OpCode::FuncEnd   :
+    case OpCode::FuncEnd :
         {
             // Index of this instruction and its data operand (the function object in funcTable):
             auto selfCodeIdx = getProgCodeIndex(instrMapping, instr);
@@ -1117,8 +1449,7 @@ void Compiler::fixReferences(const IntermediateInstr * instr, VM::CodeVector & p
 
             if (funcObj == nullptr)
             {
-                internalError("missing function table entry for '" +
-                              toString(funcName) + "'", __LINE__);
+                MOON_INTERNAL_EXCEPTION("missing function table entry for '" + toString(funcName) + "'");
             }
             if (instr->op == OpCode::FuncStart)
             {
@@ -1128,10 +1459,10 @@ void Compiler::fixReferences(const IntermediateInstr * instr, VM::CodeVector & p
             break;
         }
     // Instructions that reference a code address:
-    case OpCode::Jmp        :
+    case OpCode::Jmp :
     case OpCode::JmpIfFalse :
-    case OpCode::JmpIfTrue  :
-    case OpCode::JmpReturn  :
+    case OpCode::JmpIfTrue :
+    case OpCode::JmpReturn :
         {
             // Index of this instruction and its jump target:
             auto selfCodeIdx = getProgCodeIndex(instrMapping, instr);
@@ -1146,15 +1477,17 @@ void Compiler::fixReferences(const IntermediateInstr * instr, VM::CodeVector & p
             break;
         }
     // Instructions that reference some global data or constant:
-    case OpCode::NewVar    :
-    case OpCode::LoadGlob  :
+    case OpCode::Call :
+    case OpCode::NewVar :
+    case OpCode::NewObj :
+    case OpCode::LoadGlob :
     case OpCode::StoreGlob :
-    case OpCode::SubStore  ://FIXME would need the local/param handling as well
-    case OpCode::AddStore  :// just remove and switch to compound load a,b + op + store?
-    case OpCode::ModStore  :
-    case OpCode::DivStore  :
-    case OpCode::MulStore  :
-    case OpCode::Call      :
+    case OpCode::MemberStoreGlob :
+    case OpCode::SubStore :
+    case OpCode::AddStore :
+    case OpCode::ModStore :
+    case OpCode::DivStore :
+    case OpCode::MulStore :
         {
             // Index of this instruction and its data operand:
             auto selfCodeIdx = getProgCodeIndex(instrMapping, instr);
@@ -1164,8 +1497,9 @@ void Compiler::fixReferences(const IntermediateInstr * instr, VM::CodeVector & p
             break;
         }
     // Instructions referencing local function-level data:
-    case OpCode::LoadLocal  :
+    case OpCode::LoadLocal :
     case OpCode::StoreLocal :
+    case OpCode::MemberStoreLocal :
         {
             auto selfCodeIdx = getProgCodeIndex(instrMapping, instr);
             MOON_ASSERT(selfCodeIdx < progCode.size() && "Index out-of-bounds!");
@@ -1181,7 +1515,7 @@ void Compiler::fixReferences(const IntermediateInstr * instr, VM::CodeVector & p
 // Intermediate Instruction node allocation:
 // ========================================================
 
-Compiler::IntermediateInstr * Compiler::newInstruction(const OpCode op)
+IntermediateInstr * Compiler::newInstruction(const OpCode op)
 {
     auto instr                = instrPool.allocate();
     instr->next               = nullptr;
@@ -1193,7 +1527,7 @@ Compiler::IntermediateInstr * Compiler::newInstruction(const OpCode op)
     return instr;
 }
 
-Compiler::IntermediateInstr * Compiler::newInstruction(const OpCode op, const Symbol * symbol, const Variant::Type type)
+IntermediateInstr * Compiler::newInstruction(const OpCode op, const Symbol * symbol, const Variant::Type type)
 {
     auto instr                = instrPool.allocate();
     instr->next               = nullptr;
@@ -1205,7 +1539,7 @@ Compiler::IntermediateInstr * Compiler::newInstruction(const OpCode op, const Sy
     return instr;
 }
 
-Compiler::IntermediateInstr * Compiler::newInstruction(const OpCode op, const IntermediateInstr * jumpTarget)
+IntermediateInstr * Compiler::newInstruction(const OpCode op, const IntermediateInstr * jumpTarget)
 {
     auto instr                = instrPool.allocate();
     instr->next               = nullptr;

@@ -24,9 +24,9 @@
 namespace moon
 {
 
-// ========================================================
-// Miscellaneous macros used by the generated code:
-// ========================================================
+/* +-------------------------------------------------+ *
+ * | Helper macros used by the generated code:       | *
+ * +-------------------------------------------------+ */
 
 // Note that these logging macros capture the current context,
 // so they can only be called from within the FlexLexer class.
@@ -62,15 +62,14 @@ namespace moon
 // Calls our custom error handler (called by FlexLexer).
 #define YY_FATAL_ERROR(message) AS_MOON_LEXER(this).lexOnError(message)
 
-// ========================================================
-// moon::Lexer local methods:
-// ========================================================
+/* +-------------------------------------------------+ *
+ * | moon::Lexer local methods:                      | *
+ * +-------------------------------------------------+ */
 
 void Lexer::lexOnError(const char * message)
 {
     const std::string filename = (ctx.srcFile != nullptr) ? *ctx.srcFile : "???";
-    compilerError(message, filename, lineno(), ctx.currText);
-    throw LexerException{ "Lexer error" };
+    lexerError(message, filename, lineno(), ctx.currText);
 }
 
 void Lexer::lexOnInput(char * buf, int & result, const int maxSize)
@@ -130,9 +129,9 @@ void Lexer::lexOnMultiLineComment()
     }
 }
 
-// ========================================================
-// moon::Lexer special symbol/token handlers:
-// ========================================================
+/* +-------------------------------------------------+ *
+ * | moon::Lexer special symbol/token handlers:      | *
+ * +-------------------------------------------------+ */
 
 void Lexer::lexOnStrLiteral()
 {
@@ -191,7 +190,7 @@ INT_LITERAL   -?({DIGIT}|{HEXA_PREFIX})({DIGIT}|{HEXA_CHAR})*
 FLT_LITERAL   -?{DIGIT}+{FRACT}{EXPONENT}?
 BOOL_LITERAL  ("true"|"false")
 STR_LITERAL   \"(\\.|[^\"])*\"
-IDENTIFIER    {LETTER}({LETTER}|{DIGIT}|".")*
+IDENTIFIER    {LETTER}({LETTER}|{DIGIT})*
 WHITE_SPACE   [ \t\f\v]
 NEW_LINE      [\n\r]
 
@@ -209,6 +208,7 @@ NEW_LINE      [\n\r]
 "*/"             { YY_FATAL_ERROR("unmatched end of multi-line comment block"); }
 
     /* ---- Miscellaneous tokens and operators: ---- */
+"."              { LEX_LOG_TOKEN( "."   ); return moon::Parser::token::MEMBER_REF;           }
 "("              { LEX_LOG_TOKEN( "("   ); return moon::Parser::token::OPEN_PAR;             }
 ")"              { LEX_LOG_TOKEN( ")"   ); return moon::Parser::token::CLOSE_PAR;            }
 "{"              { LEX_LOG_TOKEN( "{"   ); return moon::Parser::token::OPEN_CBRAC;           }
@@ -247,7 +247,7 @@ NEW_LINE      [\n\r]
 "long"           { LEX_LOG_TYPE( "long"     ); return moon::Parser::token::TID_LONG;         }
 "float"          { LEX_LOG_TYPE( "float"    ); return moon::Parser::token::TID_FLT;          }
 "bool"           { LEX_LOG_TYPE( "bool"     ); return moon::Parser::token::TID_BOOL;         }
-"string"         { LEX_LOG_TYPE( "string"   ); return moon::Parser::token::TID_STR;          }
+"str"            { LEX_LOG_TYPE( "str"      ); return moon::Parser::token::TID_STR;          }
 "array"          { LEX_LOG_TYPE( "array"    ); return moon::Parser::token::TID_ARRAY;        }
 "range"          { LEX_LOG_TYPE( "range"    ); return moon::Parser::token::TID_RANGE;        }
 "any"            { LEX_LOG_TYPE( "any"      ); return moon::Parser::token::TID_ANY;          }

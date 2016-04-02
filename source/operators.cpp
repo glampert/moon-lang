@@ -67,12 +67,10 @@ namespace moon
 //
 // ------------------------------------------------------------------
 
-using VT = Variant::Type;
 using OpApplyCB = Variant (*)(Variant varA, Variant varB);
-
-constexpr unsigned FirstOp = static_cast<unsigned>(OpCode::CmpNotEqual);
-constexpr unsigned LastOp  = static_cast<unsigned>(OpCode::Mul);
-constexpr unsigned NumOps  = (LastOp - FirstOp) + 1;
+static constexpr unsigned FirstOp = static_cast<unsigned>(OpCode::CmpNotEqual);
+static constexpr unsigned LastOp  = static_cast<unsigned>(OpCode::Mul);
+static constexpr unsigned NumOps  = (LastOp - FirstOp) + 1;
 
 std::string binaryOpToString(const OpCode op)
 {
@@ -124,17 +122,17 @@ std::string unaryOpToString(const OpCode op)
         return result;                                              \
     }
 
-#define OP_HANDLER_INT_FLOAT_LOGICAL(opName, op)                                                  \
-    OP_HANDLER_COMMON( opName ## _IntInt,     VT::Integer, asInteger, asInteger, op,  asInteger ) \
-    OP_HANDLER_COMMON( opName ## _FloatFloat, VT::Integer, asInteger, asFloat,   op,  asFloat   ) \
-    OP_HANDLER_COMMON( opName ## _IntFloat,   VT::Integer, asInteger, asInteger, op,  asFloat   ) \
-    OP_HANDLER_COMMON( opName ## _FloatInt,   VT::Integer, asInteger, asFloat,   op,  asInteger )
+#define OP_HANDLER_INT_FLOAT_LOGICAL(opName, op)                                                             \
+    OP_HANDLER_COMMON( opName ## _IntInt,     Variant::Type::Integer, asInteger, asInteger, op,  asInteger ) \
+    OP_HANDLER_COMMON( opName ## _FloatFloat, Variant::Type::Integer, asInteger, asFloat,   op,  asFloat   ) \
+    OP_HANDLER_COMMON( opName ## _IntFloat,   Variant::Type::Integer, asInteger, asInteger, op,  asFloat   ) \
+    OP_HANDLER_COMMON( opName ## _FloatInt,   Variant::Type::Integer, asInteger, asFloat,   op,  asInteger )
 
-#define OP_HANDLER_INT_FLOAT_ARITHMETICAL(opName, op)                                             \
-    OP_HANDLER_COMMON( opName ## _IntInt,     VT::Integer, asInteger, asInteger, op,  asInteger ) \
-    OP_HANDLER_COMMON( opName ## _FloatFloat, VT::Float,   asFloat,   asFloat,   op,  asFloat   ) \
-    OP_HANDLER_COMMON( opName ## _IntFloat,   VT::Float,   asFloat,   asInteger, op,  asFloat   ) \
-    OP_HANDLER_COMMON( opName ## _FloatInt,   VT::Float,   asFloat,   asFloat,   op,  asInteger )
+#define OP_HANDLER_INT_FLOAT_ARITHMETICAL(opName, op)                                                        \
+    OP_HANDLER_COMMON( opName ## _IntInt,     Variant::Type::Integer, asInteger, asInteger, op,  asInteger ) \
+    OP_HANDLER_COMMON( opName ## _FloatFloat, Variant::Type::Float,   asFloat,   asFloat,   op,  asFloat   ) \
+    OP_HANDLER_COMMON( opName ## _IntFloat,   Variant::Type::Float,   asFloat,   asInteger, op,  asFloat   ) \
+    OP_HANDLER_COMMON( opName ## _FloatInt,   Variant::Type::Float,   asFloat,   asFloat,   op,  asInteger )
 
 OP_HANDLER_INT_FLOAT_LOGICAL( CmpNotEqual,     !=  )
 OP_HANDLER_INT_FLOAT_LOGICAL( CmpEqual,        ==  )
@@ -154,19 +152,19 @@ OP_HANDLER_INT_FLOAT_ARITHMETICAL( Mul, * )
 static Variant moduloOpCommon(const Variant varA, const Variant varB)
 {
     // Integers just perform standard %
-    if (varA.type == VT::Integer && varB.type == VT::Integer)
+    if (varA.type == Variant::Type::Integer && varB.type == Variant::Type::Integer)
     {
-        Variant result{ VT::Integer };
+        Variant result{ Variant::Type::Integer };
         result.value.asInteger = varA.value.asInteger % varB.value.asInteger;
         return result;
     }
 
     // If one of the sides is a float, both get promoted
     // to floating-point and we use std::fmod() instead.
-    const double a = (varA.type == VT::Integer) ? static_cast<double>(varA.value.asInteger) : varA.value.asFloat;
-    const double b = (varB.type == VT::Integer) ? static_cast<double>(varB.value.asInteger) : varB.value.asFloat;
+    const double a = (varA.type == Variant::Type::Integer) ? static_cast<double>(varA.value.asInteger) : varA.value.asFloat;
+    const double b = (varB.type == Variant::Type::Integer) ? static_cast<double>(varB.value.asInteger) : varB.value.asFloat;
 
-    Variant result{ VT::Float };
+    Variant result{ Variant::Type::Float };
     result.value.asFloat = std::fmod(a, b);
     return result;
 }
@@ -184,7 +182,7 @@ static Variant Div_IntInt(const Variant varA, const Variant varB)
     {
         MOON_RUNTIME_EXCEPTION("integer division by zero!");
     }
-    Variant result{ VT::Integer };
+    Variant result{ Variant::Type::Integer };
     result.value.asInteger = (varA.value.asInteger / varB.value.asInteger);
     return result;
 }
@@ -194,12 +192,12 @@ static Variant Div_FloatInt(const Variant varA, const Variant varB)
     {
         MOON_RUNTIME_EXCEPTION("integer division by zero!");
     }
-    Variant result{ VT::Float };
+    Variant result{ Variant::Type::Float };
     result.value.asFloat = (varA.value.asFloat / varB.value.asInteger);
     return result;
 }
-OP_HANDLER_COMMON( Div_FloatFloat, VT::Float, asFloat, asFloat,   /, asFloat )
-OP_HANDLER_COMMON( Div_IntFloat,   VT::Float, asFloat, asInteger, /, asFloat )
+OP_HANDLER_COMMON( Div_FloatFloat, Variant::Type::Float, asFloat, asFloat,   /, asFloat )
+OP_HANDLER_COMMON( Div_IntFloat,   Variant::Type::Float, asFloat, asInteger, /, asFloat )
 
 #define OP_TABLE_ENTRY(opName) \
     { opName ## _IntInt, opName ## _FloatFloat, opName ## _IntFloat, opName ## _FloatInt }
@@ -276,8 +274,8 @@ static const OpDefs func_float  = {{ 0,   0,   0,   0,   0,   0,     0,   0,    
 static const OpDefs func_str    = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
 static const OpDefs func_func   = {{ 1,   1,   1,   1,   1,   1,     1,   1,     0,   0,   0,   0,   0 }};
 
-constexpr unsigned Cols = static_cast<unsigned>(VT::Count);
-constexpr unsigned Rows = static_cast<unsigned>(VT::Count);
+static constexpr unsigned Cols = static_cast<unsigned>(Variant::Type::Count);
+static constexpr unsigned Rows = static_cast<unsigned>(Variant::Type::Count);
 static const OpDefs * opsTable[Cols][Rows]
 {
 /*                  Null       Integer       Float        String      Function */
@@ -292,33 +290,27 @@ static const OpDefs * opsTable[Cols][Rows]
 // Local helper functions:
 // ========================================================
 
-[[noreturn]] static void unreachable(const int lineNum)
-{
-    runtimeAssertionError("Unreachable switch clause entered! Fix this!",
-                          __FILE__, lineNum);
-}
-
 static Variant binaryOpOnStrings(const OpCode op, const Variant varA, const Variant varB)
 {
     // Concatenate strings with operator +
     if (op == OpCode::Add)
     {
-        const auto aLen = std::strlen(varA.value.asStringPtr);
-        const auto bLen = std::strlen(varB.value.asStringPtr);
+        const auto aLen = std::strlen(varA.value.asString);
+        const auto bLen = std::strlen(varB.value.asString);
 
         //FIXME temp: str is never freed for now...
         auto newStr = new char[aLen + bLen + 1];
-        std::strcpy(newStr, varA.value.asStringPtr);
-        std::strcat(newStr, varB.value.asStringPtr);
+        std::strcpy(newStr, varA.value.asString);
+        std::strcat(newStr, varB.value.asString);
 
-        Variant result{ VT::String };
-        result.value.asStringPtr = newStr;
+        Variant result{ Variant::Type::String };
+        result.value.asString = newStr;
         return result;
     }
 
     // Lexicographical comparison:
-    Variant result{ VT::Integer };
-    const auto cmpResult = std::strcmp(varA.value.asStringPtr, varB.value.asStringPtr);
+    Variant result{ Variant::Type::Integer };
+    const auto cmpResult = std::strcmp(varA.value.asString, varB.value.asString);
     switch (op)
     {
     case OpCode::CmpNotEqual     : { result.value.asInteger = (cmpResult != 0); break; }
@@ -327,14 +319,14 @@ static Variant binaryOpOnStrings(const OpCode op, const Variant varA, const Vari
     case OpCode::CmpGreater      : { result.value.asInteger = (cmpResult >  0); break; }
     case OpCode::CmpLessEqual    : { result.value.asInteger = (cmpResult <= 0); break; }
     case OpCode::CmpLess         : { result.value.asInteger = (cmpResult <  0); break; }
-    default                      : { unreachable(__LINE__); }
+    default                      : { MOON_UNREACHABLE(); }
     } // switch (op)
     return result;
 }
 
 static Variant binaryOpOnObjects(const OpCode op, const Variant varA, const Variant varB)
 {
-    Variant result{ VT::Integer };
+    Variant result{ Variant::Type::Integer };
     switch (op)
     {
     case OpCode::CmpNotEqual     : { result.value.asInteger = (varA.value.asVoidPtr !=  varB.value.asVoidPtr); break; }
@@ -345,7 +337,7 @@ static Variant binaryOpOnObjects(const OpCode op, const Variant varA, const Vari
     case OpCode::CmpLess         : { result.value.asInteger = (varA.value.asVoidPtr <   varB.value.asVoidPtr); break; }
     case OpCode::LogicOr         : { result.value.asInteger = (varA.value.asVoidPtr or  varB.value.asVoidPtr); break; }
     case OpCode::LogicAnd        : { result.value.asInteger = (varA.value.asVoidPtr and varB.value.asVoidPtr); break; }
-    default                      : { unreachable(__LINE__); }
+    default                      : { MOON_UNREACHABLE(); }
     } // switch (op)
     return result;
 }
@@ -384,42 +376,42 @@ Variant performBinaryOp(const OpCode op, const Variant varA, const Variant varB)
     switch (varA.type)
     {
     // int and float have implicit conversions:
-    case VT::Integer :
+    case Variant::Type::Integer :
         {
             switch (varB.type)
             {
-            case VT::Integer :
+            case Variant::Type::Integer :
                 return numericalOpsCallbacks[idxOp].IntInt(varA, varB);
-            case VT::Float :
+            case Variant::Type::Float :
                 return numericalOpsCallbacks[idxOp].IntFloat(varA, varB);
             default :
-                unreachable(__LINE__);
+                MOON_UNREACHABLE();
             } // switch (varB.type)
         }
-    case VT::Float :
+    case Variant::Type::Float :
         {
             switch (varB.type)
             {
-            case VT::Integer :
+            case Variant::Type::Integer :
                 return numericalOpsCallbacks[idxOp].FloatInt(varA, varB);
-            case VT::Float :
+            case Variant::Type::Float :
                 return numericalOpsCallbacks[idxOp].FloatFloat(varA, varB);
             default :
-                unreachable(__LINE__);
+                MOON_UNREACHABLE();
             } // switch (varB.type)
         }
 
     // Strings only work with other strings:
-    case VT::String :
+    case Variant::Type::String :
         return binaryOpOnStrings(op, varA, varB);
 
     // Generic objects only allows basic comparisons:
-    case VT::Null :
-    case VT::Function :
+    case Variant::Type::Null :
+    case Variant::Type::Function :
         return binaryOpOnObjects(op, varA, varB);
 
     default :
-        unreachable(__LINE__);
+        MOON_UNREACHABLE();
     } // switch (varA.type)
 }
 
@@ -431,14 +423,14 @@ bool isUnaryOpValid(const OpCode op, const Variant::Type type) noexcept
 {
     if (op == OpCode::LogicNot)
     {
-        return type == VT::Null    ||
-               type == VT::Integer ||
-               type == VT::Float   ||
-               type == VT::Function;
+        return type == Variant::Type::Null    ||
+               type == Variant::Type::Integer ||
+               type == Variant::Type::Float   ||
+               type == Variant::Type::Function;
     }
 
     // +, -
-    return type == VT::Integer || type == VT::Float;
+    return type == Variant::Type::Integer || type == Variant::Type::Float;
 }
 
 // ========================================================
@@ -454,43 +446,43 @@ Variant performUnaryOp(const OpCode op, const Variant var)
     }
 
     // Produces a boolean result
-    #define CASE1(opType, unaryOp)                                    \
+    #define CASE_1(opType, unaryOp)                                   \
         case OpCode::opType :                                         \
         {                                                             \
             switch (var.type)                                         \
             {                                                         \
-            case VT::Integer :                                        \
+            case Variant::Type::Integer :                             \
                 result.value.asInteger = unaryOp var.value.asInteger; \
-                result.type = VT::Integer;                            \
+                result.type = Variant::Type::Integer;                 \
                 break;                                                \
-            case VT::Float :                                          \
+            case Variant::Type::Float :                               \
                 result.value.asInteger = unaryOp var.value.asFloat;   \
-                result.type = VT::Integer;                            \
+                result.type = Variant::Type::Integer;                 \
                 break;                                                \
             default :                                                 \
                 result.value.asInteger = unaryOp var.value.asVoidPtr; \
-                result.type = VT::Integer;                            \
+                result.type = Variant::Type::Integer;                 \
                 break;                                                \
             }                                                         \
             break;                                                    \
         }
 
-    // Preserves the type of the input
-    #define CASE2(opType, unaryOp)                                    \
+        // Preserves the type of the input
+    #define CASE_2(opType, unaryOp)                                   \
         case OpCode::opType :                                         \
         {                                                             \
             switch (var.type)                                         \
             {                                                         \
-            case VT::Integer :                                        \
+            case Variant::Type::Integer :                             \
                 result.value.asInteger = unaryOp var.value.asInteger; \
-                result.type = VT::Integer;                            \
+                result.type = Variant::Type::Integer;                 \
                 break;                                                \
-            case VT::Float :                                          \
+            case Variant::Type::Float :                               \
                 result.value.asFloat = unaryOp var.value.asFloat;     \
-                result.type = VT::Float;                              \
+                result.type = Variant::Type::Float;                   \
                 break;                                                \
             default :                                                 \
-                unreachable(__LINE__);                                \
+                MOON_UNREACHABLE();                                   \
             }                                                         \
             break;                                                    \
         }
@@ -498,15 +490,15 @@ Variant performUnaryOp(const OpCode op, const Variant var)
     Variant result;
     switch (op)
     {
-    CASE1( LogicNot, not );
-    CASE2( Negate,   -   );
-    CASE2( Plus,     +   );
-    default : unreachable(__LINE__);
+    CASE_1( LogicNot, not );
+    CASE_2( Negate,   -   );
+    CASE_2( Plus,     +   );
+    default : MOON_UNREACHABLE();
     } // switch (op)
     return result;
 
-    #undef CASE1
-    #undef CASE2
+    #undef CASE_1
+    #undef CASE_2
 }
 
 // ========================================================
@@ -516,9 +508,9 @@ Variant performUnaryOp(const OpCode op, const Variant var)
 bool isAssignmentValid(const Variant::Type destType, const Variant::Type srcType) noexcept
 {
     // Integers and floats convert implicitly.
-    if (destType == VT::Integer || destType == VT::Float)
+    if (destType == Variant::Type::Integer || destType == Variant::Type::Float)
     {
-        return srcType == VT::Integer || srcType == VT::Float;
+        return srcType == Variant::Type::Integer || srcType == Variant::Type::Float;
     }
     else // Types must match exactly.
     {
@@ -537,78 +529,53 @@ void performAssignmentWithConversion(Variant & dest, const Variant source)
         MOON_RUNTIME_EXCEPTION("cannot assign " + toString(source.type) + " to " + toString(dest.type));
     }
 
+    // CASE_1 and CASE_2, such naming, much clear, wow!
+
+    #define CASE_1(destType, destVal)                        \
+        case destType :                                      \
+        {                                                    \
+            switch (source.type)                             \
+            {                                                \
+            case Variant::Type::Integer :                    \
+                dest.value.destVal = source.value.asInteger; \
+                break;                                       \
+            case Variant::Type::Float :                      \
+                dest.value.destVal = source.value.asFloat;   \
+                break;                                       \
+            default :                                        \
+                MOON_UNREACHABLE();                          \
+            }                                                \
+            break;                                           \
+        }
+
+    #define CASE_2(destType, destVal)                        \
+        case destType :                                      \
+        {                                                    \
+            if (source.type == destType)                     \
+            {                                                \
+                dest.value.destVal = source.value.destVal;   \
+            }                                                \
+            else                                             \
+            {                                                \
+                MOON_UNREACHABLE();                          \
+            }                                                \
+            break;                                           \
+        }
+
     switch (dest.type)
     {
-    case VT::Integer :
-        {
-            switch (source.type)
-            {
-            case VT::Integer :
-                dest.value.asInteger = source.value.asInteger;
-                break;
-            case VT::Float :
-                dest.value.asInteger = source.value.asFloat;
-                break;
-            default :
-                unreachable(__LINE__);
-            } // switch (source.type)
-            break;
-        }
-    case VT::Float :
-        {
-            switch (source.type)
-            {
-            case VT::Integer :
-                dest.value.asFloat = source.value.asInteger;
-                break;
-            case VT::Float :
-                dest.value.asFloat = source.value.asFloat;
-                break;
-            default :
-                unreachable(__LINE__);
-            } // switch (source.type)
-            break;
-        }
-    case VT::String :
-        {
-            if (source.type == VT::String)
-            {
-                //TODO need to add ref counting or some such...
-                dest.value.asStringPtr = source.value.asStringPtr;
-            }
-            else
-            {
-                unreachable(__LINE__);
-            }
-            break;
-        }
-    case VT::Function :
-        {
-            if (source.type == VT::Function)
-            {
-                dest.value.asFunctionPtr = source.value.asFunctionPtr;
-            }
-            else
-            {
-                unreachable(__LINE__);
-            }
-            break;
-        }
-    case VT::Null :
-        {
-            if (source.type == VT::Null)
-            {
-                dest.value.asVoidPtr = source.value.asVoidPtr;
-            }
-            else
-            {
-                unreachable(__LINE__);
-            }
-            break;
-        }
-    default :
-        unreachable(__LINE__);
+    CASE_1( Variant::Type::Integer,  asInteger  );
+    CASE_1( Variant::Type::Float,    asFloat    );
+    CASE_2( Variant::Type::String,   asString   );
+    CASE_2( Variant::Type::Function, asFunction );
+    CASE_2( Variant::Type::Tid,      asTypeId   );
+    CASE_2( Variant::Type::Object,   asObject   );
+    CASE_2( Variant::Type::Null,     asVoidPtr  );
+    default : MOON_UNREACHABLE();
     } // switch (dest.type)
+
+    #undef CASE_1
+    #undef CASE_2
 }
 
 // ========================================================
@@ -619,7 +586,7 @@ void performAssignmentWithConversion(Variant & dest, const Variant source)
 // Testing a few of the table entries in isBinaryOpValid() for consistency
 // with the expected and a few usage cases for performBinaryOp().
 //
-#if DEBUG
+#if MOON_DEBUG
 namespace
 {
 
@@ -628,30 +595,30 @@ struct OpsTableTest
     OpsTableTest()
     {
         // Logical:
-        MOON_ASSERT(isBinaryOpValid(OpCode::CmpNotEqual, VT::Integer, VT::Float)    == true);
-        MOON_ASSERT(isBinaryOpValid(OpCode::CmpEqual,    VT::Float,   VT::Integer)  == true);
-        MOON_ASSERT(isBinaryOpValid(OpCode::CmpLess,     VT::String,  VT::String)   == true);
-        MOON_ASSERT(isBinaryOpValid(OpCode::LogicAnd,    VT::Float,   VT::Float)    == true);
+        MOON_ASSERT(isBinaryOpValid(OpCode::CmpNotEqual, Variant::Type::Integer, Variant::Type::Float)    == true);
+        MOON_ASSERT(isBinaryOpValid(OpCode::CmpEqual,    Variant::Type::Float,   Variant::Type::Integer)  == true);
+        MOON_ASSERT(isBinaryOpValid(OpCode::CmpLess,     Variant::Type::String,  Variant::Type::String)   == true);
+        MOON_ASSERT(isBinaryOpValid(OpCode::LogicAnd,    Variant::Type::Float,   Variant::Type::Float)    == true);
 
-        MOON_ASSERT(isBinaryOpValid(OpCode::CmpNotEqual, VT::Integer, VT::String)   == false);
-        MOON_ASSERT(isBinaryOpValid(OpCode::CmpEqual,    VT::Float,   VT::Function) == false);
-        MOON_ASSERT(isBinaryOpValid(OpCode::CmpLess,     VT::String,  VT::Null)     == false);
-        MOON_ASSERT(isBinaryOpValid(OpCode::LogicAnd,    VT::String,  VT::String)   == false);
+        MOON_ASSERT(isBinaryOpValid(OpCode::CmpNotEqual, Variant::Type::Integer, Variant::Type::String)   == false);
+        MOON_ASSERT(isBinaryOpValid(OpCode::CmpEqual,    Variant::Type::Float,   Variant::Type::Function) == false);
+        MOON_ASSERT(isBinaryOpValid(OpCode::CmpLess,     Variant::Type::String,  Variant::Type::Null)     == false);
+        MOON_ASSERT(isBinaryOpValid(OpCode::LogicAnd,    Variant::Type::String,  Variant::Type::String)   == false);
 
         // Arithmetical:
-        MOON_ASSERT(isBinaryOpValid(OpCode::Add, VT::String,  VT::String)   == true);
-        MOON_ASSERT(isBinaryOpValid(OpCode::Add, VT::Integer, VT::Float)    == true);
-        MOON_ASSERT(isBinaryOpValid(OpCode::Sub, VT::Float,   VT::Integer)  == true);
-        MOON_ASSERT(isBinaryOpValid(OpCode::Mod, VT::Float,   VT::Float)    == true);
-        MOON_ASSERT(isBinaryOpValid(OpCode::Mod, VT::Integer, VT::Float)    == true);
+        MOON_ASSERT(isBinaryOpValid(OpCode::Add, Variant::Type::String,  Variant::Type::String)   == true);
+        MOON_ASSERT(isBinaryOpValid(OpCode::Add, Variant::Type::Integer, Variant::Type::Float)    == true);
+        MOON_ASSERT(isBinaryOpValid(OpCode::Sub, Variant::Type::Float,   Variant::Type::Integer)  == true);
+        MOON_ASSERT(isBinaryOpValid(OpCode::Mod, Variant::Type::Float,   Variant::Type::Float)    == true);
+        MOON_ASSERT(isBinaryOpValid(OpCode::Mod, Variant::Type::Integer, Variant::Type::Float)    == true);
 
-        MOON_ASSERT(isBinaryOpValid(OpCode::Add, VT::String,  VT::Float)    == false);
-        MOON_ASSERT(isBinaryOpValid(OpCode::Add, VT::Integer, VT::String)   == false);
-        MOON_ASSERT(isBinaryOpValid(OpCode::Sub, VT::Float,   VT::Function) == false);
-        MOON_ASSERT(isBinaryOpValid(OpCode::Mod, VT::String,  VT::Integer)  == false);
-        MOON_ASSERT(isBinaryOpValid(OpCode::Div, VT::String,  VT::String)   == false);
+        MOON_ASSERT(isBinaryOpValid(OpCode::Add, Variant::Type::String,  Variant::Type::Float)    == false);
+        MOON_ASSERT(isBinaryOpValid(OpCode::Add, Variant::Type::Integer, Variant::Type::String)   == false);
+        MOON_ASSERT(isBinaryOpValid(OpCode::Sub, Variant::Type::Float,   Variant::Type::Function) == false);
+        MOON_ASSERT(isBinaryOpValid(OpCode::Mod, Variant::Type::String,  Variant::Type::Integer)  == false);
+        MOON_ASSERT(isBinaryOpValid(OpCode::Div, Variant::Type::String,  Variant::Type::String)   == false);
 
-        std::cout << "TEST: Operations table test passed." << std::endl;
+        logStream() << "Moon: Operations table test passed.\n";
     }
 } localOpsTableTest;
 
@@ -663,61 +630,61 @@ struct BinOpsTest
         Variant varA, varB;
 
         // Logical:
-        varA.type = VT::Integer;
+        varA.type = Variant::Type::Integer;
         varA.value.asInteger = 1;
-        varB.type = VT::Float;
+        varB.type = Variant::Type::Float;
         varB.value.asFloat = 1;
         result = performBinaryOp(OpCode::CmpEqual, varA, varB);
-        MOON_ASSERT(result.type == VT::Integer && result.toBool() == true);
+        MOON_ASSERT(result.type == Variant::Type::Integer && result.toBool() == true);
 
-        varA.type = VT::String;
-        varA.value.asStringPtr = "Hello";
-        varB.type = VT::String;
-        varB.value.asStringPtr = "World";
+        varA.type = Variant::Type::String;
+        varA.value.asString = "Hello";
+        varB.type = Variant::Type::String;
+        varB.value.asString = "World";
         result = performBinaryOp(OpCode::CmpNotEqual, varA, varB);
-        MOON_ASSERT(result.type == VT::Integer && result.toBool() == true);
+        MOON_ASSERT(result.type == Variant::Type::Integer && result.toBool() == true);
 
-        varA.type = VT::Null;
+        varA.type = Variant::Type::Null;
         varA.value.asVoidPtr = nullptr;
-        varB.type = VT::Function;
-        varB.value.asFunctionPtr = nullptr;
+        varB.type = Variant::Type::Function;
+        varB.value.asFunction = nullptr;
         result = performBinaryOp(OpCode::LogicOr, varA, varB);
-        MOON_ASSERT(result.type == VT::Integer && result.toBool() == false);
+        MOON_ASSERT(result.type == Variant::Type::Integer && result.toBool() == false);
 
         // Arithmetical:
-        varA.type = VT::Integer;
+        varA.type = Variant::Type::Integer;
         varA.value.asInteger = 2;
-        varB.type = VT::Float;
+        varB.type = Variant::Type::Float;
         varB.value.asFloat = 2;
         result = performBinaryOp(OpCode::Mul, varA, varB);
-        MOON_ASSERT(result.type == VT::Float && result.value.asFloat == 4);
+        MOON_ASSERT(result.type == Variant::Type::Float && result.value.asFloat == 4);
 
-        varA.type = VT::Float;
+        varA.type = Variant::Type::Float;
         varA.value.asFloat = 3;
-        varB.type = VT::Float;
+        varB.type = Variant::Type::Float;
         varB.value.asFloat = 2;
         result = performBinaryOp(OpCode::Mod, varA, varB);
-        MOON_ASSERT(result.type == VT::Float && result.value.asFloat == 1);
+        MOON_ASSERT(result.type == Variant::Type::Float && result.value.asFloat == 1);
 
-        varA.type = VT::Integer;
+        varA.type = Variant::Type::Integer;
         varA.value.asInteger = 3;
-        varB.type = VT::Integer;
+        varB.type = Variant::Type::Integer;
         varB.value.asInteger = 2;
         result = performBinaryOp(OpCode::Mod, varA, varB);
-        MOON_ASSERT(result.type == VT::Integer && result.value.asInteger == 1);
+        MOON_ASSERT(result.type == Variant::Type::Integer && result.value.asInteger == 1);
 
-        varA.type = VT::String;
-        varA.value.asStringPtr = "Hello";
-        varB.type = VT::String;
-        varB.value.asStringPtr = "World";
+        varA.type = Variant::Type::String;
+        varA.value.asString = "Hello";
+        varB.type = Variant::Type::String;
+        varB.value.asString = "World";
         result = performBinaryOp(OpCode::Add, varA, varB);
-        MOON_ASSERT(result.type == VT::String && std::strcmp(result.value.asStringPtr, "HelloWorld") == 0);
+        MOON_ASSERT(result.type == Variant::Type::String && std::strcmp(result.value.asString, "HelloWorld") == 0);
 
-        std::cout << "TEST: Binary ops test passed." << std::endl;
+        logStream() << "Moon: Binary ops test passed.\n";
     }
 } localBinOpsTest;
 
 } // namespace {}
-#endif // DEBUG
+#endif // MOON_DEBUG
 
 } // namespace moon {}

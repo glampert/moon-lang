@@ -13,8 +13,6 @@
 #include "common.hpp"
 #include "pool.hpp"
 
-#include <iostream>
-
 #ifndef MOON_SYMBOL_POOL_GRANULARITY
     #define MOON_SYMBOL_POOL_GRANULARITY 512
 #endif // MOON_SYMBOL_POOL_GRANULARITY
@@ -37,7 +35,10 @@ struct Symbol final
         FloatLiteral,
         BoolLiteral,
         StrLiteral,
-        Identifier
+        Identifier,
+
+        // Number of types. Internal use.
+        Count
     };
 
     union Value
@@ -45,23 +46,21 @@ struct Symbol final
         LangLong     asInteger;
         LangFloat    asFloat;
         LangBool     asBoolean;
-        const char * asStringPtr;
+        const char * asString; //TODO replace with ConstRcString. Same for the symbol name.
 
         Value() noexcept { asInteger = 0; }
     };
-
-    static Value valueFromIntegerStr(const char * cstr);
-    static Value valueFromFloatStr(const char * cstr);
-    static Value valueFromBoolStr(const char * cstr);
-    static Value valueFromCStr(const char * cstr);
 
     const char * const name;    // Reference to the symbol name in the parent table. Not owned by Symbol.
     const Value        value;   // Intrinsic value of the symbol.
     const int          lineNum; // Line number in the source file where it was found. Negative for built-ins.
     const Type         type;    // Type that defines the symbol's value.
 
-    // Symbols are normally only created by the SymbolTable.
-    Symbol(const char * nameRef, int declLineNum, Type symType, Value symVal) noexcept;
+    // Value conversion helpers:
+    static Value valueFromIntegerStr(const char * cstr);
+    static Value valueFromFloatStr(const char * cstr);
+    static Value valueFromBoolStr(const char * cstr);
+    static Value valueFromCStr(const char * cstr);
 
     // Compare this type and value for equality with the provided params.
     bool cmpEqual(Type otherType, Value otherValue) const noexcept;
@@ -70,16 +69,17 @@ struct Symbol final
     bool isBuiltInTypeId() const noexcept;
 
     // Print the symbol as a table row for use by the SymbolTable.
-    void print(std::ostream & os = std::cout) const;
+    void print(std::ostream & os) const;
 };
 
-std::string toString(const Symbol & sym);                           // Symbol *value* to string.
-std::ostream & operator << (std::ostream & os, const Symbol & sym); // Calls Symbol::print().
+std::string toString(const Symbol & sym); // Symbol value to string.
+std::string toString(Symbol::Type type);  // Symbol type to string.
 
 // ========================================================
 // class SymbolTable:
 // ========================================================
 
+//TODO replace with Registry template
 class SymbolTable final
 {
 public:
@@ -125,7 +125,7 @@ public:
     std::size_t getSize() const noexcept;
 
     // Print the whole table in table format (no pun intended).
-    void print(std::ostream & os = std::cout) const;
+    void print(std::ostream & os) const;
 
     // Clone string into new memory. If the string is enclosed in
     // double-quotes, the first and last quotation characters are ignored.
@@ -143,11 +143,14 @@ private:
     SymTable table;
 
     // Symbols are stored here, the table holds pointers into this pool.
-    ObjectPool<Symbol, MOON_SYMBOL_POOL_GRANULARITY> symbolPool;
+    Pool<Symbol, MOON_SYMBOL_POOL_GRANULARITY> symbolPool;
 };
 
-// Calls SymbolTable::print().
-std::ostream & operator << (std::ostream & os, const SymbolTable & symTable);
+inline std::ostream & operator << (std::ostream & os, const SymbolTable & symTable)
+{
+    symTable.print(os);
+    return os;
+}
 
 } // namespace moon {}
 

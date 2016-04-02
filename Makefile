@@ -1,4 +1,10 @@
 
+# TODO:
+# Should have two different build settings:
+# - debug
+# - release
+# Enable higher optimizations on release and maybe also LTO
+
 #------------------------------------------------
 
 # Define 'VERBOSE' to get the full console output.
@@ -23,14 +29,14 @@ BISON_GENERATED = $(addprefix $(GENERATED_DIR)/, $(notdir $(patsubst %.yxx, %.cp
 SRC_FILES       = $(BISON_GENERATED) $(LEX_GENERATED) $(CPP_SRC)
 OBJ_FILES       = $(addprefix $(OBJ_DIR)/, $(patsubst %.cpp, %.o, $(SRC_FILES)))
 
-DEBUG_FLAGS = -g                \
-              -DDEBUG=1         \
-              -D_DEBUG=1        \
-              -D_LIBCPP_DEBUG=0 \
-              -D_LIBCPP_DEBUG2=0
+DEBUG_FLAGS = -g                 \
+              -DDEBUG=1          \
+              -D_DEBUG=1         \
+              -D_LIBCPP_DEBUG=0  \
+              -D_LIBCPP_DEBUG2=0 \
+              -DMOON_DEBUG=1
 
-GLOBAL_DEFINES = -DMOON_DEBUG_MEMORY=1  \
-                 -DMOON_ENABLE_ASSERT=1 \
+GLOBAL_DEFINES = -DMOON_ENABLE_ASSERT=1 \
                  -DMOON_PRINT_USE_ANSI_COLOR_CODES=1
 
 WARNS_USED = -Wall                   \

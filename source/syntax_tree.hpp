@@ -13,8 +13,6 @@
 #include "common.hpp"
 #include "pool.hpp"
 
-#include <iostream>
-
 #ifndef MOON_AST_NODE_POOL_GRANULARITY
     #define MOON_AST_NODE_POOL_GRANULARITY 512
 #endif // MOON_AST_NODE_POOL_GRANULARITY
@@ -85,6 +83,7 @@ public:
         ExprArrayLiteral,
         ExprArraySubscript,
         ExprFuncCall,
+        ExprMemberRef,
         ExprNameIdent,
         ExprTypeIdent,
         ExprLiteralConst,
@@ -125,7 +124,7 @@ public:
             SyntaxTreeNode::Eval eval);
 
     // Helper used internally by SyntaxTree to recursively print its nodes.
-    void print(int level, int childIndex, std::ostream & os = std::cout) const;
+    void print(int level, int childIndex, std::ostream & os) const;
 
     //
     // Accessors:
@@ -157,6 +156,10 @@ private:
     Eval evalType;                      // Evaluation or "return" type of the node. May be deduced after construction.
 };
 
+// ========================================================
+// SyntaxTreeNode helpers:
+// ========================================================
+
 // Node enum constants to printable strings (with color tags):
 std::string toString(SyntaxTreeNode::Type nodeType);
 std::string toString(SyntaxTreeNode::Eval evalType);
@@ -173,25 +176,26 @@ class SyntaxTree final
 {
 public:
 
-    SyntaxTree();
+    SyntaxTree() = default;
 
     // Not copyable.
     SyntaxTree(const SyntaxTree &) = delete;
     SyntaxTree & operator = (const SyntaxTree &) = delete;
 
     // Miscellaneous queries:
-    bool isEmpty() const noexcept;
-    std::size_t getSize() const noexcept;
-    const SyntaxTreeNode * getRoot() const noexcept;
-    void setRoot(const SyntaxTreeNode * newRoot) noexcept;
+    bool isEmpty() const noexcept { return nodePool.getObjectsAlive() == 0; }
+    int  getSize() const noexcept { return nodePool.getObjectsAlive(); }
+
+    void setRoot(const SyntaxTreeNode * newRoot) noexcept { root = newRoot; }
+    const SyntaxTreeNode * getRoot() const noexcept { return root; }
 
     // Simple recursive listing of each node for debug logging.
-    void print(std::ostream & os = std::cout) const;
+    void print(std::ostream & os) const;
 
     //
     // Allocate and construct a new node, incrementing the tree's node count.
-    // However, the new node is still not linked to the tree. After allocation,
-    // a node is normally passed to another `newNode*()` call to link it as a child/leaf.
+    // The new node is still not linked to the tree. After allocation, a node
+    // is normally passed to another 'newNode*()' call to link it as a child|leaf.
     //
 
     SyntaxTreeNode * newNode(SyntaxTreeNode::Type type,
@@ -213,20 +217,18 @@ public:
 
 private:
 
-    // Fetch a node from the pool and increment nodeCount.
-    SyntaxTreeNode * allocNode();
-
     // Also a reference to a node in the pool.
-    const SyntaxTreeNode * root;
-
-    // Nodes allocated from pool. For our purposes, the tree size.
-    std::size_t nodeCount;
+    const SyntaxTreeNode * root = nullptr;
 
     // All nodes are sourced from this pool.
-    ObjectPool<SyntaxTreeNode, MOON_AST_NODE_POOL_GRANULARITY> nodePool;
+    Pool<SyntaxTreeNode, MOON_AST_NODE_POOL_GRANULARITY> nodePool;
 };
 
-std::ostream & operator << (std::ostream & os, const SyntaxTree & syntaxTree);
+inline std::ostream & operator << (std::ostream & os, const SyntaxTree & syntaxTree)
+{
+    syntaxTree.print(os);
+    return os;
+}
 
 } // namespace moon {}
 

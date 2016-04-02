@@ -11,7 +11,6 @@
 #define MOON_POOL_HPP
 
 #include "common.hpp"
-
 #include <memory>
 #include <utility>
 
@@ -19,7 +18,7 @@ namespace moon
 {
 
 // ========================================================
-// class ObjectPool<T, Granularity>
+// class Pool<T, Granularity>
 // ========================================================
 
 //
@@ -27,7 +26,7 @@ namespace moon
 //
 // This pool allocator operates as a linked list of small arrays.
 // Each array is a pool of blocks with the size of 'T' template parameter.
-// Template parameter `Granularity` defines the size in objects of type 'T'
+// Template parameter 'Granularity' defines the size in objects of type 'T'
 // of such arrays.
 //
 // allocate() will return an uninitialized memory block.
@@ -38,24 +37,24 @@ namespace moon
 template
 <
     typename T,
-    std::size_t Granularity
+    int Granularity
 >
-class ObjectPool final
+class Pool final
 {
 public:
 
-     ObjectPool(); // Empty pool; no allocation until first use.
-    ~ObjectPool(); // Drains the pool.
+     Pool(); // Empty pool; no allocation until first use.
+    ~Pool(); // Drains the pool.
 
     // Not copyable.
-    ObjectPool(const ObjectPool &) = delete;
-    ObjectPool & operator = (const ObjectPool &) = delete;
+    Pool(const Pool &) = delete;
+    Pool & operator = (const Pool &) = delete;
 
     // Allocates a single memory block of size 'T' and
     // returns an uninitialized pointer to it.
     T * allocate();
 
-    // Deallocates a memory block previously allocated by `allocate()`.
+    // Deallocates a memory block previously allocated by 'allocate()'.
     // Pointer may be null, in which case this is a no-op. NOTE: Class destructor NOT called!
     void deallocate(void * ptr);
 
@@ -65,13 +64,19 @@ public:
     void drain();
 
     // Miscellaneous stats queries:
-    std::size_t getTotalAllocs()  const noexcept;
-    std::size_t getTotalFrees()   const noexcept;
-    std::size_t getObjectsAlive() const noexcept;
-    std::size_t getGranularity()  const noexcept;
-    std::size_t getSize()         const noexcept;
+    int getTotalAllocs()  const noexcept;
+    int getTotalFrees()   const noexcept;
+    int getObjectsAlive() const noexcept;
+    int getGranularity()  const noexcept;
+    int getSize()         const noexcept;
 
 private:
+
+    // Fill patterns for debug allocations.
+    #if MOON_DEBUG
+    static constexpr int AllocFillVal = 0xAA;
+    static constexpr int FreeFillVal  = 0xFE;
+    #endif // MOON_DEBUG
 
     union PoolObj
     {
@@ -85,19 +90,19 @@ private:
         PoolBlock * next;
     };
 
-    PoolBlock * blockList;      // List of all blocks/pools.
-    PoolObj   * freeList;       // List of free objects that can be recycled.
-    std::size_t allocCount;     // Total calls to `allocate()`.
-    std::size_t objectCount;    // User objects ('T' instances) currently active.
-    std::size_t poolBlockCount; // Size in blocks of the `blockList`.
+    PoolBlock * blockList; // List of all blocks/pools.
+    PoolObj   * freeList;  // List of free objects that can be recycled.
+    int allocCount;        // Total calls to 'allocate()'.
+    int objectCount;       // User objects ('T' instances) currently active.
+    int poolBlockCount;    // Size in blocks of the 'blockList'.
 };
 
 // ========================================================
-// ObjectPool inline implementation:
+// Pool<T> inline implementation:
 // ========================================================
 
-template<typename T, std::size_t Granularity>
-ObjectPool<T, Granularity>::ObjectPool()
+template<typename T, int Granularity>
+Pool<T, Granularity>::Pool()
     : blockList      { nullptr }
     , freeList       { nullptr }
     , allocCount     { 0 }
@@ -107,26 +112,26 @@ ObjectPool<T, Granularity>::ObjectPool()
     // Allocates memory when the first object is requested.
 }
 
-template<typename T, std::size_t Granularity>
-ObjectPool<T, Granularity>::~ObjectPool()
+template<typename T, int Granularity>
+Pool<T, Granularity>::~Pool()
 {
     drain();
 }
 
-template<typename T, std::size_t Granularity>
-T * ObjectPool<T, Granularity>::allocate()
+template<typename T, int Granularity>
+T * Pool<T, Granularity>::allocate()
 {
     if (freeList == nullptr)
     {
-        PoolBlock * newBlock = new PoolBlock();
+        auto newBlock  = new PoolBlock{};
         newBlock->next = blockList;
-        blockList = newBlock;
+        blockList      = newBlock;
 
         ++poolBlockCount;
 
         // All objects in the new pool block are appended
         // to the free list, since they are ready to be used.
-        for (std::size_t i = 0; i < Granularity; ++i)
+        for (int i = 0; i < Granularity; ++i)
         {
             newBlock->objects[i].next = freeList;
             freeList = &newBlock->objects[i];
@@ -142,15 +147,15 @@ T * ObjectPool<T, Granularity>::allocate()
 
     // Initializing the object with a known pattern
     // to help detecting memory errors.
-    #if MOON_DEBUG_MEMORY
-    std::memset(object, 0xAA, sizeof(PoolObj));
-    #endif // MOON_DEBUG_MEMORY
+    #if MOON_DEBUG
+    std::memset(object, AllocFillVal, sizeof(PoolObj));
+    #endif // MOON_DEBUG
 
     return reinterpret_cast<T *>(object);
 }
 
-template<typename T, std::size_t Granularity>
-void ObjectPool<T, Granularity>::deallocate(void * ptr)
+template<typename T, int Granularity>
+void Pool<T, Granularity>::deallocate(void * ptr)
 {
     MOON_ASSERT(objectCount != 0);
     if (ptr == nullptr)
@@ -159,21 +164,21 @@ void ObjectPool<T, Granularity>::deallocate(void * ptr)
     }
 
     // Fill user portion with a known pattern to help
-    // detecting post deallocation usage attempts.
-    #if MOON_DEBUG_MEMORY
-    std::memset(ptr, 0xFE, sizeof(PoolObj));
-    #endif // MOON_DEBUG_MEMORY
+    // detecting post-deallocation usage attempts.
+    #if MOON_DEBUG
+    std::memset(ptr, FreeFillVal, sizeof(PoolObj));
+    #endif // MOON_DEBUG
 
     // Add back to free list's head. Memory not actually freed now.
-    PoolObj * object = reinterpret_cast<PoolObj *>(ptr);
+    auto object  = static_cast<PoolObj *>(ptr);
     object->next = freeList;
-    freeList = object;
+    freeList     = object;
 
     --objectCount;
 }
 
-template<typename T, std::size_t Granularity>
-void ObjectPool<T, Granularity>::drain()
+template<typename T, int Granularity>
+void Pool<T, Granularity>::drain()
 {
     while (blockList != nullptr)
     {
@@ -189,32 +194,32 @@ void ObjectPool<T, Granularity>::drain()
     poolBlockCount = 0;
 }
 
-template<typename T, std::size_t Granularity>
-std::size_t ObjectPool<T, Granularity>::getTotalAllocs() const noexcept
+template<typename T, int Granularity>
+int Pool<T, Granularity>::getTotalAllocs() const noexcept
 {
     return allocCount;
 }
 
-template<typename T, std::size_t Granularity>
-std::size_t ObjectPool<T, Granularity>::getTotalFrees() const noexcept
+template<typename T, int Granularity>
+int Pool<T, Granularity>::getTotalFrees() const noexcept
 {
     return allocCount - objectCount;
 }
 
-template<typename T, std::size_t Granularity>
-std::size_t ObjectPool<T, Granularity>::getObjectsAlive() const noexcept
+template<typename T, int Granularity>
+int Pool<T, Granularity>::getObjectsAlive() const noexcept
 {
     return objectCount;
 }
 
-template<typename T, std::size_t Granularity>
-std::size_t ObjectPool<T, Granularity>::getGranularity() const noexcept
+template<typename T, int Granularity>
+int Pool<T, Granularity>::getGranularity() const noexcept
 {
     return Granularity;
 }
 
-template<typename T, std::size_t Granularity>
-std::size_t ObjectPool<T, Granularity>::getSize() const noexcept
+template<typename T, int Granularity>
+int Pool<T, Granularity>::getSize() const noexcept
 {
     return poolBlockCount;
 }

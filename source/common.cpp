@@ -9,7 +9,8 @@
 
 #include "common.hpp"
 #include "pool.hpp"
-#include <cstdarg>
+#include <type_traits> // For std::is_pod<T>
+#include <cstdarg>     // va_start/va_end/etc
 
 namespace moon
 {
@@ -156,7 +157,7 @@ std::string escapeString(const char * unescaped)
     return escaped;
 }
 
-std::uint32_t hashCString(const char * cstr) noexcept
+std::uint32_t hashCString(const char * cstr)
 {
     MOON_ASSERT(cstr != nullptr);
 
@@ -193,7 +194,7 @@ std::string strPrintF(const char * format, ...)
 
     va_list vaArgs;
     char buffer[2048];
-    const int available = arrayLength(buffer);
+    constexpr int available = arrayLength(buffer);
 
     va_start(vaArgs, format);
     int result = std::vsnprintf(buffer, available, format, vaArgs);
@@ -220,32 +221,39 @@ std::string strPrintF(const char * format, ...)
 // RcString => Reference counted string types:
 // ========================================================
 
+//TODO perhaps keep an internal list of allocated RcStrings
+//for debug checking of leaked references. We should of course
+//allow disabling this check on a "release" build.
+
 //
 // ConstRcString:
 //
 ConstRcString * newConstRcString(const char * cstr)
 {
-    MOON_ASSERT(cstr != nullptr);
-    const std::uint32_t strLen = static_cast<std::uint32_t>(std::strlen(cstr));
+    static_assert(std::is_pod<ConstRcString>::value, "ConstRcString struct should be a POD type!");
 
-    const auto strHash    = hashCString(cstr);
-    const auto memBytes   = sizeof(ConstRcString) + strLen + 1;
-    std::uint8_t * memPtr = static_cast<std::uint8_t *>(::operator new(memBytes));
+    MOON_ASSERT(cstr != nullptr);
+    const auto strLen = static_cast<std::uint32_t>(std::strlen(cstr));
+
+    const auto strHash  = hashCString(cstr);
+    const auto memBytes = sizeof(ConstRcString) + strLen + 1;
+    auto memPtr = static_cast<std::uint8_t *>(::operator new(memBytes));
 
     auto rstr = reinterpret_cast<ConstRcString *>(memPtr);
     memPtr += sizeof(ConstRcString);
 
-    char * strClone = reinterpret_cast<char *>(memPtr);
+    auto strClone = reinterpret_cast<char *>(memPtr);
     std::memcpy(strClone, cstr, strLen);
     strClone[strLen] = '\0';
 
     return construct(rstr, { strClone, strLen, strHash, 1 });
 }
 
-void addRcStringRef(ConstRcString * rstr)
+ConstRcString * addRcStringRef(ConstRcString * rstr)
 {
     MOON_ASSERT(rstr != nullptr);
     rstr->refCount++;
+    return rstr;
 }
 
 void releaseRcString(ConstRcString * rstr)
@@ -254,7 +262,7 @@ void releaseRcString(ConstRcString * rstr)
     rstr->refCount--;
     if (rstr->refCount == 0)
     {
-        ::operator delete(reinterpret_cast<void *>(rstr));
+        ::operator delete(static_cast<void *>(rstr));
     }
 }
 
@@ -263,26 +271,29 @@ void releaseRcString(ConstRcString * rstr)
 //
 MutableRcString * newMutableRcString(const char * cstr)
 {
+    static_assert(std::is_pod<MutableRcString>::value, "MutableRcString struct should be a POD type!");
+
     MOON_ASSERT(cstr != nullptr);
-    const std::uint32_t strLen = static_cast<std::uint32_t>(std::strlen(cstr));
+    const auto strLen = static_cast<std::uint32_t>(std::strlen(cstr));
 
     const auto memBytes = sizeof(MutableRcString) + strLen + 1;
-    std::uint8_t * memPtr = static_cast<std::uint8_t *>(::operator new(memBytes));
+    auto memPtr = static_cast<std::uint8_t *>(::operator new(memBytes));
 
     auto rstr = reinterpret_cast<MutableRcString *>(memPtr);
     memPtr += sizeof(MutableRcString);
 
-    char * strClone = reinterpret_cast<char *>(memPtr);
+    auto strClone = reinterpret_cast<char *>(memPtr);
     std::memcpy(strClone, cstr, strLen);
     strClone[strLen] = '\0';
 
     return construct(rstr, { strClone, strLen, 1 });
 }
 
-void addRcStringRef(MutableRcString * rstr)
+MutableRcString * addRcStringRef(MutableRcString * rstr)
 {
     MOON_ASSERT(rstr != nullptr);
     rstr->refCount++;
+    return rstr;
 }
 
 void releaseRcString(MutableRcString * rstr)
@@ -291,8 +302,48 @@ void releaseRcString(MutableRcString * rstr)
     rstr->refCount--;
     if (rstr->refCount == 0)
     {
-        ::operator delete(reinterpret_cast<void *>(rstr));
+        ::operator delete(static_cast<void *>(rstr));
     }
 }
+
+// ========================================================
+// Minimal unit tests for the compile-time string hash:
+// ========================================================
+
+#if MOON_DEBUG
+namespace
+{
+
+struct CTHashCStrTest
+{
+    CTHashCStrTest()
+    {
+        MOON_ASSERT( ct::hashCString("")           == hashCString("")           );
+        MOON_ASSERT( ct::hashCString("1")          == hashCString("1")          );
+        MOON_ASSERT( ct::hashCString("128")        == hashCString("128")        );
+        MOON_ASSERT( ct::hashCString("0xF00BBB")   == hashCString("0xF00BBB")   );
+        MOON_ASSERT( ct::hashCString("0xDEADBEEF") == hashCString("0xDEADBEEF") );
+        MOON_ASSERT( ct::hashCString("0xCAFEBABE") == hashCString("0xCAFEBABE") );
+        MOON_ASSERT( ct::hashCString("aaaaa-0")    == hashCString("aaaaa-0")    );
+        MOON_ASSERT( ct::hashCString("bbbbb-1")    == hashCString("bbbbb-1")    );
+        MOON_ASSERT( ct::hashCString("ccccc-2")    == hashCString("ccccc-2")    );
+        MOON_ASSERT( ct::hashCString("ddddd-3")    == hashCString("ddddd-3")    );
+        MOON_ASSERT( ct::hashCString("eeeee-4")    == hashCString("eeeee-4")    );
+        MOON_ASSERT( ct::hashCString("fffff-5")    == hashCString("fffff-5")    );
+        MOON_ASSERT( ct::hashCString("ggggg-6")    == hashCString("ggggg-6")    );
+        MOON_ASSERT( ct::hashCString("int")        == hashCString("int")        );
+        MOON_ASSERT( ct::hashCString("float")      == hashCString("float")      );
+        MOON_ASSERT( ct::hashCString("str")        == hashCString("str")        );
+        MOON_ASSERT( ct::hashCString("bool")       == hashCString("bool")       );
+        MOON_ASSERT( ct::hashCString("object")     == hashCString("object")     );
+        MOON_ASSERT( ct::hashCString("function")   == hashCString("function")   );
+        MOON_ASSERT( ct::hashCString("GR Lampert") == hashCString("GR Lampert") );
+
+        logStream() << "Moon: Compile-time string hash test passed.\n";
+    }
+} localCTHashCStrTest;
+
+} // namespace {}
+#endif // MOON_DEBUG
 
 } // namespace moon {}

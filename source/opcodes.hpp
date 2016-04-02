@@ -78,6 +78,8 @@ enum class OpCode : std::uint8_t
     ArraySubscript, // pops the array ref and subscript from the stack[array_ref, sub]
                     // pushes the resulting value into the stack
 
+    MemberRef, // pops 2 from the stack, [obj, member_idx] and pushes the resulting member var
+
     // Return Value Register
     LoadRVR,  // push RVR into stack
     StoreRVR, // store stack top into RVR
@@ -85,10 +87,12 @@ enum class OpCode : std::uint8_t
     // global variable/constant
     LoadGlob,  // push operand into stack
     StoreGlob, // store stack top into operand and pop
+    MemberStoreGlob, // pops 2 from the stack, [obj, member_idx] and writes to member variable
 
     // local variable (function scope)
     LoadLocal,
     StoreLocal,
+    MemberStoreLocal,
 
     CmpNotEqual,
     CmpEqual,
@@ -137,8 +141,9 @@ inline bool isJumpOpCode(const OpCode op) noexcept
 
 inline bool referencesStackData(const OpCode op) noexcept
 {
-    return op == OpCode::LoadLocal ||
-           op == OpCode::StoreLocal;
+    return op == OpCode::LoadLocal  ||
+           op == OpCode::StoreLocal ||
+           op == OpCode::MemberStoreLocal;
 }
 
 std::string toString(OpCode op);

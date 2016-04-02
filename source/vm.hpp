@@ -12,7 +12,6 @@
 
 #include "opcodes.hpp"
 #include "runtime.hpp"
-
 #include <utility>
 #include <vector>
 
@@ -39,8 +38,18 @@ public:
     Stack         locals;
     DataVector    data;
     CodeVector    code;
+    Object *      gcListHead;
+    TypeTable     runtimeTypes;
     FunctionTable functions;
     Stack::Slice  funcArgv;
+
+    //TODO add a way of accessing all the program
+    //globals by name. that will be useful if you
+    //just want to use a script to store some runtime
+    //configuration data!
+    //
+    //Also a method to call a script function or registered native
+    //call by name will be nice, e.g.: vm.call("foo", [args...]);
 
     //
     // VM interface:
@@ -67,7 +76,7 @@ public:
     void executeSingleInstruction(OpCode op, std::uint32_t operandIndex);
 
     // Prints the current Program counter, data vector and stack.
-    void print(std::ostream & os = std::cout) const;
+    void print(std::ostream & os) const;
 
 private:
 
@@ -88,8 +97,8 @@ private:
 // Debug printing helpers:
 // ========================================================
 
-void printDataVector(const VM::DataVector & data, std::ostream & os = std::cout);
-void printCodeVector(const VM::CodeVector & code, std::ostream & os = std::cout);
+void printDataVector(const VM::DataVector & data, std::ostream & os);
+void printCodeVector(const VM::CodeVector & code, std::ostream & os);
 
 inline std::ostream & operator << (std::ostream & os, const VM::DataVector & data)
 {

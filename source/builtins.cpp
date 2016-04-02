@@ -60,8 +60,7 @@ void assert(VM &, Stack::Slice args) // (varargs) -> void
         message += toString(*var);
     }
 
-    std::cerr << message << "\n";
-    throw ScriptException{ message };
+    scriptError(message);
 }
 
 void panic(VM &, Stack::Slice args) // (varargs) -> void
@@ -76,15 +75,14 @@ void panic(VM &, Stack::Slice args) // (varargs) -> void
         message += toString(*var);
     }
 
-    std::cerr << message << "\n";
-    throw ScriptException{ message };
+    scriptError(message);
 }
 
 void print(VM &, Stack::Slice args) // (varargs) -> void
 {
     for (auto var = args.first(); var; var = args.next())
     {
-        std::cout << toString(*var);
+        logStream() << toString(*var);
     }
 }
 
@@ -92,9 +90,9 @@ void println(VM &, Stack::Slice args) // (varargs) -> void
 {
     for (auto var = args.first(); var; var = args.next())
     {
-        std::cout << toString(*var);
+        logStream() << toString(*var);
     }
-    std::cout << "\n";
+    logStream() << "\n";
 }
 
 void to_string(VM & vm, Stack::Slice args) // (varargs) -> string
@@ -109,6 +107,7 @@ void to_string(VM & vm, Stack::Slice args) // (varargs) -> string
     auto fmt = args.next();
     std::string outputStr;
 
+    //TODO a flag to print integers as characters
     if (fmt != nullptr)
     {
         if (fmt->type != Variant::Type::String)
@@ -118,7 +117,7 @@ void to_string(VM & vm, Stack::Slice args) // (varargs) -> string
         }
 
         // Print with specific format:
-        const char * flag = fmt->value.asStringPtr;
+        const char * flag = fmt->value.asString;
         switch (*flag)
         {
         case 'b' : // boolean
@@ -180,6 +179,17 @@ void to_string(VM & vm, Stack::Slice args) // (varargs) -> string
             outputStr = toString(var->type);
             break;
 
+        case 'o' : // object (all members recursive)
+            if (var->type == Variant::Type::Object && var->value.asObject != nullptr)
+            {
+                outputStr = var->value.asObject->getStringRepresentation();
+            }
+            else // Not an object. Print as if no flag given.
+            {
+                outputStr = toString(*var);
+            }
+            break;
+
         default :
             MOON_RUNTIME_EXCEPTION("to_string() called with unrecognized format flag '" + toString(flag) + "'");
         } // switch (*flag)
@@ -196,7 +206,7 @@ void to_string(VM & vm, Stack::Slice args) // (varargs) -> string
     std::strcpy(newStr, outputStr.c_str());
 
     Variant result{ Variant::Type::String };
-    result.value.asStringPtr = newStr;
+    result.value.asString = newStr;
 
     vm.setReturnValue(result);
 }
@@ -207,6 +217,7 @@ void to_string(VM & vm, Stack::Slice args) // (varargs) -> string
 // - a small array handling library (can be based on std::vector)
 // - a small dictionary library (std::unordered_map based)
 // - expose the C-maths library
+// - small rand gen library
 // - a library for bit manipulation within integers? We don't have the traditional bitshift ops...
 // - env library to get things like cmdline and env vars
 
@@ -226,5 +237,8 @@ void registerNativeBuiltInFunctions(FunctionTable & funcTable)
     ADD_VARARGS_FUNC( funcTable, nullptr,    println,   Function::VarArgs );
     ADD_VARARGS_FUNC( funcTable, &RetString, to_string, Function::VarArgs );
 }
+
+#undef ADD_VARARGS_FUNC
+#undef ADD_FUNC
 
 } // namespace moon {}
