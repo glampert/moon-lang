@@ -21,14 +21,12 @@ namespace moon
 {
 
 // ========================================================
-// class SyntaxTreeNode:
+// struct SyntaxTreeNode:
 // ========================================================
 
-class SyntaxTreeNode final
+struct SyntaxTreeNode final
 {
-public:
-
-    enum class Eval : std::uint8_t
+    enum class Eval : UInt8
     {
         // Placeholder types (used internally):
         Undefined,
@@ -45,14 +43,15 @@ public:
         Range,
         Any,
 
-        // User Defined Type flag (must be accompanied by an identifiers/symbol).
+        // User Defined Type flag.
+        // (accompanied by an identifier/symbol).
         UDT,
 
         // Sentinel value; used internally.
         Count
     };
 
-    enum class Type : std::uint8_t
+    enum class Type : UInt8
     {
         // Other:
         TranslationUnit,
@@ -115,45 +114,40 @@ public:
         Count
     };
 
+    const SyntaxTreeNode * children[3]; // Pointers to the these node's children.
+    const Symbol * const symbol;        // Pointer to a symbol, if applicable.
+    const Type nodeType;                // What type of node is it. See the 'Type' enum above.
+    const Eval evalType;                // Evaluation or "return value" type of the node.
+
     // All-in-one constructor:
     SyntaxTreeNode(Type type,
             const Symbol * sym,
             const SyntaxTreeNode * child0,
             const SyntaxTreeNode * child1,
             const SyntaxTreeNode * child2,
-            SyntaxTreeNode::Eval eval);
+            SyntaxTreeNode::Eval eval) noexcept;
 
     // Helper used internally by SyntaxTree to recursively print its nodes.
     void print(int level, int childIndex, std::ostream & os) const;
 
     //
-    // Accessors:
+    // Accessors with debug bounds checking:
     //
-    void setChild(const int index, const SyntaxTreeNode * child) noexcept
+    void setChild(const int index, const SyntaxTreeNode * child)
     {
         MOON_ASSERT(index >= 0 && index < 3);
         children[index] = child;
     }
-    const SyntaxTreeNode * getChild(const int index) const noexcept
+    const SyntaxTreeNode * getChild(const int index) const
     {
         MOON_ASSERT(index >= 0 && index < 3);
         return children[index];
     }
-    const Symbol * getChildSymbol(const int index) const noexcept
+    const Symbol * getChildSymbol(const int index) const
     {
         MOON_ASSERT(index >= 0 && index < 3);
         return children[index]->symbol;
     }
-    const Symbol * getSymbol() const noexcept { return symbol; }
-    Type getType() const noexcept { return nodeType; }
-    Eval getEval() const noexcept { return evalType; }
-
-private:
-
-    const SyntaxTreeNode * children[3]; // Pointers to the these node's children.
-    const Symbol * symbol;              // Pointer to a symbol, if applicable.
-    const Type nodeType;                // What type of node is it? See the `Type` enum.
-    Eval evalType;                      // Evaluation or "return" type of the node. May be deduced after construction.
 };
 
 // ========================================================
@@ -184,7 +178,7 @@ public:
 
     // Miscellaneous queries:
     bool isEmpty() const noexcept { return nodePool.getObjectsAlive() == 0; }
-    int  getSize() const noexcept { return nodePool.getObjectsAlive(); }
+    int  getSize() const noexcept { return nodePool.getObjectsAlive();      }
 
     void setRoot(const SyntaxTreeNode * newRoot) noexcept { root = newRoot; }
     const SyntaxTreeNode * getRoot() const noexcept { return root; }

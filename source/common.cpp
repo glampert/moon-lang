@@ -16,7 +16,7 @@ namespace moon
 {
 
 // ========================================================
-// BaseException class:
+// BaseException:
 // ========================================================
 
 BaseException::BaseException(const char * message)
@@ -157,14 +157,14 @@ std::string escapeString(const char * unescaped)
     return escaped;
 }
 
-std::uint32_t hashCString(const char * cstr)
+UInt32 hashCString(const char * cstr)
 {
     MOON_ASSERT(cstr != nullptr);
 
     // Simple and fast One-at-a-Time (OAT) hash algorithm:
     //  http://en.wikipedia.org/wiki/Jenkins_hash_function
     //
-    std::uint32_t h = 0;
+    UInt32 h = 0;
     while (*cstr != '\0')
     {
         h += *cstr++;
@@ -218,35 +218,32 @@ std::string strPrintF(const char * format, ...)
 }
 
 // ========================================================
-// RcString => Reference counted string types:
+// ConstRcString => Simple reference counted string type:
 // ========================================================
 
-//TODO perhaps keep an internal list of allocated RcStrings
-//for debug checking of leaked references. We should of course
-//allow disabling this check on a "release" build.
-
-//
-// ConstRcString:
-//
-ConstRcString * newConstRcString(const char * cstr)
+ConstRcString * newConstRcString(const char * cstr, const UInt32 maxCharsToCopy)
 {
     static_assert(std::is_pod<ConstRcString>::value, "ConstRcString struct should be a POD type!");
 
     MOON_ASSERT(cstr != nullptr);
-    const auto strLen = static_cast<std::uint32_t>(std::strlen(cstr));
-
     const auto strHash  = hashCString(cstr);
-    const auto memBytes = sizeof(ConstRcString) + strLen + 1;
-    auto memPtr = static_cast<std::uint8_t *>(::operator new(memBytes));
+    const auto memBytes = sizeof(ConstRcString) + maxCharsToCopy + 1;
+    auto memPtr = static_cast<UInt8 *>(::operator new(memBytes));
 
     auto rstr = reinterpret_cast<ConstRcString *>(memPtr);
     memPtr += sizeof(ConstRcString);
 
     auto strClone = reinterpret_cast<char *>(memPtr);
-    std::memcpy(strClone, cstr, strLen);
-    strClone[strLen] = '\0';
+    std::memcpy(strClone, cstr, maxCharsToCopy);
+    strClone[maxCharsToCopy] = '\0';
 
-    return construct(rstr, { strClone, strLen, strHash, 1 });
+    return construct(rstr, { strClone, maxCharsToCopy, strHash, 1 });
+}
+
+ConstRcString * newConstRcString(const char * cstr)
+{
+    MOON_ASSERT(cstr != nullptr);
+    return newConstRcString(cstr, static_cast<UInt32>(std::strlen(cstr)));
 }
 
 ConstRcString * addRcStringRef(ConstRcString * rstr)
@@ -257,46 +254,6 @@ ConstRcString * addRcStringRef(ConstRcString * rstr)
 }
 
 void releaseRcString(ConstRcString * rstr)
-{
-    MOON_ASSERT(rstr != nullptr);
-    rstr->refCount--;
-    if (rstr->refCount == 0)
-    {
-        ::operator delete(static_cast<void *>(rstr));
-    }
-}
-
-//
-// MutableRcString:
-//
-MutableRcString * newMutableRcString(const char * cstr)
-{
-    static_assert(std::is_pod<MutableRcString>::value, "MutableRcString struct should be a POD type!");
-
-    MOON_ASSERT(cstr != nullptr);
-    const auto strLen = static_cast<std::uint32_t>(std::strlen(cstr));
-
-    const auto memBytes = sizeof(MutableRcString) + strLen + 1;
-    auto memPtr = static_cast<std::uint8_t *>(::operator new(memBytes));
-
-    auto rstr = reinterpret_cast<MutableRcString *>(memPtr);
-    memPtr += sizeof(MutableRcString);
-
-    auto strClone = reinterpret_cast<char *>(memPtr);
-    std::memcpy(strClone, cstr, strLen);
-    strClone[strLen] = '\0';
-
-    return construct(rstr, { strClone, strLen, 1 });
-}
-
-MutableRcString * addRcStringRef(MutableRcString * rstr)
-{
-    MOON_ASSERT(rstr != nullptr);
-    rstr->refCount++;
-    return rstr;
-}
-
-void releaseRcString(MutableRcString * rstr)
 {
     MOON_ASSERT(rstr != nullptr);
     rstr->refCount--;

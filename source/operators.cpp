@@ -68,9 +68,9 @@ namespace moon
 // ------------------------------------------------------------------
 
 using OpApplyCB = Variant (*)(Variant varA, Variant varB);
-static constexpr unsigned FirstOp = static_cast<unsigned>(OpCode::CmpNotEqual);
-static constexpr unsigned LastOp  = static_cast<unsigned>(OpCode::Mul);
-static constexpr unsigned NumOps  = (LastOp - FirstOp) + 1;
+static constexpr UInt32 FirstOp = static_cast<UInt32>(OpCode::CmpNotEqual);
+static constexpr UInt32 LastOp  = static_cast<UInt32>(OpCode::Mul);
+static constexpr UInt32 NumOps  = (LastOp - FirstOp) + 1;
 
 std::string binaryOpToString(const OpCode op)
 {
@@ -91,7 +91,7 @@ std::string binaryOpToString(const OpCode op)
         "*"    // Mul
     };
 
-    const auto idxOp = static_cast<unsigned>(op);
+    const auto idxOp = static_cast<UInt32>(op);
     if (idxOp < FirstOp || idxOp > LastOp)
     {
         return toString(op);
@@ -161,8 +161,8 @@ static Variant moduloOpCommon(const Variant varA, const Variant varB)
 
     // If one of the sides is a float, both get promoted
     // to floating-point and we use std::fmod() instead.
-    const double a = (varA.type == Variant::Type::Integer) ? static_cast<double>(varA.value.asInteger) : varA.value.asFloat;
-    const double b = (varB.type == Variant::Type::Integer) ? static_cast<double>(varB.value.asInteger) : varB.value.asFloat;
+    const Float64 a = (varA.type == Variant::Type::Integer) ? static_cast<Float64>(varA.value.asInteger) : varA.value.asFloat;
+    const Float64 b = (varB.type == Variant::Type::Integer) ? static_cast<Float64>(varB.value.asInteger) : varB.value.asFloat;
 
     Variant result{ Variant::Type::Float };
     result.value.asFloat = std::fmod(a, b);
@@ -240,7 +240,7 @@ static const struct {
 struct OpDefs
 {
     // 1 if the binary operator is defined, 0 if not.
-    std::int8_t ops[NumOps];
+    Int8 ops[NumOps];
 };
 
 //                                   !=   ==   >=   >    <=   <      or   and    -    +    %    /    *
@@ -265,7 +265,7 @@ static const OpDefs float_func  = {{ 0,   0,   0,   0,   0,   0,     0,   0,    
 static const OpDefs str_null    = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
 static const OpDefs str_int     = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
 static const OpDefs str_float   = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
-static const OpDefs str_str     = {{ 1,   1,   1,   1,   1,   1,     0,   0,     0,   1,   0,   0,   0 }};
+static const OpDefs str_str     = {{ 1,   1,   1,   1,   1,   1,     0,   0,     0,   1,   0,   0,   0 }}; //TODO allow and/or on string-string
 static const OpDefs str_func    = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
 //                                   !=   ==   >=   >    <=   <      or   and    -    +    %    /    *
 static const OpDefs func_null   = {{ 1,   1,   1,   1,   1,   1,     1,   1,     0,   0,   0,   0,   0 }};
@@ -274,8 +274,8 @@ static const OpDefs func_float  = {{ 0,   0,   0,   0,   0,   0,     0,   0,    
 static const OpDefs func_str    = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
 static const OpDefs func_func   = {{ 1,   1,   1,   1,   1,   1,     1,   1,     0,   0,   0,   0,   0 }};
 
-static constexpr unsigned Cols = static_cast<unsigned>(Variant::Type::Count);
-static constexpr unsigned Rows = static_cast<unsigned>(Variant::Type::Count);
+static constexpr UInt32 Cols = static_cast<UInt32>(Variant::Type::Count);
+static constexpr UInt32 Rows = static_cast<UInt32>(Variant::Type::Count);
 static const OpDefs * opsTable[Cols][Rows]
 {
 /*                  Null       Integer       Float        String      Function */
@@ -348,9 +348,9 @@ static Variant binaryOpOnObjects(const OpCode op, const Variant varA, const Vari
 
 bool isBinaryOpValid(const OpCode op, const Variant::Type typeA, const Variant::Type typeB) noexcept
 {
-    const auto idxA  = static_cast<unsigned>(typeA);
-    const auto idxB  = static_cast<unsigned>(typeB);
-    const auto idxOp = static_cast<unsigned>(op) - FirstOp;
+    const auto idxA  = static_cast<UInt32>(typeA);
+    const auto idxB  = static_cast<UInt32>(typeB);
+    const auto idxOp = static_cast<UInt32>(op) - FirstOp;
 
     MOON_ASSERT(idxOp < NumOps);
     MOON_ASSERT(idxA < Cols && idxB < Rows);
@@ -372,7 +372,7 @@ Variant performBinaryOp(const OpCode op, const Variant varA, const Variant varB)
     }
 
     // We have already validated above, so some cases are unreachable.
-    const auto idxOp = static_cast<unsigned>(op) - FirstOp;
+    const auto idxOp = static_cast<UInt32>(op) - FirstOp;
     switch (varA.type)
     {
     // int and float have implicit conversions:

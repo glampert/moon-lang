@@ -107,7 +107,7 @@ static SyntaxTreeNode * newCompareNode(ParseContext & ctx, const STNode type,
                                        const SyntaxTreeNode * child2)
 {
     // Special 'if X then' case:
-    if (child0->getType() == STNode::ExprNameIdent)
+    if (child0->nodeType == STNode::ExprNameIdent)
     {
         // Turn it into a compare against zero/null/false expression:
         auto zeroNode = newLiteralNode(ctx, STEval::Long, ctx.symTable->findOrDefineValue(0));
@@ -128,7 +128,7 @@ static SyntaxTreeNode * newBinaryOpNode(ParseContext & ctx, const STNode type,
     //{
     // *** TODO ERROR, cannot perform operation 'XYZ' on typeA and typeB ***
     //}
-    return ctx.syntTree->newNode(type, lhs, rhs, nullptr, rhs->getEval());
+    return ctx.syntTree->newNode(type, lhs, rhs, nullptr, rhs->evalType);
 }
 
 /*------------------------------------------------------------------*/
@@ -136,15 +136,15 @@ static SyntaxTreeNode * newBinaryOpNode(ParseContext & ctx, const STNode type,
 static SyntaxTreeNode * newUnaryOpNode(ParseContext & ctx, const STNode type,
                                        const SyntaxTreeNode * operand)
 {
-    return ctx.syntTree->newNode(type, operand, nullptr, nullptr, operand->getEval());
+    return ctx.syntTree->newNode(type, operand, nullptr, nullptr, operand->evalType);
 }
 
 /*------------------------------------------------------------------*/
 
 static void collectFunctionArgTypes(const SyntaxTreeNode * root,
                                     Variant::Type * argTypesOut,
-                                    std::uint32_t & argCountOut,
-                                    std::uint32_t & extraFlagsOut)
+                                    UInt32 & argCountOut,
+                                    UInt32 & extraFlagsOut)
 {
     if (root == nullptr)
     {
@@ -152,7 +152,7 @@ static void collectFunctionArgTypes(const SyntaxTreeNode * root,
     }
 
     auto argNode  = root->getChild(1);
-    auto evalType = argNode->getEval();
+    auto evalType = argNode->evalType;
 
     if (evalType == STEval::VarArgs)
     {
@@ -173,8 +173,8 @@ static void collectObjMembers(ParseContext & ctx, const SyntaxTreeNode * root, O
         return;
     }
 
-    auto evalType = root->getEval();
-    auto varName  = root->getSymbol()->name;
+    auto evalType = root->evalType;
+    auto varName  = root->symbol->name;
 
     if (objOut->hasMember(varName))
     {
@@ -195,8 +195,8 @@ static void collectObjMembers(ParseContext & ctx, const SyntaxTreeNode * root, O
 
         if (tid == nullptr)
         {
-            templateObj = LangStruct::createInstance(nullptr, ctx.objList);
-            tid = ctx.typeTable->addTypeId(typeName, &LangStruct::createInstance, templateObj, false);
+            templateObj = Struct::createInstance(nullptr, ctx.objList);
+            tid = ctx.typeTable->addTypeId(typeName, &Struct::createInstance, templateObj, false);
             templateObj->typeId = tid;
         }
         else
@@ -562,7 +562,7 @@ func_parameter_list_declaration
             // This is to facilitate the traversal in collectFunctionArgTypes().
             auto varArgsNode = newTypeIdNode(ctx, STEval::VarArgs);
             $$ = ctx.syntTree->newNodeWithSymbol(STNode::VarDeclStatement, $1,
-                       nullptr, varArgsNode, nullptr, varArgsNode->getEval());
+                        nullptr, varArgsNode, nullptr, varArgsNode->evalType);
         }
     | %empty
         {
@@ -585,7 +585,7 @@ func_declaration
             /* child[0] = parameter list
              * child[1] = function body
              * child[2] = return type */
-            $$ = ctx.syntTree->newNodeWithSymbol(STNode::FuncDeclStatement, $2, $4, $7, $6, $6->getEval());
+            $$ = ctx.syntTree->newNodeWithSymbol(STNode::FuncDeclStatement, $2, $4, $7, $6, $6->evalType);
 
             // Redefinition not allowed. We also don't currently support function overloads.
             auto funcName = $2->name;
@@ -595,17 +595,17 @@ func_declaration
                 Parser::error("function '" + fname + "' was defined more than once");
             }
 
-            std::uint32_t extraFlags = 0;
-            std::uint32_t argCount   = 0;
+            UInt32 extraFlags = 0;
+            UInt32 argCount   = 0;
             Variant::Type argTypes[Function::MaxArguments];
 
             // nullptr indicates no return type (void).
             const Variant::Type * pRetType = nullptr;
             Variant::Type retTypeTemp;
 
-            if ($6->getEval() != STEval::Void)
+            if ($6->evalType != STEval::Void)
             {
-                retTypeTemp = eval2VarType($6->getEval());
+                retTypeTemp = eval2VarType($6->evalType);
                 pRetType = &retTypeTemp;
             }
 
@@ -666,8 +666,8 @@ object_constructor_expression
     : type_identifier "{" parameter_list "}"
         {
             /* First child reserved for parameter_list chains */
-            $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprObjectConstructor, $1->getSymbol(),
-                                                                nullptr, $3, $1, $1->getEval());
+            $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprObjectConstructor, $1->symbol,
+                                                           nullptr, $3, $1, $1->evalType);
         }
     ;
 
@@ -680,7 +680,7 @@ typed_var_declaration
     : IDENTIFIER ":" type_identifier
         {
             $$ = ctx.syntTree->newNodeWithSymbol(STNode::VarDeclStatement,
-                                 $1, nullptr, $3, nullptr, $3->getEval());
+                                  $1, nullptr, $3, nullptr, $3->evalType);
         }
     ;
 
@@ -689,18 +689,18 @@ let_var_declaration
     : "let" IDENTIFIER ":" type_identifier "=" expression ";"
         {
             $$ = ctx.syntTree->newNodeWithSymbol(STNode::VarDeclStatement,
-                                      $2, $6, $4, nullptr, $4->getEval());
+                                       $2, $6, $4, nullptr, $4->evalType);
         }
     | "let" IDENTIFIER ":" type_identifier ";"
         {
             $$ = ctx.syntTree->newNodeWithSymbol(STNode::VarDeclStatement,
-                                 $2, nullptr, $4, nullptr, $4->getEval());
+                                  $2, nullptr, $4, nullptr, $4->evalType);
         }
     | "let" IDENTIFIER "=" expression ";"
         {
             /* Eval Type unspecified; inferred from the expression */
             $$ = ctx.syntTree->newNodeWithSymbol(STNode::VarDeclStatement,
-                                 $2, $4, nullptr, nullptr, $4->getEval());
+                                  $2, $4, nullptr, nullptr, $4->evalType);
         }
     ;
 
@@ -752,7 +752,7 @@ return_statement
     | "return" expression ";"
         {
             $$ = ctx.syntTree->newNode(STNode::ReturnStatement, $2,
-                                  nullptr, nullptr, $2->getEval());
+                                   nullptr, nullptr, $2->evalType);
         }
     ;
 
@@ -878,7 +878,7 @@ range_param
     | STR_LITERAL
         {
             auto symbol = $1;
-            if (std::strlen(symbol->value.asString) != 1)
+            if (symbol->value.asString->length != 1)
             {
                 Parser::error("only character literals are allowed in range expressions");
             }
@@ -925,13 +925,13 @@ enum_constant
                                         nullptr, nullptr, nullptr, evalTypeFromSymbol(*$3));
 
             $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprNameIdent, $1,
-                    nullptr, enumValNode, nullptr, enumValNode->getEval());
+                     nullptr, enumValNode, nullptr, enumValNode->evalType);
         }
     | IDENTIFIER "=" enum_constant
         {
             /* Second child is the name of a previously defined constant */
             $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprNameIdent, $1,
-                                      nullptr, $3, nullptr, $3->getEval());
+                                       nullptr, $3, nullptr, $3->evalType);
         }
     ;
 
@@ -946,7 +946,7 @@ type_alias_declaration
                                                  $4, nullptr, nullptr, STEval::UDT);
 
             auto aliasName = $2->name;
-            auto typeName  = $4->getSymbol()->name;
+            auto typeName  = $4->symbol->name;
 
             // Redefinition not allowed.
             if (ctx.typeTable->findTypeId(aliasName))
@@ -981,8 +981,8 @@ struct_declaration
                 Parser::error("struct '" + tname + "' was defined more than once");
             }
 
-            Object * templateObj = LangStruct::createInstance(nullptr, ctx.objList);
-            auto newTypeId = ctx.typeTable->addTypeId(typeName, &LangStruct::createInstance, templateObj, false);
+            Object * templateObj = Struct::createInstance(nullptr, ctx.objList);
+            auto newTypeId = ctx.typeTable->addTypeId(typeName, &Struct::createInstance, templateObj, false);
 
             templateObj->typeId = newTypeId;
             collectObjMembers(ctx, $4, templateObj);

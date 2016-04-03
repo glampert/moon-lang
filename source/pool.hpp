@@ -80,7 +80,7 @@ private:
 
     union PoolObj
     {
-        alignas(T) std::uint8_t userData[sizeof(T)];
+        alignas(T) UInt8 userData[sizeof(T)];
         PoolObj * next;
     };
 

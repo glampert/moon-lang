@@ -142,7 +142,7 @@ void Lexer::lexOnStrLiteral()
     // resolve escaped string characters like \n, \t, etc.
     auto escaped = escapeString(YYText());
 
-    auto sym = ctx.symTable->findStrLiteral(escaped.c_str());
+    auto sym = ctx.symTable->findSymbol(escaped.c_str());
     if (sym == nullptr)
     {
         sym = ctx.symTable->addStrLiteral(escaped.c_str(), lineno());
@@ -153,23 +153,23 @@ void Lexer::lexOnStrLiteral()
 //
 // Generic handlers:
 //
-#define LEX_DEFINE_SYMBOL_HANDLER(handlerName, findMethod, addMethod) \
-    void Lexer::handlerName()                                         \
-    {                                                                 \
-        MOON_ASSERT(ctx.yylval   != nullptr);                         \
-        MOON_ASSERT(ctx.symTable != nullptr);                         \
-        auto sym = ctx.symTable->findMethod(YYText());                \
-        if (sym == nullptr)                                           \
-        {                                                             \
-            sym = ctx.symTable->addMethod(YYText(), lineno());        \
-        }                                                             \
-        ctx.yylval->asSymbol = sym;                                   \
+#define LEX_DEFINE_SYMBOL_HANDLER(handlerName, addMethod)      \
+    void Lexer::handlerName()                                  \
+    {                                                          \
+        MOON_ASSERT(ctx.yylval   != nullptr);                  \
+        MOON_ASSERT(ctx.symTable != nullptr);                  \
+        auto sym = ctx.symTable->findSymbol(YYText());         \
+        if (sym == nullptr)                                    \
+        {                                                      \
+            sym = ctx.symTable->addMethod(YYText(), lineno()); \
+        }                                                      \
+        ctx.yylval->asSymbol = sym;                            \
     }
 
-LEX_DEFINE_SYMBOL_HANDLER( lexOnIdentifier,   findSymbol,       addIdentifier   )
-LEX_DEFINE_SYMBOL_HANDLER( lexOnIntLiteral,   findIntLiteral,   addIntLiteral   )
-LEX_DEFINE_SYMBOL_HANDLER( lexOnFloatLiteral, findFloatLiteral, addFloatLiteral )
-LEX_DEFINE_SYMBOL_HANDLER( lexOnBoolLiteral,  findBoolLiteral,  addBoolLiteral  )
+LEX_DEFINE_SYMBOL_HANDLER( lexOnIdentifier,   addIdentifier   )
+LEX_DEFINE_SYMBOL_HANDLER( lexOnIntLiteral,   addIntLiteral   )
+LEX_DEFINE_SYMBOL_HANDLER( lexOnFloatLiteral, addFloatLiteral )
+LEX_DEFINE_SYMBOL_HANDLER( lexOnBoolLiteral,  addBoolLiteral  )
 #undef LEX_DEFINE_SYMBOL_HANDLER
 
 } // namespace moon {}

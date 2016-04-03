@@ -35,14 +35,14 @@ struct IntermediateInstr final
 
     IntermediateInstr * next;
     Operand             operand;
-    std::uint32_t       uid;
-    std::uint16_t       paramIdx;
+    UInt32              uid;
+    UInt16              paramIdx;
     Variant::Type       type;
     OpCode              op;
 };
 
-using DataMap  = std::unordered_map<const Symbol *, std::uint32_t>;
-using InstrMap = std::unordered_map<const IntermediateInstr *, std::uint32_t>;
+using DataMap  = std::unordered_map<const Symbol *, UInt32>;
+using InstrMap = std::unordered_map<const IntermediateInstr *, UInt32>;
 
 // ========================================================
 // class Compiler:
@@ -56,7 +56,7 @@ public:
     // Public compiler interface:
     //
 
-    // These are filled by a Parser.
+    // These are filled by the Parser.
     SymbolTable symTable;
     SyntaxTree  syntTree;
 
@@ -70,10 +70,8 @@ public:
     // which is then ready to be run on a Moon VM instance. Might raise compiler errors.
     void compile(VM & vm);
 
-    // Debug printing:
+    // Debug printing for the generated intermediate code.
     void print(std::ostream & os) const;
-    void printIntermediateInstructions(std::ostream & os) const;
-    void printInstructionMapping(std::ostream & os) const;
 
     //
     // Intermediate code generation:
@@ -108,7 +106,7 @@ public:
 
     const TypeId * guessTypeId(const SyntaxTreeNode * node);
 
-    bool symbolIsFunctionLocal(const Symbol * symbol, std::uint16_t & paramIdx) const;
+    bool symbolIsFunctionLocal(const Symbol * symbol, UInt16 & paramIdx) const;
     const TypeId * symbolToTypeId(const Symbol * symbol) const;
 
     const TypeId * findFunctionLocalSymbolTypeId(const Symbol * symbol) const;
@@ -144,9 +142,9 @@ private:
 private:
 
     // instructionCount is also the uid generator.
-    std::uint32_t instructionCount    = 0;
-    IntermediateInstr * instrListHead = nullptr;
-    IntermediateInstr * funcListHead  = nullptr;
+    UInt32 instructionCount = 0;
+    IntermediateInstr * globCodeListHead = nullptr;
+    IntermediateInstr * funcCodeListHead = nullptr;
 
     // Ref to the VM types table. Set by a call to compile().
     const TypeTable * runtimeTypes = nullptr;
@@ -175,8 +173,8 @@ private:
 
 inline std::ostream & operator << (std::ostream & os, const Compiler & compiler)
 {
-    // Prints the instrListHead and funcListHead.
-    compiler.printIntermediateInstructions(os);
+    // Prints the globCodeListHead and funcCodeListHead.
+    compiler.print(os);
     return os;
 }
 

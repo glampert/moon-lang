@@ -19,7 +19,7 @@ namespace moon
 // OpCode constants:
 // ========================================================
 
-enum class OpCode : std::uint8_t
+enum class OpCode : UInt8
 {
     NoOp = 0,
 
@@ -110,13 +110,6 @@ enum class OpCode : std::uint8_t
     Div,
     Mul,
 
-    //TODO probably deprecate these because of the new glob/local model...
-    SubStore,
-    AddStore,
-    ModStore,
-    DivStore,
-    MulStore,
-
     // Unary ops:
     LogicNot,
     Negate,
@@ -129,7 +122,7 @@ enum class OpCode : std::uint8_t
 // Opcodes are packed inside an integer for the VM representation, with
 // only 8 bits allocated for the opcode part, so the max instruction number
 // must also fit in a byte. Hence the name "bytecode" sometimes used.
-static_assert(unsigned(OpCode::Count) <= 255, "Too many opcodes! Value must fit in a byte!");
+static_assert(UInt32(OpCode::Count) <= 255, "Too many opcodes! Value must fit in a byte!");
 
 inline bool isJumpOpCode(const OpCode op) noexcept
 {
@@ -171,15 +164,15 @@ std::string toString(OpCode op);
 // MSB                                      LSB
 
 // 8 bits opcode, 24 bits data/jump index.
-using Instruction = std::uint32_t;
+using Instruction = UInt32;
 
 // Pack/unpack into integer:
-inline Instruction packInstruction(const OpCode op, const std::uint32_t operandIndex) noexcept
+inline Instruction packInstruction(const OpCode op, const UInt32 operandIndex) noexcept
 {
-    return (static_cast<std::uint32_t>(op) << 24) | (operandIndex & 0x00FFFFFF);
+    return (static_cast<UInt32>(op) << 24) | (operandIndex & 0x00FFFFFF);
 }
 
-inline void unpackInstruction(const Instruction instr, OpCode & op, std::uint32_t & operandIndex) noexcept
+inline void unpackInstruction(const Instruction instr, OpCode & op, UInt32 & operandIndex) noexcept
 {
     op = static_cast<OpCode>((instr & 0xFF000000) >> 24); // 8
     operandIndex = (instr & 0x00FFFFFF);                  // 24

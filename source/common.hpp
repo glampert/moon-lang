@@ -44,7 +44,7 @@ class FunctionTable;
 struct TypeId;
 class TypeTable;
 
-class SyntaxTreeNode;
+struct SyntaxTreeNode;
 class SyntaxTree;
 
 struct ParseContext;
@@ -55,18 +55,30 @@ class Object;
 class Compiler;
 
 // ========================================================
-// Built-in language types:
+// Shorthand type aliases:
 // ========================================================
 
-using LangBool  = bool;
-using LangFloat = float;
-using LangInt   = std::int32_t;
-using LangLong  = std::int64_t;
+using Int8     = std::int8_t;
+using Int16    = std::int16_t;
+using Int32    = std::int32_t;
+using Int64    = std::int64_t;
+using UInt8    = std::uint8_t;
+using UInt16   = std::uint16_t;
+using UInt32   = std::uint32_t;
+using UInt64   = std::uint64_t;
+using Float32  = float;
+using Float64  = double;
 
-static_assert(sizeof(LangBool)  == 1, "Expected 8-bits boolean!");
-static_assert(sizeof(LangInt)   == 4, "Expected 32-bits integer!");
-static_assert(sizeof(LangLong)  == 8, "Expected 64-bits long!");
-static_assert(sizeof(LangFloat) == 4, "Expected 32-bits float!");
+static_assert(sizeof(Int8)    == 1, "Expected 8-bits  integer!");
+static_assert(sizeof(Int16)   == 2, "Expected 16-bits integer!");
+static_assert(sizeof(Int32)   == 4, "Expected 32-bits integer!");
+static_assert(sizeof(Int64)   == 8, "Expected 64-bits integer!");
+static_assert(sizeof(UInt8)   == 1, "Expected 8-bits  integer!");
+static_assert(sizeof(UInt16)  == 2, "Expected 16-bits integer!");
+static_assert(sizeof(UInt32)  == 4, "Expected 32-bits integer!");
+static_assert(sizeof(UInt64)  == 8, "Expected 64-bits integer!");
+static_assert(sizeof(Float32) == 4, "Expected 32-bits float!");
+static_assert(sizeof(Float64) == 8, "Expected 64-bits float!");
 
 // ========================================================
 // Parser/Lexer aux types:
@@ -163,9 +175,15 @@ struct ScriptException   final : public BaseException { using BaseException::Bas
 // Miscellaneous utilities:
 // ========================================================
 
+struct Range final
+{
+    Int32 start;
+    Int32 end;
+};
+
 // Fast 32-bits hash of a null-terminated C string:
-constexpr std::uint32_t NullHash = 0;
-std::uint32_t hashCString(const char * cstr);
+constexpr UInt32 NullHash = 0;
+UInt32 hashCString(const char * cstr);
 
 // Get an empty C string ("\0").
 const char * getEmptyCString() noexcept;
@@ -187,8 +205,10 @@ std::string strPrintF(const char * format, ...) __attribute__((format(printf, 1,
 std::string strPrintF(const char * format, ...);
 #endif // __GNUC__
 
-template<typename T, unsigned N>
-constexpr unsigned arrayLength(const T (&)[N]) noexcept
+// ------------------------------------
+
+template<typename T, UInt32 N>
+constexpr UInt32 arrayLength(const T (&)[N]) noexcept
 {
     return N;
 }
@@ -217,15 +237,21 @@ using HashTableCStr = std::unordered_map<const char *, T, CStrHasher, CStrCmpEqu
 // toString() helpers:
 // ========================================================
 
-inline std::string toString(const std::uint8_t  value) { return std::to_string(value);    }
-inline std::string toString(const std::uint16_t value) { return std::to_string(value);    }
-inline std::string toString(const std::uint32_t value) { return std::to_string(value);    }
-inline std::string toString(const std::uint64_t value) { return std::to_string(value);    }
-inline std::string toString(const LangBool      value) { return value ? "true" : "false"; }
-inline std::string toString(const LangInt       value) { return std::to_string(value);    }
-inline std::string toString(const LangLong      value) { return std::to_string(value);    }
-inline std::string toString(const char *        value) { return value != nullptr ? value : "null"; }
-inline std::string toString(const LangFloat     value) { return trimTrailingFloatZeros(std::to_string(value)); }
+inline std::string toString(const bool value)    { return value ? "true" : "false"; }
+inline std::string toString(const char * value)  { return (value != nullptr) ? value : "null"; }
+
+inline std::string toString(const Int8  value)   { return std::to_string(value); }
+inline std::string toString(const Int16 value)   { return std::to_string(value); }
+inline std::string toString(const Int32 value)   { return std::to_string(value); }
+inline std::string toString(const Int64 value)   { return std::to_string(value); }
+
+inline std::string toString(const UInt8  value)  { return std::to_string(value); }
+inline std::string toString(const UInt16 value)  { return std::to_string(value); }
+inline std::string toString(const UInt32 value)  { return std::to_string(value); }
+inline std::string toString(const UInt64 value)  { return std::to_string(value); }
+
+inline std::string toString(const Float32 value) { return trimTrailingFloatZeros(std::to_string(value)); }
+inline std::string toString(const Float64 value) { return trimTrailingFloatZeros(std::to_string(value)); }
 
 // ========================================================
 // Compile-time version of hashCString():
@@ -244,11 +270,11 @@ namespace ct
 //  http://stackoverflow.com/questions/28675727/using-crc32-algorithm-to-hash-string-at-compile-time
 //
 
-constexpr std::uint32_t addSHL(std::uint32_t h, std::uint32_t shift) { return h + (h << shift); }
-constexpr std::uint32_t addSHR(std::uint32_t h, std::uint32_t shift) { return h + (h >> shift); }
-constexpr std::uint32_t xorSHR(std::uint32_t h, std::uint32_t shift) { return h ^ (h >> shift); }
+constexpr UInt32 addSHL(UInt32 h, UInt32 shift) { return h + (h << shift); }
+constexpr UInt32 addSHR(UInt32 h, UInt32 shift) { return h + (h >> shift); }
+constexpr UInt32 xorSHR(UInt32 h, UInt32 shift) { return h ^ (h >> shift); }
 
-constexpr std::uint32_t hashOATFinish(std::uint32_t h)
+constexpr UInt32 hashOATFinish(UInt32 h)
 {
     // h += (h <<  3)
     // h ^= (h >> 11)
@@ -256,7 +282,7 @@ constexpr std::uint32_t hashOATFinish(std::uint32_t h)
     return addSHL(xorSHR(addSHL(h, 3), 11), 15);
 }
 
-constexpr std::uint32_t hashOATStep(std::uint32_t h, std::uint32_t c)
+constexpr UInt32 hashOATStep(UInt32 h, UInt32 c)
 {
     // h += c
     // h += (h << 10)
@@ -264,18 +290,18 @@ constexpr std::uint32_t hashOATStep(std::uint32_t h, std::uint32_t c)
     return xorSHR(addSHL(h + c, 10), 6);
 }
 
-constexpr std::uint32_t hashOneAtATime(const char * cstr, std::uint32_t length, std::uint32_t h)
+constexpr UInt32 hashOneAtATime(const char * cstr, UInt32 length, UInt32 h)
 {
     // hashOneAtATime is equivalent to the main hash loop unrolled recursively.
     return (length != 0) ? hashOneAtATime(cstr + 1, length - 1, hashOATStep(h, *cstr)) : hashOATFinish(h);
 }
 
-constexpr std::uint32_t lengthOfCString(const char * cstr)
+constexpr UInt32 lengthOfCString(const char * cstr)
 {
     return (*cstr != '\0') ? (lengthOfCString(cstr + 1) + 1) : 0;
 }
 
-constexpr std::uint32_t hashCString(const char * cstr)
+constexpr UInt32 hashCString(const char * cstr)
 {
     return hashOneAtATime(cstr, lengthOfCString(cstr), 0);
 }
@@ -283,41 +309,27 @@ constexpr std::uint32_t hashCString(const char * cstr)
 } // namespace ct {}
 
 // ========================================================
-// RcString => Simple reference counted string types:
+// ConstRcString => Simple reference counted string type:
 // ========================================================
 
 struct ConstRcString final
 {
-    const char * const  chars;    // Immutable null-terminated C-string.
-    const std::uint32_t length;   // Length in characters, not including the null terminator.
-    const std::uint32_t hashVal;  // Precomputed hashCString() since the string is immutable.
-    std::uint32_t       refCount; // Current reference count. Deleted when it drops to zero.
+    const char * const chars;    // Immutable null-terminated C-string.
+    const UInt32       length;   // Length in characters, not including the null terminator.
+    const UInt32       hashVal;  // Precomputed hashCString() since the string is immutable.
+    UInt32             refCount; // Current reference count. Deleted when it drops to zero.
 };
 
-struct MutableRcString final
-{
-    char *        chars;    // Mutable null-terminated C-string. Hash not precomputed in this case.
-    std::uint32_t length;   // Mutable length. Not counting the null terminator.
-    std::uint32_t refCount; // Current reference count. Deleted when it drops to zero.
-};
-
-// The const Ref Counted String has a precomputed hash of the string, so comparisons
-// are constant-time. The string gets deallocated when the last reference is released.
+// The const Ref Counted String has a precomputed hash of the string, so equal comparison
+// is constant-time. The string gets deallocated when the last reference is released.
+ConstRcString * newConstRcString(const char * cstr, UInt32 maxCharsToCopy);
 ConstRcString * newConstRcString(const char * cstr);
 ConstRcString * addRcStringRef(ConstRcString * rstr);
 void releaseRcString(ConstRcString * rstr);
 
-// The immutable Ref Counted String on the other hand has no precomputed hash,
-// so comparisons are always a traditional strcmp().
-MutableRcString * newMutableRcString(const char * cstr);
-MutableRcString * addRcStringRef(MutableRcString * rstr);
-void releaseRcString(MutableRcString * rstr);
-
 // ------------------------------------
 
-// Ref Counted String comparison:
-template<typename RcStringType>
-inline int cmpRcStrings(const RcStringType * a, const RcStringType * b)
+inline int cmpRcStrings(const ConstRcString * a, const ConstRcString * b)
 {
     MOON_ASSERT(a != nullptr && b != nullptr);
     if (a->chars == b->chars) // Optimize for same memory
@@ -334,41 +346,32 @@ inline int cmpRcStrings(const RcStringType * a, const RcStringType * b)
 inline bool cmpRcStringsEqual(const ConstRcString * a, const ConstRcString * b)
 {
     MOON_ASSERT(a != nullptr && b != nullptr);
-    // Cheap hash comparison for the immutable strings.
     return a->hashVal == b->hashVal;
 }
 
-inline bool cmpRcStringsEqual(const MutableRcString * a, const MutableRcString * b)
+inline bool isRcStringEmpty(const ConstRcString * rstr) noexcept
 {
-    // The mutable string doesn't store a precomputed hash,
-    // so we always do a full per-character comparison.
-    return cmpRcStrings(a, b) == 0;
+    return rstr->length == 0;
 }
 
-inline bool isRcStringValid(const ConstRcString   * rstr) noexcept { return rstr != nullptr && rstr->chars != nullptr && rstr->refCount != 0; }
-inline bool isRcStringValid(const MutableRcString * rstr) noexcept { return rstr != nullptr && rstr->chars != nullptr && rstr->refCount != 0; }
+inline bool isRcStringValid(const ConstRcString * rstr) noexcept
+{
+    return rstr != nullptr && rstr->chars != nullptr && rstr->refCount != 0;
+}
 
-inline bool isRcStringEmpty(const ConstRcString   * rstr) noexcept { return rstr->length == 0; }
-inline bool isRcStringEmpty(const MutableRcString * rstr) noexcept { return rstr->length == 0; }
-
-inline std::string toString(const ConstRcString   * rstr) { return isRcStringValid(rstr) ? rstr->chars : "null"; }
-inline std::string toString(const MutableRcString * rstr) { return isRcStringValid(rstr) ? rstr->chars : "null"; }
+inline std::string toString(const ConstRcString * rstr)
+{
+    return isRcStringValid(rstr) ? rstr->chars : "null";
+}
 
 // ------------------------------------
 
 struct CRcStrDeleter final
 {
-    void operator()(ConstRcString * rstr) const { releaseRcString(rstr); }
+    void operator()(ConstRcString * rstr) const
+    { releaseRcString(rstr); }
 };
-struct MRcStrDeleter final
-{
-    void operator()(MutableRcString * rstr) const { releaseRcString(rstr); }
-};
-
-using ConstRcStrUPtr   = std::unique_ptr<ConstRcString,   CRcStrDeleter>;
-using MutableRcStrUPtr = std::unique_ptr<MutableRcString, MRcStrDeleter>;
-
-// ------------------------------------
+using ConstRcStrUPtr = std::unique_ptr<ConstRcString, CRcStrDeleter>;
 
 struct CRcStrHasher final
 {
@@ -382,21 +385,6 @@ struct CRcStrCmpEqual final
 };
 template<typename T>
 using HashTableConstRcStr = std::unordered_map<ConstRcString *, T, CRcStrHasher, CRcStrCmpEqual>;
-
-// ------------------------------------
-
-struct MRcStrHasher final
-{
-    std::size_t operator()(const MutableRcString * rstr) const
-    { return hashCString(rstr->chars); }
-};
-struct MRcStrCmpEqual final
-{
-    bool operator()(const MutableRcString * a, const MutableRcString * b) const
-    { return cmpRcStringsEqual(a, b); }
-};
-template<typename T>
-using HashTableMutableRcStr = std::unordered_map<MutableRcString *, T, MRcStrHasher, MRcStrCmpEqual>;
 
 // ------------------------------------
 

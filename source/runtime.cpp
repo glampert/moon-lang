@@ -43,7 +43,7 @@ Variant variantFromSymbol(const Symbol & sym)
 //    case Symbol::Type::Identifier :
     case Symbol::Type::StrLiteral :
         //FIXME this is temporary. We must copy the string because the symbol might be gone! (or use RcString)
-        var.value.asString = sym.value.asString;
+        var.value.asString = sym.value.asString->chars;
         var.type = Variant::Type::String;
         break;
 
@@ -103,15 +103,15 @@ std::string toString(const Variant var)
         return toString(var.value.asString);
 
     case Variant::Type::Function :
-        return toString(var.value.asFunction ? var.value.asFunction->name : "null");
+        return toString(var.value.asFunction ? var.value.asFunction->name->chars : "null");
 
     case Variant::Type::Tid :
         return toString(var.value.asTypeId ? var.value.asTypeId->name->chars : "null");
 
     case Variant::Type::Object :
         {
-            auto addr = strPrintF(" @%016llX", static_cast<std::uint64_t>(
-                  reinterpret_cast<std::uintptr_t>(var.value.asVoidPtr)));
+            auto addr = strPrintF(" @%016llX", static_cast<UInt64>(
+                                  reinterpret_cast<std::uintptr_t>(var.value.asVoidPtr)));
             return (var.value.asObject ? (var.value.asObject->getTypeName() + addr) : "null");
         }
     default :
@@ -131,10 +131,10 @@ std::string toString(const Variant::Type type)
         color::cyan()    + std::string("tid")      + color::restore(),
         color::magenta() + std::string("object")   + color::restore()
     };
-    static_assert(arrayLength(typeNames) == unsigned(Variant::Type::Count),
+    static_assert(arrayLength(typeNames) == UInt32(Variant::Type::Count),
                   "Keep this array in sync with the enum declaration!");
 
-    return typeNames[unsigned(type)];
+    return typeNames[UInt32(type)];
 }
 
 // ========================================================
@@ -184,7 +184,7 @@ void Function::validateArguments(Stack::Slice args) const
         return;
     }
 
-    const std::uint32_t argsIn = args.getSize();
+    const UInt32 argsIn = args.getSize();
     if (argsIn != argumentCount)
     {
         MOON_RUNTIME_EXCEPTION("function '" + toString(name) + "' expected " +
@@ -192,7 +192,7 @@ void Function::validateArguments(Stack::Slice args) const
                                toString(argsIn) + " where provided.");
     }
 
-    for (std::uint32_t a = 0; a < argsIn; ++a)
+    for (UInt32 a = 0; a < argsIn; ++a)
     {
         const Variant::Type typeIn = args[a].type;
         const Variant::Type typeExpected = argumentTypes[a];
@@ -230,7 +230,7 @@ void Function::print(std::ostream & os) const
     if (flagsStr.empty()) { flagsStr = "- - - - -"; }
 
     os << strPrintF("| %-30s | %-9s | %-9s | %-6s | %s\n",
-                    name, argCountStr.c_str(), flagsStr.c_str(),
+                    name->chars, argCountStr.c_str(), flagsStr.c_str(),
                     jmpTargetStr.c_str(), retTypeStr.c_str());
 }
 
@@ -252,23 +252,12 @@ FunctionTable::~FunctionTable()
     }
 }
 
-const Function * FunctionTable::findFunction(const char * name) const
-{
-    MOON_ASSERT(name != nullptr);
-    const auto it = table.find(name);
-    if (it != std::end(table))
-    {
-        return it->second;
-    }
-    return nullptr; // Not found.
-}
-
-const Function * FunctionTable::addFunction(const char * funcName, const Variant::Type * returnType,
-                                            const Variant::Type * argTypes, const std::uint32_t argCount,
-                                            const std::uint32_t jumpTarget, const std::uint32_t extraFlags,
+const Function * FunctionTable::addFunction(ConstRcString * funcName, const Variant::Type * returnType,
+                                            const Variant::Type * argTypes, const UInt32 argCount,
+                                            const UInt32 jumpTarget, const UInt32 extraFlags,
                                             Function::NativeCB nativeCallback)
 {
-    MOON_ASSERT(funcName != nullptr);
+    MOON_ASSERT(isRcStringValid(funcName));
     MOON_ASSERT(!findFunction(funcName) && "Function already registered!");
     MOON_ASSERT(argCount <= Function::MaxArguments && "Max arguments per function exceeded!");
 
@@ -278,7 +267,7 @@ const Function * FunctionTable::addFunction(const char * funcName, const Variant
     // We allocate the Function instance plus eventual argument type list and return
     // type as a single memory block. Function will be first, followed by N arguments
     // then the return type at the end.
-    auto memPtr  = static_cast<std::uint8_t *>(::operator new(totalBytes));
+    auto memPtr  = static_cast<UInt8 *>(::operator new(totalBytes));
     auto funcObj = reinterpret_cast<Function *>(memPtr);
     memPtr += sizeof(Function);
 
@@ -306,58 +295,46 @@ const Function * FunctionTable::addFunction(const char * funcName, const Variant
         funcRet = nullptr;
     }
 
-    const auto funcId = cloneCString(funcName);
-    table[funcId] = construct(funcObj, { funcId, funcRet, funcArgs, argCount, jumpTarget, extraFlags, nativeCallback });
-    return funcObj;
+    // The name pointer held by Function doesn't have to be refed.
+    // The table already hold a ref and Functions belong to the table.
+    construct(funcObj, { funcName, funcRet, funcArgs, argCount, jumpTarget, extraFlags, nativeCallback });
+    return addInternal(funcName, funcObj);
 }
 
-void FunctionTable::setJumpTargetFor(const char * funcName, const std::uint32_t newTarget)
+const Function * FunctionTable::addFunction(const char * funcName, const Variant::Type * returnType,
+                                            const Variant::Type * argTypes, const UInt32 argCount,
+                                            const UInt32 jumpTarget, const UInt32 flags,
+                                            Function::NativeCB nativeCallback)
 {
-    MOON_ASSERT(funcName != nullptr);
+    ConstRcStrUPtr key{ newConstRcString(funcName) };
+    return addFunction(key.get(), returnType, argTypes, argCount, jumpTarget, flags, nativeCallback);
+}
 
-    auto it = table.find(funcName);
-    MOON_ASSERT(it != std::end(table));
-
-    // This is the only time we need to unconst the object, so
-    // it is still worth storing it as const Function* in the table.
-    auto func = const_cast<Function *>(it->second);
+void FunctionTable::setJumpTargetFor(ConstRcString * const funcName, const UInt32 newTarget)
+{
+    // This is the only time besides when cleaning up when we need to unconst the
+    // pointer, so it is still worth storing it as 'const Function*' in the table.
+    auto func = const_cast<Function *>(findFunction(funcName));
+    MOON_ASSERT(func != nullptr);
     func->jumpTarget = newTarget;
 }
 
-const char * FunctionTable::cloneCString(const char * sourcePtr)
+void FunctionTable::setJumpTargetFor(const char * funcName, const UInt32 newTarget)
 {
-    auto sourceLen = std::strlen(sourcePtr);
-    if (sourceLen == 0)
-    {
-        return getEmptyCString();
-    }
-
-    //FIXME probably replace with ConstRcString!
-    auto newString = new char[sourceLen + 1];
-    std::memcpy(newString, sourcePtr, sourceLen);
-    newString[sourceLen] = '\0';
-    return newString;
-}
-
-bool FunctionTable::isEmpty() const noexcept
-{
-    return table.empty();
-}
-
-std::size_t FunctionTable::getSize() const noexcept
-{
-    return table.size();
+    auto func = const_cast<Function *>(findFunction(funcName));
+    MOON_ASSERT(func != nullptr);
+    func->jumpTarget = newTarget;
 }
 
 void FunctionTable::print(std::ostream & os) const
 {
     os << color::white() << "[[ begin function table dump ]]" << color::restore() << "\n";
-    if (!table.empty())
+    if (!isEmpty())
     {
         os << "+--------------------------------+-----------+-----------+--------+----------+\n";
         os << "| name                           | arg-count | flags     | jump   | ret-type |\n";
         os << "+--------------------------------+-----------+-----------+--------+----------+\n";
-        for (auto && entry : table)
+        for (auto && entry : *this)
         {
             entry.second->print(os);
         }
@@ -366,21 +343,85 @@ void FunctionTable::print(std::ostream & os) const
     {
         os << "(empty)\n";
     }
-    os << color::white() << "[[ listed " << table.size() << " functions ]]" << color::restore() << "\n";
+    os << color::white() << "[[ listed " << getSize() << " functions ]]" << color::restore() << "\n";
 }
 
-// ================================================================================================
-// TODO Stuff below is still early work in progress...
+// ========================================================
+// TypeTable:
+// ========================================================
+
+TypeTable::TypeTable(Object ** gcListHead)
+{
+    MOON_ASSERT(gcListHead != nullptr);
+
+    // Register the built-ins:
+    auto builtIns = getBuiltInTypeNames();
+    for (int i = 0; builtIns[i].name != nullptr; ++i)
+    {
+        if (!builtIns[i].internalType)
+        {
+            Object * templateObj = nullptr;
+            auto thisTid = addTypeId(builtIns[i].name.get(), builtIns[i].instCb, templateObj, true);
+
+            // Once we added the new entry, we can now update the template
+            // object instance passing to the factory callback this TypeId.
+            if (builtIns[i].instCb)
+            {
+                templateObj = builtIns[i].instCb(thisTid, gcListHead);
+                const_cast<TypeId *>(thisTid)->templateObject = templateObj;
+                templateObj->setUpMembersTable();
+            }
+        }
+    }
+
+    stringTypeId = findTypeId("str");
+    MOON_ASSERT(stringTypeId != nullptr);
+
+    arrayTypeId = findTypeId("array");
+    MOON_ASSERT(arrayTypeId != nullptr);
+}
+
+const TypeId * TypeTable::addTypeId(ConstRcString * name, ObjectFactoryCB instCb,
+                                    const Object * templateObj, const bool isBuiltIn)
+{
+    MOON_ASSERT(!findTypeId(name) && "Type already registered!");
+    // No need to add ref for the name instance held by the type.
+    // The Registry already refs the string, so it is guaranteed
+    // to live for as long as the stored TypeId.
+    auto newTypeId = typeIdPool.allocate();
+    return addInternal(name, construct(newTypeId, { name, instCb, templateObj, isBuiltIn, false }));
+}
+
+const TypeId * TypeTable::addTypeId(const char * name, ObjectFactoryCB instCb,
+                                    const Object * templateObj, const bool isBuiltIn)
+{
+    ConstRcStrUPtr key{ newConstRcString(name) };
+    return addTypeId(key.get(), instCb, templateObj, isBuiltIn);
+}
+
+const TypeId * TypeTable::addTypeAlias(const TypeId * existingType, ConstRcString * aliasName)
+{
+    MOON_ASSERT(existingType != nullptr);
+    auto newEntry = const_cast<TypeId *>(addInternal(aliasName, existingType));
+    newEntry->isTypeAlias = true;
+    return newEntry;
+}
+
+const TypeId * TypeTable::addTypeAlias(const TypeId * existingType, const char * aliasName)
+{
+    ConstRcStrUPtr key{ newConstRcString(aliasName) };
+    return addTypeAlias(existingType, key.get());
+}
 
 void TypeTable::print(std::ostream & os) const
 {
     os << color::white() << "[[ begin type table dump ]]" << color::restore() << "\n";
-    if (!table.empty())
+    if (!isEmpty())
     {
         os << "+--------------------------------+----------+----------+----------+-------+\n";
         os << "| name                           | built-in | alloc-cb | template | alias |\n";
         os << "+--------------------------------+----------+----------+----------+-------+\n";
-        for (auto && entry : table)
+        for (auto && entry : *this)
         {
             const char * builtIn = (entry.second->isBuiltIn      ? "yes" : "no");
             const char * instCb  = (entry.second->createInstance ? "yes" : "no");
@@ -395,10 +436,12 @@ void TypeTable::print(std::ostream & os) const
     {
         os << "(empty)\n";
     }
-    os << color::white() << "[[ listed " << table.size() << " types ]]" << color::restore() << "\n";
+    os << color::white() << "[[ listed " << getSize() << " types ]]" << color::restore() << "\n";
 }
 
-//--------------
+// ========================================================
+// Object:
+// ========================================================
 
 Object::Object(const TypeId * tid, Object ** gcListHead)
     : typeId{ tid }
@@ -470,11 +513,17 @@ std::string Object::getStringRepresentation() const
     const int memberCount = getMemberCount();
 
     // Add the object's own address:
-    finalStr += strPrintF("[@%016llX]\n", static_cast<std::uint64_t>(
-                            reinterpret_cast<std::uintptr_t>(this)));
+    finalStr += strPrintF("[@%016llX]\n", static_cast<UInt64>(
+                          reinterpret_cast<std::uintptr_t>(this)));
 
     finalStr += getTypeName();
-    finalStr += "{\n";
+    finalStr += "{";
+
+    if (getMemberCount() > 0)
+    {
+        finalStr += "\n";
+    }
+
     for (int m = 0; m < memberCount; ++m)
     {
         nameStr = toString(members[m].name);
@@ -490,8 +539,8 @@ std::string Object::getStringRepresentation() const
                              unescapeString(valStr.c_str()) : valStr;
         finalStr += ",\n";
     }
-    finalStr += "}\n";
 
+    finalStr += "}\n";
     return finalStr;
 }
 
@@ -553,26 +602,9 @@ int Object::findMemberIndex(const char * name) const
     return -1;
 }
 
-//--------------
-
-Object * LangStruct::createInstance(const TypeId * tid, Object ** gcListHead)
-{
-    return new LangStruct{ tid, gcListHead };
-}
-Object * LangString::createInstance(const TypeId * tid, Object ** gcListHead)
-{
-    return new LangString{ tid, gcListHead };
-}
-Object * LangArray::createInstance(const TypeId * tid, Object ** gcListHead)
-{
-    return new LangArray{ tid, gcListHead };
-}
-Object * LangEnum::createInstance(const TypeId * tid, Object ** gcListHead)
-{
-    return new LangEnum{ tid, gcListHead };
-}
-
-//--------------
+// ========================================================
+// Runtime Object allocator:
+// ========================================================
 
 Object * newRuntimeObject(const TypeId * tid, Object ** gcListHead, Stack::Slice constructorArgs)
 {
@@ -589,7 +621,207 @@ Object * newRuntimeObject(const TypeId * tid, Object ** gcListHead, Stack::Slice
     return inst;
 }
 
-//--------------
+// ========================================================
+// Script Struct:
+// ========================================================
+
+Object * Struct::createInstance(const TypeId * tid, Object ** gcListHead)
+{
+    return new Struct{ tid, gcListHead };
+}
+
+// ========================================================
+// Script Str:
+// ========================================================
+
+Object * Str::createInstance(const TypeId * tid, Object ** gcListHead)
+{
+    return new Str{ tid, gcListHead };
+}
+
+Str * Str::newFromString(VM & vm, const std::string & str, const bool makeConst)
+{
+    return newFromString(vm, str.c_str(), str.length(), makeConst);
+}
+
+Str * Str::newFromString(VM & vm, const char * cstr, const UInt32 length, const bool makeConst)
+{
+    MOON_ASSERT(cstr != nullptr);
+    auto newStr = static_cast<Str *>(Str::createInstance(vm.runtimeTypes.stringTypeId, &vm.gcListHead));
+
+    // The size of the small internal buffer of a std::string should be more of less the
+    // whole size of the type minus a length and pointer, likely sizeof(size_t) bytes each.
+    constexpr auto minConstStrLen = sizeof(std::string) - (sizeof(std::size_t) * 2);
+
+    // If the string is short enough to fit in the small string buffer of
+    // std::string we ignore the user hint and avoid the extra allocation.
+    if (makeConst && length >= minConstStrLen)
+    {
+        newStr->constString = newConstRcString(cstr, length);
+    }
+    else
+    {
+        if (length != 0)
+        {
+            newStr->mutableString.assign(cstr, length);
+        }
+    }
+
+    return newStr;
+}
+
+Str * Str::newFromStrings(VM & vm, const Str & strA, const Str & strB, const bool makeConst)
+{
+    // Used for concatenating strings with operator +
+    char temp[2048];
+    constexpr int available = arrayLength(temp);
+    const int length = std::snprintf(temp, available, "%s%s", strA.c_str(), strB.c_str());
+
+    if (length < 0 || length >= available)
+    {
+        MOON_RUNTIME_EXCEPTION("buffer overflow concatenating strings!");
+    }
+
+    return newFromString(vm, temp, length, makeConst);
+}
+
+Variant Str::unaryOp(const OpCode op, const Str & str)
+{
+    if (op != OpCode::LogicNot)
+    {
+        MOON_RUNTIME_EXCEPTION("cannot apply unary op " + unaryOpToString(op) + " on string");
+    }
+    //
+    // let foo = ""; // empty string
+    // let foo: str; // null string
+    //
+    // if not foo then
+    //   print("foo is null or empty");
+    // end
+    //
+    Variant result{ Variant::Type::Integer };
+    result.value.asInteger = str.isEmptyString();
+    return result;
+}
+
+Variant Str::binaryOp(const OpCode op, const Str & strA, const Str & strB)
+{
+    Variant result{ Variant::Type::Integer };
+    switch (op)
+    {
+    // Equal comparison:
+    case OpCode::CmpNotEqual :
+        result.value.asInteger = !strA.cmpEqual(strB);
+        break;
+    case OpCode::CmpEqual :
+        result.value.asInteger = strA.cmpEqual(strB);
+        break;
+
+    // Lexicographical comparison:
+    case OpCode::CmpGreaterEqual :
+        result.value.asInteger = (strA.compare(strB) >= 0);
+        break;
+    case OpCode::CmpGreater :
+        result.value.asInteger = (strA.compare(strB) > 0);
+        break;
+    case OpCode::CmpLessEqual :
+        result.value.asInteger = (strA.compare(strB) <= 0);
+        break;
+    case OpCode::CmpLess :
+        result.value.asInteger = (strA.compare(strB) < 0);
+        break;
+
+    // Logic and/or for empty string:
+    case OpCode::LogicOr :
+        result.value.asInteger = (!strA.isEmptyString()) || (!strB.isEmptyString());
+        break;
+    case OpCode::LogicAnd :
+        result.value.asInteger = (!strA.isEmptyString()) && (!strB.isEmptyString());
+        break;
+
+    default :
+        MOON_RUNTIME_EXCEPTION("cannot perform binary op " + binaryOpToString(op) + " on string");
+    } // switch (op)
+
+    return result;
+}
+
+int Str::compare(const Str & other) const noexcept
+{
+    if (isConstString() && other.isConstString())
+    {
+        return cmpRcStrings(constString, other.constString);
+    }
+    return std::strcmp(c_str(), other.c_str());
+}
+
+bool Str::cmpEqual(const Str & other) const noexcept
+{
+    // We can use the optimized hash comparison when testing with ==, !=.
+    if (isConstString() && other.isConstString())
+    {
+        return cmpRcStringsEqual(constString, other.constString);
+    }
+    return std::strcmp(c_str(), other.c_str());
+}
+
+int Str::getStringLength() const noexcept
+{
+    if (isConstString())
+    {
+        return static_cast<int>(constString->length);
+    }
+    return static_cast<int>(mutableString.length());
+}
+
+bool Str::isEmptyString() const noexcept
+{
+    if (isConstString())
+    {
+        return constString->length == 0;
+    }
+    return mutableString.empty();
+}
+
+bool Str::isConstString() const noexcept
+{
+    return constString != nullptr;
+}
+
+const char * Str::c_str() const noexcept
+{
+    return (constString != nullptr) ? constString->chars : mutableString.c_str();
+}
+
+Str::~Str()
+{
+    if (isConstString())
+    {
+        releaseRcString(constString);
+    }
+}
+
+// ========================================================
+// Script Array:
+// ========================================================
+
+Object * Array::createInstance(const TypeId * tid, Object ** gcListHead)
+{
+    return new Array{ tid, gcListHead };
+}
+
+// ========================================================
+// Script Enum:
+// ========================================================
+
+Object * Enum::createInstance(const TypeId * tid, Object ** gcListHead)
+{
+    return new Enum{ tid, gcListHead };
+}
+
+// ========================================================
+// Built-in type names:
+// ========================================================
 
 const BuiltInTypeDesc * getBuiltInTypeNames()
 {
@@ -604,8 +836,8 @@ const BuiltInTypeDesc * getBuiltInTypeNames()
         { ConstRcStrUPtr{ newConstRcString( "any"       ) }, nullptr, false },
         { ConstRcStrUPtr{ newConstRcString( "object"    ) }, nullptr, false },
         { ConstRcStrUPtr{ newConstRcString( "function"  ) }, nullptr, false },
-        { ConstRcStrUPtr{ newConstRcString( "str"       ) }, &LangString::createInstance, false },
-        { ConstRcStrUPtr{ newConstRcString( "array"     ) }, &LangArray::createInstance,  false },
+        { ConstRcStrUPtr{ newConstRcString( "str"       ) }, &Str::createInstance,   false },
+        { ConstRcStrUPtr{ newConstRcString( "array"     ) }, &Array::createInstance, false },
         // Internal types (not actual types usable in code):
         { ConstRcStrUPtr{ newConstRcString( "varargs"   ) }, nullptr, true },
         { ConstRcStrUPtr{ newConstRcString( "void"      ) }, nullptr, true },

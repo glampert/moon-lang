@@ -73,17 +73,17 @@ std::string toString(const SyntaxTreeNode::Type nodeType)
         color::magenta() + std::string("EXPR_UNARY_MINUS")          + color::restore(),
         color::magenta() + std::string("EXPR_UNARY_PLUS")           + color::restore()
     };
-    static_assert(arrayLength(typeNames) == unsigned(SyntaxTreeNode::Type::Count),
+    static_assert(arrayLength(typeNames) == UInt32(SyntaxTreeNode::Type::Count),
                   "Keep this array in sync with the enum declaration!");
 
-    return typeNames[unsigned(nodeType)];
+    return typeNames[UInt32(nodeType)];
 }
 
 std::string toString(const SyntaxTreeNode::Eval evalType)
 {
     static const std::string typeNames[]
     {
-        color::yellow() + std::string("EVAL_UNDEF")   + color::restore(),
+        color::red()    + std::string("EVAL_UNDEF")   + color::restore(),
         color::yellow() + std::string("EVAL_VOID")    + color::restore(),
         color::yellow() + std::string("EVAL_VARARGS") + color::restore(),
         color::yellow() + std::string("EVAL_INT")     + color::restore(),
@@ -96,10 +96,10 @@ std::string toString(const SyntaxTreeNode::Eval evalType)
         color::yellow() + std::string("EVAL_ANY")     + color::restore(),
         color::yellow() + std::string("EVAL_UDT")     + color::restore()
     };
-    static_assert(arrayLength(typeNames) == unsigned(SyntaxTreeNode::Eval::Count),
+    static_assert(arrayLength(typeNames) == UInt32(SyntaxTreeNode::Eval::Count),
                   "Keep this array in sync with the enum declaration!");
 
-    return typeNames[unsigned(evalType)];
+    return typeNames[UInt32(evalType)];
 }
 
 SyntaxTreeNode::Eval evalTypeFromSymbol(const Symbol & sym)
@@ -136,7 +136,7 @@ const Symbol * symbolFromEval(const SymbolTable & symTable, const SyntaxTreeNode
 }
 
 // ========================================================
-// SyntaxTreeNode class methods:
+// SyntaxTreeNode:
 // ========================================================
 
 SyntaxTreeNode::SyntaxTreeNode(const Type type,
@@ -144,7 +144,7 @@ SyntaxTreeNode::SyntaxTreeNode(const Type type,
                                const SyntaxTreeNode * child0,
                                const SyntaxTreeNode * child1,
                                const SyntaxTreeNode * child2,
-                               const SyntaxTreeNode::Eval eval)
+                               const SyntaxTreeNode::Eval eval) noexcept
     : symbol   { sym  }
     , nodeType { type }
     , evalType { eval }
@@ -166,22 +166,29 @@ void SyntaxTreeNode::print(const int level, const int childIndex, std::ostream &
     }
 
     os << prefix << toString(nodeType) << "(" << level << ":" << childIndex << ", ";
-    if (symbol)
+    if (symbol != nullptr)
     {
-        os << "'" << color::magenta() << unescapeString(toString(*symbol).c_str()) << color::restore() << "', ";
+        if (symbol->type == Symbol::Type::StrLiteral)
+        {
+            os << "'" << color::magenta() << unescapeString(toString(*symbol).c_str()) << color::restore() << "', ";
+        }
+        else
+        {
+            os << "'" << color::magenta() << toString(*symbol) << color::restore() << "', ";
+        }
     }
     os << toString(evalType) << ")\n";
 
     if (nodeType == Type::Statement)
     {
-        for (int i = arrayLength(children) - 1; i >= 0; --i)
+        for (Int32 i = arrayLength(children) - 1; i >= 0; --i)
         {
             if (children[i]) { children[i]->print(level + 1, i, os); }
         }
     }
     else
     {
-        for (unsigned i = 0; i < arrayLength(children); ++i)
+        for (UInt32 i = 0; i < arrayLength(children); ++i)
         {
             if (children[i]) { children[i]->print(level + 1, i, os); }
         }
@@ -189,7 +196,7 @@ void SyntaxTreeNode::print(const int level, const int childIndex, std::ostream &
 }
 
 // ========================================================
-// SyntaxTree class methods:
+// SyntaxTree:
 // ========================================================
 
 SyntaxTreeNode * SyntaxTree::newNode(const SyntaxTreeNode::Type type,

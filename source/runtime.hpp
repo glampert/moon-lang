@@ -12,8 +12,13 @@
 
 #include "common.hpp"
 #include "opcodes.hpp"
+#include "registry.hpp"
 #include "pool.hpp"
 #include <vector>
+
+#ifndef MOON_TYPEID_POOL_GRANULARITY
+    #define MOON_TYPEID_POOL_GRANULARITY 256
+#endif // MOON_TYPEID_POOL_GRANULARITY
 
 namespace moon
 {
@@ -29,7 +34,7 @@ class  Object;
 
 struct Variant final
 {
-    enum class Type : std::uint8_t
+    enum class Type : UInt8
     {
         Null = 0,
         Integer,
@@ -47,9 +52,9 @@ struct Variant final
 
     union Value
     {
-        LangLong         asInteger;
-        LangFloat        asFloat;  //FIXME should use a double instead. sizeof(Variant) already = 16
-        const char     * asString; //TODO  replace with LangString*
+        Int64            asInteger;
+        Float64          asFloat;
+        const char     * asString; //TODO  replace with Str* at some point
         const Function * asFunction;
         const TypeId   * asTypeId;
         Object         * asObject;
@@ -75,12 +80,12 @@ struct Variant final
     // Miscellaneous helpers:
     //
 
-    LangLong getAsInteger() const
+    Int64 getAsInteger() const
     {
         MOON_ASSERT(type == Type::Integer);
         return value.asInteger;
     }
-    LangFloat getAsFloat() const
+    Float64 getAsFloat() const
     {
         MOON_ASSERT(type == Type::Float);
         return value.asFloat;
@@ -210,11 +215,11 @@ public:
     class Slice final
     {
     public:
-        Slice() noexcept // Null slice
+        Slice() noexcept // Null/empty slice
             : data { nullptr }
             , size { 0 }
         { }
-        Slice(Variant * d, const int s) noexcept
+        Slice(Variant * d, const int s)
             : data { d }
             , size { s }
         {
@@ -224,12 +229,18 @@ public:
 
         const Variant & operator[](const int index) const
         {
-            if (index < 0 || index >= size) { MOON_RUNTIME_EXCEPTION("stack slice index out-of-bounds!"); }
+            if (index < 0 || index >= size)
+            {
+                MOON_RUNTIME_EXCEPTION("stack slice index out-of-bounds!");
+            }
             return data[index];
         }
         Variant & operator[](const int index)
         {
-            if (index < 0 || index >= size) { MOON_RUNTIME_EXCEPTION("stack slice index out-of-bounds!"); }
+            if (index < 0 || index >= size)
+            {
+                MOON_RUNTIME_EXCEPTION("stack slice index out-of-bounds!");
+            }
             return data[index];
         }
 
@@ -304,16 +315,15 @@ struct Function final
         AddCallerInfo = 1 << 2  // Ask the compiler to add source filename and line num to every call.
     };
 
-    static constexpr std::uint32_t TargetNative = 0;  // Use this for jumpTarget when registering a native function.
-    static constexpr std::uint32_t MaxArguments = 64; // So we can have an allocation hint. This value is enforced upon registration.
+    static constexpr UInt32 TargetNative = 0;  // Use this for jumpTarget when registering a native function.
+    static constexpr UInt32 MaxArguments = 64; // So we can have an allocation hint. This value is enforced upon registration.
 
-    //TODO replace name with ConstRcString
-    const char * const    name;           // Full function name for debug printing.
+    ConstRcString       * name;           // Full function name for debug printing.
     const Variant::Type * returnType;     // Null if the function returns nothing (void), 1 return type otherwise.
     const Variant::Type * argumentTypes;  // May be null for a function taking 0 arguments or to disable validation for varargs.
-    const std::uint32_t   argumentCount;  // ditto.
-    std::uint32_t         jumpTarget;     // If nonzero nativeCallback is null and this is a script function.
-    std::uint32_t         flags;          // Miscellaneous additional flags. See the above bit-field enum. May be zero.
+    const UInt32          argumentCount;  // ditto.
+    UInt32                jumpTarget;     // If nonzero nativeCallback is null and this is a script function.
+    UInt32                flags;          // Miscellaneous additional flags. See the above bit-field enum. May be zero.
     NativeCB              nativeCallback; // Not null if an external native function. jumpTarget must be zero.
 
     // invoke() calls the native handler or jumps to the first native instruction.
@@ -344,46 +354,35 @@ struct Function final
 // Runtime Function Table/Registry:
 // ========================================================
 
-//TODO replace with Registry template
 class FunctionTable final
+    : public Registry<const Function *>
 {
 public:
 
-    using FuncTable = HashTableCStr<const Function *>;
-
-     FunctionTable() = default;
+    FunctionTable() = default;
     ~FunctionTable();
 
-    // Not copyable.
-    FunctionTable(const FunctionTable &) = delete;
-    FunctionTable & operator = (const FunctionTable &) = delete;
-
     // Find a function by its fully qualified name (including module) or returns null.
-    const Function * findFunction(const char * name) const;
+    const Function * findFunction(ConstRcString * const name) const { return findInternal(name); }
+    const Function * findFunction(const char * name) const          { return findInternal(name); }
 
     // Add unique function to the table. Asserts if a function with the same name already exists.
+    const Function * addFunction(ConstRcString * funcName, const Variant::Type * returnType,
+                                 const Variant::Type * argTypes, UInt32 argCount, UInt32 jumpTarget,
+                                 UInt32 flags, Function::NativeCB nativeCallback);
+
+    // Register from char* name string. Same as above, but allocates a new RcString.
     const Function * addFunction(const char * funcName, const Variant::Type * returnType,
-                                 const Variant::Type * argTypes, std::uint32_t argCount,
-                                 std::uint32_t jumpTarget, std::uint32_t flags,
-                                 Function::NativeCB nativeCallback);
+                                 const Variant::Type * argTypes, UInt32 argCount, UInt32 jumpTarget,
+                                 UInt32 flags, Function::NativeCB nativeCallback);
 
-    // Updates the jumpTarget for a script function.
+    // Updates the jumpTarget for a script-defined function.
     // The compiler needs to call this to update the functions defined during parsing.
-    void setJumpTargetFor(const char * funcName, std::uint32_t newTarget);
-
-    // Miscellaneous queries:
-    bool isEmpty() const noexcept;
-    std::size_t getSize() const noexcept;
+    void setJumpTargetFor(ConstRcString * const funcName, UInt32 newTarget);
+    void setJumpTargetFor(const char * funcName, UInt32 newTarget);
 
     // Print the whole table in table format (no pun intended).
     void print(std::ostream & os) const;
-
-private:
-
-    const char * cloneCString(const char * sourcePtr);
-
-    // Hash table indexed by the full function name.
-    FuncTable table;
 };
 
 inline std::ostream & operator << (std::ostream & os, const FunctionTable & funcTable)
@@ -395,116 +394,9 @@ inline std::ostream & operator << (std::ostream & os, const FunctionTable & func
 // Adds all the built-in native function entries to a FuncTable.
 void registerNativeBuiltInFunctions(FunctionTable & funcTable);
 
-// ================================================================================================
-// TODO Stuff below is still early work in progress...
-
-template
-<
-    typename T,
-    typename M = HashTableConstRcStr<T>
->
-class Registry
-{
-public:
-
-    using StoredType     = T;
-    using TableType      = M;
-    using TableMutIter   = typename TableType::iterator;
-    using TableConstIter = typename TableType::const_iterator;
-
-    // Not copyable.
-    Registry(const Registry &) = delete;
-    Registry & operator = (const Registry &) = delete;
-
-    // Accessors:
-    bool isEmpty() const noexcept { return table.empty(); }
-    int  getSize() const noexcept { return static_cast<int>(table.size()); }
-
-    TableMutIter begin() noexcept { return table.begin(); }
-    TableMutIter end()   noexcept { return table.end();   }
-
-    TableConstIter begin() const noexcept { return table.cbegin(); }
-    TableConstIter end()   const noexcept { return table.cend();   }
-
-protected:
-
-    // The registry of objects indexed by a key.
-    TableType table;
-
-    // Registry is not meant to be used as a standalone type.
-    // Its purpose is to serve as a base class for table-like
-    // helper containers used internally by the runtime and compiler.
-    Registry() = default;
-
-    // Release the ref counted keys:
-    ~Registry()
-    {
-        for (auto && entry : table)
-        {
-            releaseRcString(entry.first);
-        }
-    }
-
-    //
-    // Add unique:
-    //
-
-    StoredType addInternal(ConstRcString * key, StoredType val)
-    {
-        MOON_ASSERT(isRcStringValid(key));
-
-        const auto result = table.insert(std::make_pair(key, val));
-        if (result.second == false)
-        {
-            MOON_RUNTIME_EXCEPTION("registry key collision!");
-        }
-
-        addRcStringRef(key); // Reference the key now stored in the table.
-        return result.first->second;
-    }
-
-    StoredType addInternal(const char * key, StoredType val)
-    {
-        // This one allocates a new ref string from the C-string.
-        ConstRcStrUPtr rstr{ newConstRcString(key) };
-        return addInternal(rstr.get(), val);
-    }
-
-    //
-    // Lookup by key:
-    //
-
-    StoredType findInternal(ConstRcString * const key) const
-    {
-        MOON_ASSERT(isRcStringValid(key));
-
-        const auto iter = table.find(key);
-        if (iter != std::end(table))
-        {
-            return iter->second;
-        }
-
-        return StoredType{}; // Not found.
-    }
-
-    StoredType findInternal(const char * key) const
-    {
-        // We can get away with a cheap temp because find()
-        // will never add ref to the input string.
-        ConstRcString tempRcStr{
-        /* chars    = */ key,
-        /* length   = */ static_cast<std::uint32_t>(std::strlen(key)),
-        /* hashVal  = */ hashCString(key),
-        /* refCount = */ 1 };
-        return findInternal(&tempRcStr);
-    }
-};
-
-//--------------
-
-#ifndef MOON_TYPEID_POOL_GRANULARITY
-    #define MOON_TYPEID_POOL_GRANULARITY 256
-#endif // MOON_TYPEID_POOL_GRANULARITY
+// ========================================================
+// struct BuiltInTypeDesc:
+// ========================================================
 
 using ObjectFactoryCB = Object * (*)(const TypeId *, Object **);
 
@@ -514,79 +406,49 @@ struct BuiltInTypeDesc final
     ObjectFactoryCB instCb;
     const bool internalType; // Tells if this entry goes into the TypeTable.
 };
+
+// Return an array with a null entry terminating it.
 const BuiltInTypeDesc * getBuiltInTypeNames();
+
+// ========================================================
+// struct TypeId:
+// ========================================================
 
 struct TypeId final
 {
     ConstRcString * name;           // Unique type name within a program.
     ObjectFactoryCB createInstance; // Factory callback. May be null. Some built-ins don't have it.
-    const Object  * templateObject; // List of members. We just use the types and names.
+    const Object  * templateObject; // For a list of members. We just use the types and names.
     bool            isBuiltIn;      // int, float, string, array, etc.
     bool            isTypeAlias;    // Also true if this type was aliased by some other.
 };
+
+// ========================================================
+// Runtime Type Table/Registry:
+// ========================================================
 
 class TypeTable final
     : public Registry<const TypeId *>
 {
 public:
 
-    explicit TypeTable(Object ** gcListHead)
-    {
-        MOON_ASSERT(gcListHead != nullptr);
+    explicit TypeTable(Object ** gcListHead);
 
-        // Register the built-ins:
-        auto builtIns = getBuiltInTypeNames();
-        for (int i = 0; builtIns[i].name != nullptr; ++i)
-        {
-            if (!builtIns[i].internalType)
-            {
-                const Object * templateObj = nullptr;
-                auto thisTid = addTypeId(builtIns[i].name.get(), builtIns[i].instCb, templateObj, true);
-
-                // Once we added the new entry, we can now update the template
-                // object instance passing to the factory callback this TypeId.
-                if (builtIns[i].instCb)
-                {
-                    templateObj = builtIns[i].instCb(thisTid, gcListHead);
-                    const_cast<TypeId *>(thisTid)->templateObject = templateObj;
-                }
-            }
-        }
-    }
+    // Cached ids for the common runtime classes:
+    const TypeId * stringTypeId;
+    const TypeId * arrayTypeId;
 
     // Finds an already registered TypeId by name or returns null if nothing is found.
     const TypeId * findTypeId(ConstRcString * const name) const { return findInternal(name); }
     const TypeId * findTypeId(const char * name) const          { return findInternal(name); }
 
     // Add unique TypeId to the table. Asserts if an entry with the same name already exists.
-    const TypeId * addTypeId(ConstRcString * name, ObjectFactoryCB instCb, const Object * templateObj, const bool isBuiltIn)
-    {
-        MOON_ASSERT(!findTypeId(name) && "Type already registered!");
+    const TypeId * addTypeId(ConstRcString * name, ObjectFactoryCB instCb, const Object * templateObj, bool isBuiltIn);
+    const TypeId * addTypeId(const char * name, ObjectFactoryCB instCb, const Object * templateObj, bool isBuiltIn);
 
-        // No need to add ref for the name instance held by the type.
-        // The Registry already refs the string, so it is guaranteed
-        // to live for as long as the stored TypeId.
-        auto newTypeId = typeIdPool.allocate();
-        return addInternal(name, construct(newTypeId, { name, instCb, templateObj, isBuiltIn, false }));
-    }
-    const TypeId * addTypeId(const char * name, ObjectFactoryCB instCb, const Object * templateObj, const bool isBuiltIn)
-    {
-        ConstRcStrUPtr key{ newConstRcString(name) };
-        return addTypeId(key.get(), instCb, templateObj, isBuiltIn);
-    }
-
-    const TypeId * addTypeAlias(const TypeId * existingType, ConstRcString * aliasName)
-    {
-        MOON_ASSERT(existingType != nullptr);
-        auto newEntry = const_cast<TypeId *>(addInternal(aliasName, existingType));
-        newEntry->isTypeAlias = true;
-        return newEntry;
-    }
-    const TypeId * addTypeAlias(const TypeId * existingType, const char * aliasName)
-    {
-        ConstRcStrUPtr key{ newConstRcString(aliasName) };
-        return addTypeAlias(existingType, key.get());
-    }
+    // A type alias just re-registers a TypeId with a new name key.
+    const TypeId * addTypeAlias(const TypeId * existingType, ConstRcString * aliasName);
+    const TypeId * addTypeAlias(const TypeId * existingType, const char * aliasName);
 
     // Print the whole table in table format (no pun intended).
     void print(std::ostream & os) const;
@@ -603,9 +465,10 @@ inline std::ostream & operator << (std::ostream & os, const TypeTable & typeTabl
     return os;
 }
 
-//--------------
+// ========================================================
+// Runtime Base Object:
+// ========================================================
 
-// base for structured types
 class Object
 {
 public:
@@ -620,9 +483,9 @@ public:
     // Link in the list of dynamically allocated GC objects.
     Object * next;
 
-    // List of members. Since objects are generally small,
-    // a plain array+linear-search should be faster and
-    // more memory efficient than a full-blown hash-table.
+    // List of members. Since objects are generally small, a plain
+    // array+linear-search should be faster and more memory efficient
+    // than a full-blown hash-table on the average case.
     struct Member final
     {
         ConstRcString * name;
@@ -700,64 +563,101 @@ public:
     }
 };
 
-//--------------
-
+// Allocator used by the NEW_OBJ instruction.
 Object * newRuntimeObject(const TypeId * tid, Object ** gcListHead, Stack::Slice constructorArgs);
 
-//--------------
-
-// can be stored directly into a Variant, so we don't make it an Object
-struct LangRange final
-{
-    LangInt start;
-    LangInt end;
-};
+// ================================================================================================
+// Runtime classes:
+// ================================================================================================
 
 //
 //NOTE some of these object types will be allocated quite often.
 // Should we use a couple memory pools to reduce fragmentation?
 // Actually, could use a single memory pool sized for the largest type?
 // union {
-//   LangStruct,
-//   LangString,
-//   LangArray,
-//   LangEnum
+//   Struct,
+//   Str,
+//   Array,
+//   Enum
 // }
 // ???
 //
 
-//--------------
+// ========================================================
+// Script Struct:
+// ========================================================
 
-struct LangStruct final
+class Struct final
     : public Object
 {
+public:
+
     using Object::Object;
     static Object * createInstance(const TypeId * tid, Object ** gcListHead);
 };
 
-//--------------
+// ========================================================
+// Script Str:
+// ========================================================
 
-struct LangString final
+class Str final
     : public Object
 {
+public:
+
     using Object::Object;
     static Object * createInstance(const TypeId * tid, Object ** gcListHead);
+
+    static Str * newFromString(VM & vm, const std::string & str, bool makeConst);
+    static Str * newFromString(VM & vm, const char * cstr, UInt32 length, bool makeConst);
+    static Str * newFromStrings(VM & vm, const Str & strA, const Str & strB, bool makeConst);
+
+    static Variant unaryOp(OpCode op, const Str & str);
+    static Variant binaryOp(OpCode op, const Str & strA, const Str & strB);
+
+    int  compare(const Str & other)  const noexcept;
+    bool cmpEqual(const Str & other) const noexcept;
+
+    int  getStringLength() const noexcept;
+    bool isEmptyString()   const noexcept;
+    bool isConstString()   const noexcept;
+    const char * c_str()   const noexcept;
+
+    ~Str();
+
+private:
+
+    // When the const ref string is null we are
+    // using the C++ string, and vice versa.
+    ConstRcString * constString = nullptr;
+    std::string     mutableString;
 };
 
-//--------------
+// ========================================================
+// Script Array:
+// ========================================================
 
-struct LangArray final
+class Array final
     : public Object
 {
+public:
+
     using Object::Object;
     static Object * createInstance(const TypeId * tid, Object ** gcListHead);
+
+    // small array optimization?             - probably
+    // array concatenation with operator +?  - probably
 };
 
-//--------------
+// ========================================================
+// Script Enum:
+// ========================================================
 
-struct LangEnum final
+class Enum final
     : public Object
 {
+public:
+
     using Object::Object;
     static Object * createInstance(const TypeId * tid, Object ** gcListHead);
 };

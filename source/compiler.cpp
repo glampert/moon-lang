@@ -15,8 +15,21 @@ namespace moon
 {
 
 // ========================================================
-// Local helpers:
+// Local helper macros for error handling:
 // ========================================================
+
+#if MOON_ENABLE_ASSERT
+
+#define EXPECT_CHILD_AT_INDEX(node, childIndex)                              \
+    do                                                                       \
+    {                                                                        \
+        MOON_ASSERT((node) != nullptr);                                      \
+        if ((node)->getChild((childIndex)) == nullptr)                       \
+        {                                                                    \
+            MOON_INTERNAL_EXCEPTION("expected node for child index " +       \
+                                    toString((childIndex)));                 \
+        }                                                                    \
+    } while (0)
 
 #define EXPECT_NUM_CHILDREN(node, expected)                                  \
     do                                                                       \
@@ -32,31 +45,40 @@ namespace moon
         }                                                                    \
     } while (0)
 
-#define EXPECT_CHILD_AT_INDEX(node, childIndex)                        \
-    do                                                                 \
-    {                                                                  \
-        MOON_ASSERT((node) != nullptr);                                \
-        if ((node)->getChild((childIndex)) == nullptr)                 \
-        {                                                              \
-            MOON_INTERNAL_EXCEPTION("expected node for child index " + \
-                                    toString((childIndex)));           \
-        }                                                              \
+#define EXPECT_SYMBOL(node)                                                  \
+    do                                                                       \
+    {                                                                        \
+        MOON_ASSERT((node) != nullptr);                                      \
+        if ((node)->symbol == nullptr)                                       \
+        {                                                                    \
+            MOON_INTERNAL_EXCEPTION("expected symbol for node " +            \
+                                    toString((node)->nodeType));             \
+        }                                                                    \
     } while (0)
 
-#define EXPECT_SYMBOL(node)                                       \
-    do                                                            \
-    {                                                             \
-        MOON_ASSERT((node) != nullptr);                           \
-        if ((node)->getSymbol() == nullptr)                       \
-        {                                                         \
-            MOON_INTERNAL_EXCEPTION("expected symbol for node " + \
-                                    toString((node)->getType())); \
-        }                                                         \
-    } while (0)
+#else // !MOON_ENABLE_ASSERT
+
+#define EXPECT_CHILD_AT_INDEX(node, childIndex)
+#define EXPECT_NUM_CHILDREN(node, expected)
+#define EXPECT_SYMBOL(node)
+
+#endif // MOON_ENABLE_ASSERT
 
 // ========================================================
+// Intermediate code generator context:
+// ========================================================
 
-static std::uint32_t getProgCodeIndex(const InstrMap & instrMapping, const IntermediateInstr * instr)
+struct CodeGen final
+{
+    //TODO move all the transient compilation states into this.
+    //The only thing Compiler should hold on to is the SyntaxTree, SymbolTable
+    //the instrPool, instr list pointers and maybe the Parser&Lexer.
+    //
+    //This can then be declared locally in the compile() method.
+    //
+};
+
+static UInt32 getProgCodeIndex(const InstrMap & instrMapping, const IntermediateInstr * instr)
 {
     MOON_ASSERT(instr != nullptr);
 
@@ -68,7 +90,7 @@ static std::uint32_t getProgCodeIndex(const InstrMap & instrMapping, const Inter
     return entry->second;
 }
 
-static std::uint32_t getProgDataIndex(const DataMap & dataMapping, const Symbol * sym)
+static UInt32 getProgDataIndex(const DataMap & dataMapping, const Symbol * sym)
 {
     MOON_ASSERT(sym != nullptr);
 
@@ -82,7 +104,7 @@ static std::uint32_t getProgDataIndex(const DataMap & dataMapping, const Symbol 
 
 static Variant::Type varTypeForNodeEval(const Compiler & compiler, const SyntaxTreeNode * node)
 {
-    const auto eval = node->getEval();
+    const auto eval = node->evalType;
     switch (eval)
     {
     case SyntaxTreeNode::Eval::Int    : return Variant::Type::Integer;
@@ -92,7 +114,7 @@ static Variant::Type varTypeForNodeEval(const Compiler & compiler, const SyntaxT
     case SyntaxTreeNode::Eval::String : return Variant::Type::String;
     case SyntaxTreeNode::Eval::UDT    :
         {
-            const Symbol * symbol = node->getSymbol();
+            const Symbol * symbol = node->symbol;
             if (symbol == nullptr)
             {
                 symbol = node->getChildSymbol(1);
@@ -104,11 +126,11 @@ static Variant::Type varTypeForNodeEval(const Compiler & compiler, const SyntaxT
     } // switch (eval)
 }
 
-static std::uint32_t addSymbolToProgData(VM::DataVector & progData,
-                                         FunctionTable & funcTable,
-                                         TypeTable & typeTable,
-                                         const Symbol & sym,
-                                         const Variant::Type type)
+static UInt32 addSymbolToProgData(VM::DataVector & progData,
+                                  FunctionTable & funcTable,
+                                  TypeTable & typeTable,
+                                  const Symbol & sym,
+                                  const Variant::Type type)
 {
     Variant var{}; // Default initialized to null.
 
@@ -142,7 +164,7 @@ static std::uint32_t addSymbolToProgData(VM::DataVector & progData,
     }
 
     progData.push_back(var);
-    return static_cast<std::uint32_t>(progData.size() - 1);
+    return static_cast<UInt32>(progData.size() - 1);
 }
 
 static void printIntermediateInstrListHelper(const IntermediateInstr * head, std::ostream & os)
@@ -152,7 +174,7 @@ static void printIntermediateInstrListHelper(const IntermediateInstr * head, std
     int printedItems = 0;
     if (head != nullptr)
     {
-        os << color::white() << "opcode count: " << static_cast<unsigned>(OpCode::Count)
+        os << color::white() << "opcode count: " << static_cast<UInt32>(OpCode::Count)
            << color::restore() << "\n";
 
         for (auto instr = head; instr != nullptr; instr = instr->next)
@@ -432,7 +454,7 @@ static IntermediateInstr * emitForLoop(Compiler & compiler, const SyntaxTreeNode
     EXPECT_CHILD_AT_INDEX(root, 1);
     EXPECT_SYMBOL(root->getChild(0));
 
-    auto forIndex = root->getChild(0)->getSymbol();
+    auto forIndex = root->getChild(0)->symbol;
     auto forInit  = traverseTreeRecursive(compiler, root->getChild(1));
     auto forPrep  = compiler.newInstruction(OpCode::ForLoopPrep, forIndex);
     auto forTest  = compiler.newInstruction(OpCode::ForLoopTest, forIndex);
@@ -485,33 +507,55 @@ static IntermediateInstr * emitUnaryOp(Compiler & compiler, const SyntaxTreeNode
     return linkInstr(argument, operation);
 }
 
-// The left-hand-side operand flag is set to true for the
-// compound op+store opcodes, e.g.: AddStore, SubStore, etc.
-// Those must also reference the target symbol that is to receive
-// the result of the operation.
-template<OpCode OP, bool lhsOperand = false>
+template<OpCode OP>
 static IntermediateInstr * emitBinaryOp(Compiler & compiler, const SyntaxTreeNode * root)
 {
     EXPECT_NUM_CHILDREN(root, 2);
     auto arg0 = traverseTreeRecursive(compiler, root->getChild(0));
     auto arg1 = traverseTreeRecursive(compiler, root->getChild(1));
-    auto operation = compiler.newInstruction(OP, lhsOperand ? root->getChild(0)->getSymbol() : nullptr);
+    auto operation = compiler.newInstruction(OP);
     return linkInstr(linkInstr(arg0, arg1), operation);
+}
+
+template<OpCode OP>
+static IntermediateInstr * emitCompoundBinaryOp(Compiler & compiler, const SyntaxTreeNode * root)
+{
+    EXPECT_NUM_CHILDREN(root, 2);
+    EXPECT_SYMBOL(root->getChild(0));
+
+    auto targetSymbol = root->getChild(0)->symbol;
+    OpCode storeOp = OpCode::StoreGlob;
+    UInt16 paramIdx = 0;
+
+    if (targetSymbol->type == Symbol::Type::Identifier &&
+        compiler.symbolIsFunctionLocal(targetSymbol, paramIdx))
+    {
+        storeOp = OpCode::StoreLocal;
+    }
+
+    auto arg0 = traverseTreeRecursive(compiler, root->getChild(0));
+    auto arg1 = traverseTreeRecursive(compiler, root->getChild(1));
+
+    auto binOpInstr   = compiler.newInstruction(OP);
+    auto storeOpInstr = compiler.newInstruction(storeOp, targetSymbol);
+    storeOpInstr->paramIdx = paramIdx;
+
+    return linkInstr(linkInstr(arg0, arg1), linkInstr(binOpInstr, storeOpInstr));
 }
 
 static IntermediateInstr * emitLoad(Compiler & compiler, const SyntaxTreeNode * root)
 {
     EXPECT_SYMBOL(root);
-    auto symbol = root->getSymbol();
+    auto symbol = root->symbol;
 
     OpCode op = OpCode::LoadGlob;
-    std::uint16_t paramIdx = 0;
+    UInt16 paramIdx = 0;
 
     // Booleans are converted to integer (0=false, 1=true).
     if (symbol->type == Symbol::Type::BoolLiteral)
     {
         const char * symVal = (symbol->value.asBoolean ? "1" : "0");
-        symbol = compiler.symTable.findIntLiteral(symVal); // Note: Relies on the 0,1 literals being always defined build-ins
+        symbol = compiler.symTable.findSymbol(symVal); // Note: Relies on the 0,1 literals being always defined build-ins
     }
     else if (symbol->type == Symbol::Type::Identifier)
     {
@@ -578,9 +622,9 @@ static void collectMemberRefs(std::vector<const Symbol *> & memberList, const Sy
     collectMemberRefs(memberList, root->getChild(0));
     collectMemberRefs(memberList, root->getChild(1));
 
-    if (root->getSymbol() != nullptr)
+    if (root->symbol != nullptr)
     {
-        memberList.push_back(root->getSymbol());
+        memberList.push_back(root->symbol);
     }
 }
 
@@ -603,7 +647,7 @@ static IntermediateInstr * setUpMemberOffsetLoadChain(Compiler & compiler, const
         }
 
         // [0:1] is the first obj.member pair. A chain might follow.
-        for (unsigned i = 2; i < compiler.memberRefList.size(); ++i)
+        for (UInt32 i = 2; i < compiler.memberRefList.size(); ++i)
         {
             MOON_ASSERT(lastMemberTypeId != nullptr);
             const Symbol * memSymbol = compiler.memberRefList[i];
@@ -634,12 +678,12 @@ static IntermediateInstr * emitStore(Compiler & compiler, const SyntaxTreeNode *
 {
     EXPECT_NUM_CHILDREN(root, 2);
 
-    unsigned numMemberOffsets = 0;
-    const Symbol * objSymbol  = nullptr;
-    Variant::Type symbType    = Variant::Type::Null;
+    UInt32 numMemberOffsets  = 0;
+    const Symbol * objSymbol = nullptr;
+    Variant::Type symbType   = Variant::Type::Null;
 
     compiler.memberRefList.clear();
-    if (root->getChild(0)->getType() == SyntaxTreeNode::Type::ExprMemberRef)
+    if (root->getChild(0)->nodeType == SyntaxTreeNode::Type::ExprMemberRef)
     {
         collectMemberRefs(compiler.memberRefList, root->getChild(0));
         MOON_ASSERT(compiler.memberRefList.size() >= 2); // obj.member pair at least
@@ -654,7 +698,7 @@ static IntermediateInstr * emitStore(Compiler & compiler, const SyntaxTreeNode *
     }
 
     // Don't enter if doing a obj.member store
-    if (root->getEval() == SyntaxTreeNode::Eval::Undefined && numMemberOffsets == 0)
+    if (root->evalType == SyntaxTreeNode::Eval::Undefined && numMemberOffsets == 0)
     {
         // Assignments from a local/global var
         const Symbol * lhsSymbol = root->getChildSymbol(1);
@@ -684,7 +728,7 @@ static IntermediateInstr * emitStore(Compiler & compiler, const SyntaxTreeNode *
     }
 
     OpCode op;
-    std::uint16_t paramIdx = 0;
+    UInt16 paramIdx = 0;
     IntermediateInstr * memOffsetInstr = nullptr;
     IntermediateInstr * argument = traverseTreeRecursive(compiler, root->getChild(1));
 
@@ -729,7 +773,7 @@ static IntermediateInstr * emitStore(Compiler & compiler, const SyntaxTreeNode *
     operation->paramIdx = paramIdx;
 
     // Storing from the return value of a function references the Return Value Register (RVR).
-    if (root->getChild(1)->getType() == SyntaxTreeNode::Type::ExprFuncCall)
+    if (root->getChild(1)->nodeType == SyntaxTreeNode::Type::ExprFuncCall)
     {
         auto getRVR = compiler.newInstruction(OpCode::LoadRVR);
         return linkInstr(linkInstr(argument, memOffsetInstr), linkInstr(getRVR, operation));
@@ -824,7 +868,7 @@ static void countArgsRecursive(const SyntaxTreeNode * root, int & argCountOut, C
 template<OpCode OP, Variant::Type OperandType>
 static IntermediateInstr * emitParamChain(Compiler & compiler, const SyntaxTreeNode * root)
 {
-    auto operation = compiler.newInstruction(OP, root->getSymbol(), OperandType);
+    auto operation = compiler.newInstruction(OP, root->symbol, OperandType);
 
     // We have to keep track of the visited nodes to be able to properly
     // compute the argument counts. Some nodes will be visited more than
@@ -866,8 +910,8 @@ static IntermediateInstr * emitParamChain(Compiler & compiler, const SyntaxTreeN
 static IntermediateInstr * emitFunctionDecl(Compiler & compiler, const SyntaxTreeNode * root)
 {
     EXPECT_SYMBOL(root); // Func name
-    auto funcStart = compiler.newInstruction(OpCode::FuncStart, root->getSymbol(), Variant::Type::Function);
-    auto funcEnd   = compiler.newInstruction(OpCode::FuncEnd, root->getSymbol());
+    auto funcStart = compiler.newInstruction(OpCode::FuncStart, root->symbol, Variant::Type::Function);
+    auto funcEnd   = compiler.newInstruction(OpCode::FuncEnd, root->symbol);
 
     // Resolve the function body if any. Parameter list and return type are not relevant here.
     compiler.beginFunction(funcEnd, root);
@@ -893,7 +937,7 @@ static IntermediateInstr * emitReturn(Compiler & compiler, const SyntaxTreeNode 
         // We only need to set the Return Value Register when the return
         // expression is not itself another call. If it is a call, the
         // leaf function in the call tree will set the register.
-        if (root->getChild(0)->getType() != SyntaxTreeNode::Type::ExprFuncCall)
+        if (root->getChild(0)->nodeType != SyntaxTreeNode::Type::ExprFuncCall)
         {
             auto setRVR = compiler.newInstruction(OpCode::StoreRVR);
             return linkInstr(retExpr, linkInstr(setRVR, retJump));
@@ -921,25 +965,25 @@ static IntermediateInstr * emitNewVar(Compiler & compiler, const SyntaxTreeNode 
     {
         // We just want 'object' for the NEW_VAR instruction.
         // If it is a dynamic object, the NEW_OBJ instr handles the type.
-        if (root->getChild(1)->getEval() == SyntaxTreeNode::Eval::UDT)
+        if (root->getChild(1)->evalType == SyntaxTreeNode::Eval::UDT)
         {
             typeSymbol = compiler.symTable.findSymbol("object");
         }
         else
         {
-            typeSymbol = root->getChild(1)->getSymbol();
+            typeSymbol = root->getChild(1)->symbol;
         }
     }
 
     if (typeSymbol == nullptr)
     {
-        typeSymbol = symbolFromEval(compiler.symTable, root->getEval());
-        if (root->getEval() == SyntaxTreeNode::Eval::UDT)
+        typeSymbol = symbolFromEval(compiler.symTable, root->evalType);
+        if (root->evalType == SyntaxTreeNode::Eval::UDT)
         {
             // Find out the exact type of the UDT by looking at the constructor call:
             auto initExpr = root->getChild(0);
             MOON_ASSERT(initExpr != nullptr && "Expected a constructor call!");
-            objectTypeSymbol = initExpr->getSymbol();
+            objectTypeSymbol = initExpr->symbol;
         }
     }
 
@@ -955,9 +999,9 @@ static IntermediateInstr * emitNewVar(Compiler & compiler, const SyntaxTreeNode 
         argumentCount = 1;
     }
 
-    const Symbol * symbol = root->getSymbol();
+    const Symbol * symbol = root->symbol;
     OpCode op = OpCode::StoreGlob;
-    std::uint16_t paramIdx = 0;
+    UInt16 paramIdx = 0;
 
     if (compiler.symbolIsFunctionLocal(symbol, paramIdx)) // A local variable or function parameter?
     {
@@ -1099,23 +1143,23 @@ static const EmitInstrForNodeCB emitInstrCallbacks[]
     &emitBinaryOp<OpCode::Mod>,                             // ExprModulo
     &emitBinaryOp<OpCode::Div>,                             // ExprDivide
     &emitBinaryOp<OpCode::Mul>,                             // ExprMultiply
-    &emitBinaryOp<OpCode::SubStore, true>,                  // ExprSubAssign
-    &emitBinaryOp<OpCode::AddStore, true>,                  // ExprAddAssign
-    &emitBinaryOp<OpCode::ModStore, true>,                  // ExprModAssign
-    &emitBinaryOp<OpCode::DivStore, true>,                  // ExprDivAssign
-    &emitBinaryOp<OpCode::MulStore, true>,                  // ExprMulAssign
+    &emitCompoundBinaryOp<OpCode::Sub>,                     // ExprSubAssign
+    &emitCompoundBinaryOp<OpCode::Add>,                     // ExprAddAssign
+    &emitCompoundBinaryOp<OpCode::Mod>,                     // ExprModAssign
+    &emitCompoundBinaryOp<OpCode::Div>,                     // ExprDivAssign
+    &emitCompoundBinaryOp<OpCode::Mul>,                     // ExprMulAssign
     &emitUnaryOp<OpCode::Negate>,                           // ExprUnaryMinus
     &emitUnaryOp<OpCode::Plus>                              // ExprUnaryPlus
 };
-static_assert(arrayLength(emitInstrCallbacks) == unsigned(SyntaxTreeNode::Type::Count),
+static_assert(arrayLength(emitInstrCallbacks) == UInt32(SyntaxTreeNode::Type::Count),
               "Keep this array in sync with the enum declaration!");
 
 // Calls the appropriate handler according to the node type (which in turn might call this function again)
 static IntermediateInstr * traverseTreeRecursive(Compiler & compiler, const SyntaxTreeNode * root)
 {
     MOON_ASSERT(root != nullptr);
-    const auto handlerIndex  = static_cast<unsigned>(root->getType());
-    MOON_ASSERT(handlerIndex < static_cast<unsigned>(SyntaxTreeNode::Type::Count));
+    const auto handlerIndex  = static_cast<UInt32>(root->nodeType);
+    MOON_ASSERT(handlerIndex < static_cast<UInt32>(SyntaxTreeNode::Type::Count));
     return emitInstrCallbacks[handlerIndex](compiler, root);
 }
 
@@ -1125,29 +1169,20 @@ static IntermediateInstr * traverseTreeRecursive(Compiler & compiler, const Synt
 
 void Compiler::compile(VM & vm)
 {
-    runtimeTypes  = &vm.runtimeTypes;
-    instrListHead = traverseTreeRecursive(*this, syntTree.getRoot());
+    runtimeTypes = &vm.runtimeTypes;
+    globCodeListHead = traverseTreeRecursive(*this, syntTree.getRoot());
     intermediateToVM(vm);
 }
 
 void Compiler::print(std::ostream & os) const
 {
-    printIntermediateInstructions(os);
-    os << "\n";
-    printInstructionMapping(os);
-}
+    os << "Intermediate instructions total: " << toString(instructionCount) << "\n\n";
 
-void Compiler::printIntermediateInstructions(std::ostream & os) const
-{
     os << "Global code:\n";
-    printIntermediateInstrListHelper(instrListHead, os);
-    os << "\nFunction code:\n";
-    printIntermediateInstrListHelper(funcListHead,  os);
-}
+    printIntermediateInstrListHelper(globCodeListHead, os);
 
-void Compiler::printInstructionMapping(std::ostream & os) const
-{
-    printInstructionMappingHelper(instrMapping, os);
+    os << "\nFunction code:\n";
+    printIntermediateInstrListHelper(funcCodeListHead,  os);
 }
 
 void Compiler::setLoopAnchors(const IntermediateInstr * startLabel,
@@ -1200,18 +1235,18 @@ const TypeId * Compiler::guessTypeId(const SyntaxTreeNode * root)
 
     if (root->getChild(1) != nullptr) // Type node
     {
-        typeSymbol = root->getChild(1)->getSymbol();
+        typeSymbol = root->getChild(1)->symbol;
     }
 
     if (typeSymbol == nullptr)
     {
-        typeSymbol = symbolFromEval(symTable, root->getEval());
-        if (root->getEval() == SyntaxTreeNode::Eval::UDT)
+        typeSymbol = symbolFromEval(symTable, root->evalType);
+        if (root->evalType == SyntaxTreeNode::Eval::UDT)
         {
             // Find out the exact type of the UDT by looking at the constructor call:
             auto initExpr = root->getChild(0);
             MOON_ASSERT(initExpr != nullptr && "Expected a constructor call!");
-            objectTypeSymbol = initExpr->getSymbol();
+            objectTypeSymbol = initExpr->symbol;
         }
     }
 
@@ -1230,7 +1265,7 @@ void Compiler::collectFunctionArgSymbols(const SyntaxTreeNode * root)
         return;
     }
 
-    addFunctionLocalSymbol(root->getSymbol(), guessTypeId(root));
+    addFunctionLocalSymbol(root->symbol, guessTypeId(root));
     collectFunctionArgSymbols(root->getChild(0));
 }
 
@@ -1241,9 +1276,9 @@ void Compiler::collectFunctionVarSymbols(const SyntaxTreeNode * root)
         return;
     }
 
-    if (root->getType() == SyntaxTreeNode::Type::VarDeclStatement)
+    if (root->nodeType == SyntaxTreeNode::Type::VarDeclStatement)
     {
-        addFunctionLocalSymbol(root->getSymbol(), guessTypeId(root));
+        addFunctionLocalSymbol(root->symbol, guessTypeId(root));
     }
 
     collectFunctionVarSymbols(root->getChild(0));
@@ -1305,10 +1340,10 @@ const TypeId * Compiler::findGlobalSymbolTypeId(const Symbol * symbol) const
     return nullptr;
 }
 
-bool Compiler::symbolIsFunctionLocal(const Symbol * symbol, std::uint16_t & paramIdx) const
+bool Compiler::symbolIsFunctionLocal(const Symbol * symbol, UInt16 & paramIdx) const
 {
-    const unsigned symbolCount = funcLocalIdentifiers.size();
-    for (unsigned index = 0; index < symbolCount; ++index)
+    const UInt32 symbolCount = funcLocalIdentifiers.size();
+    for (UInt32 index = 0; index < symbolCount; ++index)
     {
         if (funcLocalIdentifiers[index].first == symbol)
         {
@@ -1335,7 +1370,7 @@ void Compiler::intermediateToVM(VM & vm)
     // This step removes duplicate data and unneeded noops from the intermediate code.
     // It also serves to separate the function definition from the rest of the code.
     createMappings(vm.data, vm.code, vm.functions, vm.runtimeTypes,
-                   instrListHead, /* skipFunctions = */ true);
+                   globCodeListHead, /* skipFunctions = */ true);
 
     // Pad the end with an instruction to anchor any potential jumps to the
     // end of the program, since we have removed all the other noop anchors.
@@ -1344,15 +1379,15 @@ void Compiler::intermediateToVM(VM & vm)
 
     // Now we perform the same mapping for the function that got set aside in the previous step.
     createMappings(vm.data, vm.code, vm.functions, vm.runtimeTypes,
-                   funcListHead, /* skipFunctions = */ false);
+                   funcCodeListHead, /* skipFunctions = */ false);
 
     // And map back the instructions into the code vector:
     IntermediateInstr * instr;
-    for (instr = instrListHead; instr != nullptr; instr = instr->next)
+    for (instr = globCodeListHead; instr != nullptr; instr = instr->next)
     {
         fixReferences(instr, vm.code, vm.functions);
     }
-    for (instr = funcListHead; instr != nullptr; instr = instr->next)
+    for (instr = funcCodeListHead; instr != nullptr; instr = instr->next)
     {
         fixReferences(instr, vm.code, vm.functions);
     }
@@ -1374,7 +1409,7 @@ void Compiler::createMappings(VM::DataVector & progData, VM::CodeVector & progCo
         {
             if (funcListTail == nullptr)
             {
-                funcListHead = funcListTail = instr;
+                funcCodeListHead = funcListTail = instr;
             }
             else
             {
@@ -1444,8 +1479,8 @@ void Compiler::fixReferences(const IntermediateInstr * instr, VM::CodeVector & p
             auto operandDataIndex = getProgDataIndex(dataMapping, instr->operand.symbol);
             MOON_ASSERT(selfCodeIdx < progCode.size() && "Index out-of-bounds!");
 
-            const char * funcName = instr->operand.symbol->name;
-            const auto funcObj = funcTable.findFunction(funcName);
+            const auto funcName = instr->operand.symbol->name;
+            const auto funcObj  = funcTable.findFunction(funcName);
 
             if (funcObj == nullptr)
             {
@@ -1460,9 +1495,9 @@ void Compiler::fixReferences(const IntermediateInstr * instr, VM::CodeVector & p
         }
     // Instructions that reference a code address:
     case OpCode::Jmp :
-    case OpCode::JmpIfFalse :
-    case OpCode::JmpIfTrue :
     case OpCode::JmpReturn :
+    case OpCode::JmpIfTrue :
+    case OpCode::JmpIfFalse :
         {
             // Index of this instruction and its jump target:
             auto selfCodeIdx = getProgCodeIndex(instrMapping, instr);
@@ -1470,7 +1505,7 @@ void Compiler::fixReferences(const IntermediateInstr * instr, VM::CodeVector & p
 
             // Clamp if this instruction jumps to the end of the program.
             // (happens to removed noops that pointed to the end of a block/if-else-statement).
-            operandCodeIdx = std::min(operandCodeIdx, static_cast<std::uint32_t>(progCode.size() - 1));
+            operandCodeIdx = std::min(operandCodeIdx, static_cast<UInt32>(progCode.size() - 1));
 
             MOON_ASSERT(selfCodeIdx < progCode.size() && "Index out-of-bounds!");
             progCode[selfCodeIdx] = packInstruction(instr->op, operandCodeIdx);
@@ -1483,11 +1518,6 @@ void Compiler::fixReferences(const IntermediateInstr * instr, VM::CodeVector & p
     case OpCode::LoadGlob :
     case OpCode::StoreGlob :
     case OpCode::MemberStoreGlob :
-    case OpCode::SubStore :
-    case OpCode::AddStore :
-    case OpCode::ModStore :
-    case OpCode::DivStore :
-    case OpCode::MulStore :
         {
             // Index of this instruction and its data operand:
             auto selfCodeIdx = getProgCodeIndex(instrMapping, instr);
@@ -1507,6 +1537,7 @@ void Compiler::fixReferences(const IntermediateInstr * instr, VM::CodeVector & p
             break;
         }
     default :
+        // No data or code referenced.
         break;
     } // switch (instr->op)
 }

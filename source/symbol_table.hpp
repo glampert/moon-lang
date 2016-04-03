@@ -11,6 +11,7 @@
 #define MOON_SYMBOL_TABLE_HPP
 
 #include "common.hpp"
+#include "registry.hpp"
 #include "pool.hpp"
 
 #ifndef MOON_SYMBOL_POOL_GRANULARITY
@@ -28,7 +29,7 @@ struct Symbol final
 {
     static constexpr int LineNumBuiltIn = -1;
 
-    enum class Type : std::uint8_t
+    enum class Type : UInt8
     {
         Undefined,
         IntLiteral,
@@ -43,24 +44,24 @@ struct Symbol final
 
     union Value
     {
-        LangLong     asInteger;
-        LangFloat    asFloat;
-        LangBool     asBoolean;
-        const char * asString; //TODO replace with ConstRcString. Same for the symbol name.
+        Int64           asInteger;
+        Float64         asFloat;
+        bool            asBoolean;
+        ConstRcString * asString;
 
         Value() noexcept { asInteger = 0; }
     };
 
-    const char * const name;    // Reference to the symbol name in the parent table. Not owned by Symbol.
-    const Value        value;   // Intrinsic value of the symbol.
-    const int          lineNum; // Line number in the source file where it was found. Negative for built-ins.
-    const Type         type;    // Type that defines the symbol's value.
+    ConstRcString * name;    // Reference to the symbol name in the parent table. Not owned by Symbol.
+    const Value     value;   // Intrinsic value of the symbol.
+    const int       lineNum; // Line number in the source file where it was found. Negative for built-ins.
+    const Type      type;    // Type that defines the symbol's value.
 
     // Value conversion helpers:
     static Value valueFromIntegerStr(const char * cstr);
     static Value valueFromFloatStr(const char * cstr);
     static Value valueFromBoolStr(const char * cstr);
-    static Value valueFromCStr(const char * cstr);
+    static Value valueFromRcStr(ConstRcString * rstr);
 
     // Compare this type and value for equality with the provided params.
     bool cmpEqual(Type otherType, Value otherValue) const noexcept;
@@ -79,70 +80,46 @@ std::string toString(Symbol::Type type);  // Symbol type to string.
 // class SymbolTable:
 // ========================================================
 
-//TODO replace with Registry template
 class SymbolTable final
+    : public Registry<const Symbol *>
 {
 public:
 
-    using SymTable = HashTableCStr<const Symbol *>;
-
-     SymbolTable();
-    ~SymbolTable();
-
-    // Not copyable.
-    SymbolTable(const SymbolTable &) = delete;
-    SymbolTable & operator = (const SymbolTable &) = delete;
+    SymbolTable();
 
     // Symbol access by name/id. Null returned if not found.
-    const Symbol * findSymbol(const char * name) const;
+    const Symbol * findSymbol(ConstRcString * const name) const { return findInternal(name); }
+    const Symbol * findSymbol(const char * name) const          { return findInternal(name); }
 
     // Find equivalent constant in the table or define a new built-in literal value for it.
-    const Symbol * findOrDefineValue(LangLong value);
+    const Symbol * findOrDefineValue(Int64 value);
 
     // Add new symbol. Symbol must NOT be in the table. Fails with an assertion
     // if a symbol with the same NAME is already present. Returns the new symbol.
-    // Note: The symbol table will take ownership of the name string, so generally
-    // you'll want to pass this method a string acquired from cloneCStringNoQuotes().
+    // Note: The symbol table will add ref to the name string, so generally you'll
+    // want to pass this method a string acquired from cloneCStringNoQuotes() or newConstRcString().
+    const Symbol * addSymbol(ConstRcString * name, int declLineNum, Symbol::Type type, Symbol::Value value);
     const Symbol * addSymbol(const char * name, int declLineNum, Symbol::Type type, Symbol::Value value);
 
-    // Find symbols generate from literal constants by value.
-    // The input of the query is the symbol's VALUE as a string.
-    const Symbol * findIntLiteral(const char * value) const;
-    const Symbol * findFloatLiteral(const char * value) const;
-    const Symbol * findBoolLiteral(const char * value) const;
-    const Symbol * findStrLiteral(const char * value) const; // Double-quotes ignored.
-
-    // Add new literal constants. Constant must NOT be in the table. Fail with an assertion
+    // Add new literal constants. Constant must NOT be in the table. Fails with an assertion
     // if a symbol with the same VALUE is already present. All will return the new symbol.
     const Symbol * addIntLiteral(const char * value, int declLineNum);
     const Symbol * addFloatLiteral(const char * value, int declLineNum);
     const Symbol * addBoolLiteral(const char * value, int declLineNum);
     const Symbol * addStrLiteral(const char * value, int declLineNum);
     const Symbol * addIdentifier(const char * value, int declLineNum);
+    const Symbol * addIdentifier(ConstRcString * value, int declLineNum);
 
-    // Miscellaneous queries:
-    bool isEmpty() const noexcept;
-    std::size_t getSize() const noexcept;
+    // Clone string into new memory. If the string is enclosed in
+    // double-quotes, the first and last quotation characters are ignored.
+    ConstRcString * cloneCStringNoQuotes(const char * sourcePtr);
 
     // Print the whole table in table format (no pun intended).
     void print(std::ostream & os) const;
 
-    // Clone string into new memory. If the string is enclosed in
-    // double-quotes, the first and last quotation characters are ignored.
-    const char * cloneCStringNoQuotes(const char * sourcePtr);
-
 private:
 
-    // Name generator for literal values:
-    const char * makeLiteralConstName(Symbol::Type type);
-
-    // Counter for makeLiteralConstName(). Built-in names are sequential.
-    std::uint32_t nextLiteralIndex;
-
-    // The table holds references to its backing store 'symbolPool'.
-    SymTable table;
-
-    // Symbols are stored here, the table holds pointers into this pool.
+    // Symbols are allocated from here. The table holds pointers into this pool.
     Pool<Symbol, MOON_SYMBOL_POOL_GRANULARITY> symbolPool;
 };
 

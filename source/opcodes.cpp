@@ -59,19 +59,14 @@ std::string toString(const OpCode op)
         "MOD",
         "DIV",
         "MUL",
-        "SUB_STORE",
-        "ADD_STORE",
-        "MOD_STORE",
-        "DIV_STORE",
-        "MUL_STORE",
         "LOGIC_NOT",
         "NEGATE",
         "PLUS"
     };
-    static_assert(arrayLength(opCodeNames) == unsigned(OpCode::Count),
+    static_assert(arrayLength(opCodeNames) == UInt32(OpCode::Count),
                   "Keep this array in sync with the enum declaration!");
 
-    return opCodeNames[unsigned(op)];
+    return opCodeNames[UInt32(op)];
 }
 
 } // namespace moon {}

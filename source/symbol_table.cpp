@@ -8,32 +8,10 @@
 // ================================================================================================
 
 #include "symbol_table.hpp"
+#include "runtime.hpp"
 
 namespace moon
 {
-
-//TODO replace this with the universal TypeId list
-static const char * builtInTypeNames[]
-{
-    // Built-in type names:
-    "int",
-    "long",
-    "float",
-    "bool",
-    "str",
-    "array",
-    "range",
-    "any",
-
-    // Internal types (not actual types usable in code):
-    "object",
-    "varargs",
-    "void",
-    "undefined",
-
-    // Marks the end of the list.
-    nullptr
-};
 
 // ========================================================
 // Symbol struct and helpers:
@@ -49,17 +27,18 @@ bool Symbol::cmpEqual(const Type otherType, const Value otherValue) const noexce
     // Strings might require a full character-wise compare:
     if (type == Type::StrLiteral)
     {
-        // Optimize for same memory:
-        if (value.asString == otherValue.asString)
+        if (cmpRcStringsEqual(value.asString, otherValue.asString))
         {
             return true;
         }
 
-        const char * otherStr = otherValue.asString;
-        auto otherStrLen = std::strlen(otherStr);
+        auto otherStr    = otherValue.asString->chars;
+        auto otherStrLen = otherValue.asString->length;
+
+        // Strings might still be a match, but the test string might be quoted.
+        // Try again ignoring leading/trailing double quotes.
         if (otherStrLen > 1)
         {
-            // Avoid possible leading and training double quotes in the input:
             if (otherStr[otherStrLen - 1] == '"')
             {
                 --otherStrLen;
@@ -73,17 +52,15 @@ bool Symbol::cmpEqual(const Type otherType, const Value otherValue) const noexce
 
         if (otherStrLen == 0) // Empty string?
         {
-            return std::strlen(value.asString) == 0;
+            return (value.asString->length == 0);
         }
-
-        const auto myStrLen = std::strlen(value.asString);
-        if (myStrLen != otherStrLen) // Different lengths?
+        if (value.asString->length != otherStrLen) // Different lengths?
         {
             return false;
         }
 
         // General case:
-        return std::strncmp(value.asString, otherStr, myStrLen) == 0;
+        return (std::strncmp(value.asString->chars, otherStr, value.asString->length) == 0);
     }
 
     // Compare the widest integral values:
@@ -92,9 +69,10 @@ bool Symbol::cmpEqual(const Type otherType, const Value otherValue) const noexce
 
 bool Symbol::isBuiltInTypeId() const noexcept
 {
-    for (int i = 0; builtInTypeNames[i] != nullptr; ++i)
+    auto builtIns = getBuiltInTypeNames();
+    for (int i = 0; builtIns[i].name != nullptr; ++i)
     {
-        if (std::strcmp(name, builtInTypeNames[i]) == 0)
+        if (cmpRcStringsEqual(name, builtIns[i].name.get()))
         {
             return true;
         }
@@ -108,22 +86,23 @@ void Symbol::print(std::ostream & os) const
     std::string temp2;
     std::string formatStr;
 
-    #define CASE(typeId, colorCmd, typeName, value)                               \
-        case Symbol::Type::typeId :                                               \
-        {                                                                         \
-            temp1 = (lineNum != LineNumBuiltIn) ? toString(lineNum) : "built-in"; \
-            temp2 = unescapeString(toString(value).c_str());                      \
-            formatStr = strPrintF("| %-30s | %-8s | %s%-9s%s | %s\n",             \
-                                  name, temp1.c_str(), colorCmd,                  \
-                                  typeName, color::restore(), temp2.c_str());     \
-        }                                                                         \
+    #define CASE(typeTag, colorCmd, typeName, value)                                                 \
+        case Symbol::Type::typeTag :                                                                 \
+        {                                                                                            \
+            temp1 = (lineNum != LineNumBuiltIn) ? toString(lineNum) : "built-in";                    \
+            temp2 = unescapeString(toString(value).c_str());                                         \
+            if (temp2.empty()) { temp2 = "<empty>"; }                                                \
+            formatStr = strPrintF("| %-30s | %-8s | %s%-9s%s | %s\n",                                \
+                                  (!isRcStringEmpty(name) ? name->chars : "<empty>"), temp1.c_str(), \
+                                  colorCmd, typeName, color::restore(), temp2.c_str());              \
+        }                                                                                            \
         break
 
     #define CASE_DEFAULT()                                             \
         default :                                                      \
         {                                                              \
             formatStr = strPrintF("| %-30s | %-8d | %s%-9s%s | ???\n", \
-                                  name, lineNum, color::red(),         \
+                                  name->chars, lineNum, color::red(),  \
                                   "undefined", color::restore());      \
         }                                                              \
         break
@@ -152,10 +131,10 @@ Symbol::Value Symbol::valueFromIntegerStr(const char * cstr)
     Symbol::Value valOut;
     char * endPtr = nullptr;
 
-    valOut.asInteger = static_cast<LangLong>(std::strtol(cstr, &endPtr, 0));
+    valOut.asInteger = static_cast<Int64>(std::strtol(cstr, &endPtr, 0));
     if (endPtr == nullptr || endPtr == cstr)
     {
-        MOON_RUNTIME_EXCEPTION("String literal \"" + toString(cstr) +
+        MOON_RUNTIME_EXCEPTION("string literal \"" + toString(cstr) +
                                "\" cannot be converted to an integer value.");
     }
     return valOut;
@@ -168,10 +147,10 @@ Symbol::Value Symbol::valueFromFloatStr(const char * cstr)
     Symbol::Value valOut;
     char * endPtr = nullptr;
 
-    valOut.asFloat = static_cast<LangFloat>(std::strtod(cstr, &endPtr));
+    valOut.asFloat = static_cast<Float64>(std::strtod(cstr, &endPtr));
     if (endPtr == nullptr || endPtr == cstr)
     {
-        MOON_RUNTIME_EXCEPTION("String literal \"" + toString(cstr) +
+        MOON_RUNTIME_EXCEPTION("string literal \"" + toString(cstr) +
                                "\" cannot be converted to a float value.");
     }
     return valOut;
@@ -192,17 +171,18 @@ Symbol::Value Symbol::valueFromBoolStr(const char * cstr)
     }
     else
     {
-        MOON_RUNTIME_EXCEPTION("Bad boolean literal string \"" + toString(cstr) +
-                               "\". Must be either \"true\" or \"false\".");
+        MOON_RUNTIME_EXCEPTION("bad boolean literal string \"" + toString(cstr) +
+                               "\"; must be either \"true\" or \"false\".");
     }
     return valOut;
 }
 
-Symbol::Value Symbol::valueFromCStr(const char * cstr)
+Symbol::Value Symbol::valueFromRcStr(ConstRcString * rstr)
 {
-    MOON_ASSERT(cstr != nullptr);
+    MOON_ASSERT(isRcStringValid(rstr));
+
     Symbol::Value valOut;
-    valOut.asString = cstr;
+    valOut.asString = rstr; // NOTE: Ref not added by design.
     return valOut;
 }
 
@@ -230,41 +210,17 @@ std::string toString(const Symbol::Type type)
         color::white()   + std::string("str")       + color::restore(),
         color::magenta() + std::string("ident")     + color::restore()
     };
-    static_assert(arrayLength(typeNames) == unsigned(Symbol::Type::Count),
+    static_assert(arrayLength(typeNames) == UInt32(Symbol::Type::Count),
                   "Keep this array in sync with the enum declaration!");
 
-    return typeNames[unsigned(type)];
+    return typeNames[UInt32(type)];
 }
 
 // ========================================================
-// findSymInTable():
-// ========================================================
-
-template
-<
-    Symbol::Type TypeTag,
-    Symbol::Value (* ConvFunc)(const char *)
->
-static const Symbol * findSymInTable(const char * value, const SymbolTable::SymTable & table)
-{
-    MOON_ASSERT(value != nullptr);
-    const auto testVal = ConvFunc(value);
-    for (auto && entry : table)
-    {
-        if (entry.second->cmpEqual(TypeTag, testVal))
-        {
-            return entry.second;
-        }
-    }
-    return nullptr;
-}
-
-// ========================================================
-// SymbolTable class methods:
+// SymbolTable:
 // ========================================================
 
 SymbolTable::SymbolTable()
-    : nextLiteralIndex { 0 }
 {
     //
     // Since we consolidate repeated literal/constant values
@@ -279,127 +235,82 @@ SymbolTable::SymbolTable()
     addFloatLiteral("0.0",  Symbol::LineNumBuiltIn);
     addFloatLiteral("1.0",  Symbol::LineNumBuiltIn);
 
-    for (int i = 0; builtInTypeNames[i] != nullptr; ++i)
+    auto builtIns = getBuiltInTypeNames();
+    for (int i = 0; builtIns[i].name != nullptr; ++i)
     {
-        addIdentifier(builtInTypeNames[i], Symbol::LineNumBuiltIn);
+        addIdentifier(builtIns[i].name.get(), Symbol::LineNumBuiltIn);
     }
 }
 
-SymbolTable::~SymbolTable()
+const Symbol * SymbolTable::findOrDefineValue(const Int64 value)
 {
-    // Symbol names are allocated dynamically by the Lexer,
-    // passed to the parser via yylval and then given to the
-    // table when a new symbol is encountered. The table is
-    // the official owner of that memory after a new symbol
-    // is added. So this is the proper place to free them.
-    // TODO
-    // either free the `name` pointers here
-    // or do nothing if using a string stack!
-    //
-    // Also note that literals might have a generated name not coming from the lexer!!!
-    // (thought they are always assumed to have been allocated with cloneCStringNoQuotes)
-}
-
-const Symbol * SymbolTable::findIntLiteral(const char * value) const
-{
-    return findSymInTable<Symbol::Type::IntLiteral, &Symbol::valueFromIntegerStr>(value, table);
-}
-
-const Symbol * SymbolTable::findFloatLiteral(const char * value) const
-{
-    return findSymInTable<Symbol::Type::FloatLiteral, &Symbol::valueFromFloatStr>(value, table);
-}
-
-const Symbol * SymbolTable::findBoolLiteral(const char * value) const
-{
-    return findSymInTable<Symbol::Type::BoolLiteral, &Symbol::valueFromBoolStr>(value, table);
-}
-
-const Symbol * SymbolTable::findStrLiteral(const char * value) const
-{
-    return findSymInTable<Symbol::Type::StrLiteral, &Symbol::valueFromCStr>(value, table);
-}
-
-const Symbol * SymbolTable::addIntLiteral(const char * value, const int declLineNum)
-{
-    MOON_ASSERT(!findIntLiteral(value));
-    return addSymbol(makeLiteralConstName(Symbol::Type::IntLiteral), declLineNum,
-                     Symbol::Type::IntLiteral, Symbol::valueFromIntegerStr(value));
-}
-
-const Symbol * SymbolTable::addFloatLiteral(const char * value, const int declLineNum)
-{
-    MOON_ASSERT(!findFloatLiteral(value));
-    return addSymbol(makeLiteralConstName(Symbol::Type::FloatLiteral), declLineNum,
-                     Symbol::Type::FloatLiteral, Symbol::valueFromFloatStr(value));
-}
-
-const Symbol * SymbolTable::addBoolLiteral(const char * value, const int declLineNum)
-{
-    MOON_ASSERT(!findBoolLiteral(value));
-    return addSymbol(makeLiteralConstName(Symbol::Type::BoolLiteral), declLineNum,
-                     Symbol::Type::BoolLiteral, Symbol::valueFromBoolStr(value));
-}
-
-const Symbol * SymbolTable::addStrLiteral(const char * value, const int declLineNum)
-{
-    MOON_ASSERT(!findStrLiteral(value));
-    return addSymbol(makeLiteralConstName(Symbol::Type::StrLiteral), declLineNum,
-                     Symbol::Type::StrLiteral, Symbol::valueFromCStr(cloneCStringNoQuotes(value)));
-}
-
-const Symbol * SymbolTable::findOrDefineValue(const LangLong value)
-{
-    Symbol::Value intVal;
-    intVal.asInteger = value;
-
-    for (auto && entry : table)
+    auto key = toString(value);
+    if (auto symbol = findSymbol(key.c_str()))
     {
-        if (entry.second->cmpEqual(Symbol::Type::IntLiteral, intVal))
-        {
-            return entry.second; // Already have this value defined.
-        }
+        return symbol;
     }
 
     // Define new built-in:
-    return addSymbol(makeLiteralConstName(Symbol::Type::IntLiteral),
-                     Symbol::LineNumBuiltIn, Symbol::Type::IntLiteral, intVal);
+    Symbol::Value intVal;
+    intVal.asInteger = value;
+    return addSymbol(key.c_str(), Symbol::LineNumBuiltIn, Symbol::Type::IntLiteral, intVal);
 }
 
-const Symbol * SymbolTable::addIdentifier(const char * value, const int declLineNum)
+const Symbol * SymbolTable::addSymbol(ConstRcString * name, const int declLineNum,
+                                      const Symbol::Type type, const Symbol::Value value)
 {
-    const char * symName = cloneCStringNoQuotes(value);
-    return addSymbol(symName, declLineNum, Symbol::Type::Identifier, Symbol::valueFromCStr(symName));
-}
-
-const Symbol * SymbolTable::findSymbol(const char * name) const
-{
-    MOON_ASSERT(name != nullptr);
-    const auto it = table.find(name);
-    if (it != std::end(table))
-    {
-        return it->second;
-    }
-    return nullptr; // Not found.
+    MOON_ASSERT(!findSymbol(name) && "Symbol already registered!");
+    return addInternal(name, construct(symbolPool.allocate(), { name, value, declLineNum, type }));
 }
 
 const Symbol * SymbolTable::addSymbol(const char * name, const int declLineNum,
                                       const Symbol::Type type, const Symbol::Value value)
 {
-    MOON_ASSERT(!findSymbol(name));
-    Symbol * sym = symbolPool.allocate();
-    table[name] = construct(sym, { name, value, declLineNum, type });
-    return sym;
+    ConstRcStrUPtr key{ cloneCStringNoQuotes(name) };
+    return addSymbol(key.get(), declLineNum, type, value);
 }
 
-const char * SymbolTable::cloneCStringNoQuotes(const char * sourcePtr)
+const Symbol * SymbolTable::addIdentifier(ConstRcString * value, const int declLineNum)
+{
+    auto symName = value;
+    return addSymbol(symName, declLineNum, Symbol::Type::Identifier, Symbol::valueFromRcStr(symName));
+}
+
+const Symbol * SymbolTable::addIdentifier(const char * value, const int declLineNum)
+{
+    auto symName = cloneCStringNoQuotes(value);
+    return addSymbol(symName, declLineNum, Symbol::Type::Identifier, Symbol::valueFromRcStr(symName));
+}
+
+const Symbol * SymbolTable::addIntLiteral(const char * value, const int declLineNum)
+{
+    return addSymbol(value, declLineNum, Symbol::Type::IntLiteral, Symbol::valueFromIntegerStr(value));
+}
+
+const Symbol * SymbolTable::addFloatLiteral(const char * value, const int declLineNum)
+{
+    return addSymbol(value, declLineNum, Symbol::Type::FloatLiteral, Symbol::valueFromFloatStr(value));
+}
+
+const Symbol * SymbolTable::addBoolLiteral(const char * value, const int declLineNum)
+{
+    return addSymbol(value, declLineNum, Symbol::Type::BoolLiteral, Symbol::valueFromBoolStr(value));
+}
+
+const Symbol * SymbolTable::addStrLiteral(const char * value, const int declLineNum)
+{
+    ConstRcStrUPtr key{ cloneCStringNoQuotes(value) };
+    return addSymbol(key.get(), declLineNum, Symbol::Type::StrLiteral, Symbol::valueFromRcStr(key.get()));
+}
+
+ConstRcString * SymbolTable::cloneCStringNoQuotes(const char * sourcePtr)
 {
     MOON_ASSERT(sourcePtr != nullptr);
+    auto sourceLen = static_cast<UInt32>(std::strlen(sourcePtr));
 
-    auto sourceLen = std::strlen(sourcePtr);
+    // Avoid possible leading and training double quotes:
     if (sourceLen > 1)
     {
-        // Avoid possible leading and training double quotes:
         if (sourcePtr[sourceLen - 1] == '"')
         {
             --sourceLen;
@@ -410,55 +321,19 @@ const char * SymbolTable::cloneCStringNoQuotes(const char * sourcePtr)
             ++sourcePtr;
         }
     }
-    if (sourceLen == 0)
-    {
-        return getEmptyCString();
-    }
 
-    auto newStr = new char[sourceLen + 1];
-    std::memcpy(newStr, sourcePtr, sourceLen);
-    newStr[sourceLen] = '\0';
-    return newStr;
-}
-
-const char * SymbolTable::makeLiteralConstName(const Symbol::Type type)
-{
-    char temp[512] = {'\0'};
-    const char * typeId;
-
-    switch (type)
-    {
-    case Symbol::Type::IntLiteral   : typeId = "I"; break;
-    case Symbol::Type::FloatLiteral : typeId = "F"; break;
-    case Symbol::Type::BoolLiteral  : typeId = "B"; break;
-    case Symbol::Type::StrLiteral   : typeId = "S"; break;
-    case Symbol::Type::Identifier   : typeId = "X"; break;
-    default                         : typeId = "?"; break;
-    } // switch (type)
-
-    std::snprintf(temp, arrayLength(temp), "$%s_lit_%u", typeId, nextLiteralIndex++);
-    return cloneCStringNoQuotes(temp);
-}
-
-bool SymbolTable::isEmpty() const noexcept
-{
-    return table.empty();
-}
-
-std::size_t SymbolTable::getSize() const noexcept
-{
-    return table.size();
+    return newConstRcString(sourcePtr, sourceLen);
 }
 
 void SymbolTable::print(std::ostream & os) const
 {
     os << color::white() << "[[ begin symbol table dump ]]" << color::restore() << "\n";
-    if (!table.empty())
+    if (!isEmpty())
     {
         os << "+--------------------------------+----------+-----------+----------+\n";
         os << "| name                           | src-line | type      | value    |\n";
         os << "+--------------------------------+----------+-----------+----------+\n";
-        for (auto && entry : table)
+        for (auto && entry : *this)
         {
             entry.second->print(os);
         }
@@ -467,7 +342,7 @@ void SymbolTable::print(std::ostream & os) const
     {
         os << "(empty)\n";
     }
-    os << color::white() << "[[ listed " << table.size() << " symbols ]]" << color::restore() << "\n";
+    os << color::white() << "[[ listed " << getSize() << " symbols ]]" << color::restore() << "\n";
 }
 
 } // namespace moon {}

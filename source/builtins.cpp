@@ -145,7 +145,7 @@ void to_string(VM & vm, Stack::Slice args) // (varargs) -> string
             if (var->type == Variant::Type::Float)
             {
                 // Floats will get truncated to integer.
-                outputStr = toString(static_cast<LangInt>(var->value.asFloat));
+                outputStr = toString(static_cast<Int64>(var->value.asFloat));
             }
             else if (var->type == Variant::Type::Integer)
             {
@@ -158,20 +158,20 @@ void to_string(VM & vm, Stack::Slice args) // (varargs) -> string
             break;
 
         case 'h' : // hexadecimal
-            outputStr = strPrintF("0x%016llX", static_cast<std::uint64_t>(var->value.asInteger));
+            outputStr = strPrintF("0x%016llX", static_cast<UInt64>(var->value.asInteger));
             break;
 
         case 'p' : // pointer
             if (var->type == Variant::Type::Integer || var->type == Variant::Type::Float)
             {
                 // Types stored directly into the Variant can print the Variant's own address.
-                outputStr = strPrintF("0x%016llX", static_cast<std::uint64_t>(
+                outputStr = strPrintF("0x%016llX", static_cast<UInt64>(
                                       reinterpret_cast<std::uintptr_t>(var)));
             }
             else // Objects print the address of the object:
             {
-                outputStr = strPrintF("0x%016llX", static_cast<std::uint64_t>(
-                     reinterpret_cast<std::uintptr_t>(var->value.asVoidPtr)));
+                outputStr = strPrintF("0x%016llX", static_cast<UInt64>(
+                                      reinterpret_cast<std::uintptr_t>(var->value.asVoidPtr)));
             }
             break;
 
@@ -213,7 +213,7 @@ void to_string(VM & vm, Stack::Slice args) // (varargs) -> string
 
 //TODO other nice things to have:
 //
-// - a small strings library (can based on std::string)
+// - a small strings library (can be based on std::string)
 // - a small array handling library (can be based on std::vector)
 // - a small dictionary library (std::unordered_map based)
 // - expose the C-maths library

@@ -10,7 +10,6 @@
 #ifndef MOON_VM_HPP
 #define MOON_VM_HPP
 
-#include "opcodes.hpp"
 #include "runtime.hpp"
 #include <utility>
 #include <vector>
@@ -50,6 +49,8 @@ public:
     //
     //Also a method to call a script function or registered native
     //call by name will be nice, e.g.: vm.call("foo", [args...]);
+    //
+    //A way of defining global script variables via the C++ code
 
     //
     // VM interface:
@@ -73,7 +74,7 @@ public:
     Variant getReturnValue() const noexcept { return rvr; }
 
     void execute();
-    void executeSingleInstruction(OpCode op, std::uint32_t operandIndex);
+    void executeSingleInstruction(OpCode op, UInt32 operandIndex);
 
     // Prints the current Program counter, data vector and stack.
     void print(std::ostream & os) const;

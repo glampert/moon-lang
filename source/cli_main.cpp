@@ -19,16 +19,11 @@ TODO NOTES:
 
 - Should test this on a tool like Valgrind or Clang Mem Sanitizer to check for possible leaks!!!
 
-- Might want to separate literal constants on lists by type, to accelerate lookup....
-
-- Probably also define a StringTable class that uses ref-counting to keep track of our strings.
-  Most strings defined during parsing in the SymbolTable can be reused by the VM, so we should
-  avoid copying them.
-
 - Custom, user supplied, memory allocator? Could integrate with a std::allocator perhaps?...
 
-- Probably review some uses of `noexcept`. Function that have a precondition (call assert())
-  should probably not be marked as noexcept...
+- perhaps keep an internal list of allocated RcStrings
+  for debug checking of leaked references. We should of course
+  allow disabling this check on a "release" build.
 
 *****
 
@@ -47,8 +42,6 @@ NOTES ON THE LANGUAGE SYNTAX SIDE:
   - structs
   - functions
   - easy to integrate with native methods (so we can for instance call OpenGL).
-
-- Make `let` variables immutable (then add `mut`).
 
 =================================================
 */
@@ -93,32 +86,27 @@ int main(int argc, const char * argv[])
         logStream() << "sizeof(Variant)           = " << sizeof(Variant) << std::endl;
         logStream() << "sizeof(Function)          = " << sizeof(Function) << std::endl;
         logStream() << "sizeof(ConstRcString)     = " << sizeof(ConstRcString) << std::endl;
-        logStream() << "sizeof(MutableRcString)   = " << sizeof(MutableRcString) << std::endl;
         logStream() << "sizeof(Object)            = " << sizeof(Object) << std::endl;
-        logStream() << "sizeof(LangStruct)        = " << sizeof(LangStruct) << std::endl;
-        logStream() << "sizeof(LangString)        = " << sizeof(LangString) << std::endl;
-        logStream() << "sizeof(LangArray)         = " << sizeof(LangArray) << std::endl;
-        logStream() << "sizeof(LangEnum)          = " << sizeof(LangEnum) << std::endl;
+        logStream() << "sizeof(Struct)            = " << sizeof(Struct) << std::endl;
+        logStream() << "sizeof(Str)               = " << sizeof(Str) << std::endl;
+        logStream() << "sizeof(Array)             = " << sizeof(Array) << std::endl;
+        logStream() << "sizeof(Enum)              = " << sizeof(Enum) << std::endl;
+
+        constexpr auto minConstStrLen = sizeof(std::string) - (sizeof(std::size_t) * 2);
+        logStream() << "sizeof(minConstStrLen)    = " << sizeof(minConstStrLen) << std::endl;
+        logStream() << "sizeof(std::string)       = " << sizeof(std::string) << std::endl;
 
         auto rstr1 = newConstRcString("\'testing, 1234\'");
-        auto rstr2 = newMutableRcString("\'testing, 1234\'");
 
         logStream() << "s: " << rstr1->chars << std::endl;
         logStream() << "l: " << rstr1->length << std::endl;
         logStream() << "h: " << rstr1->hashVal << std::endl;
         logStream() << "r: " << rstr1->refCount << std::endl;
         logStream() << std::endl;
-        logStream() << "s: " << rstr2->chars << std::endl;
-        logStream() << "l: " << rstr2->length << std::endl;
-        logStream() << "r: " << rstr2->refCount << std::endl;
 
         HashTableConstRcStr<int> ht1;
-        HashTableMutableRcStr<int> ht2;
         ht1.emplace(rstr1, 1);
-        ht2.emplace(rstr2, 2);
-
         releaseRcString(rstr1);
-        releaseRcString(rstr2);
 
         ///////////////
         Variant v0;
@@ -177,12 +165,27 @@ int main(int argc, const char * argv[])
         vm.execute();
         logStream() << vm << "\n";
 
-        /*
+        //*
+        auto lstr = Str::newFromString(vm, "Testing", true);
+        std::cout << std::boolalpha << "isConstString = " << lstr->isConstString() << std::endl;
+        std::cout << std::boolalpha << "isEmptyString = " << lstr->isEmptyString() << std::endl;
+        std::cout << std::boolalpha << "getLength     = " << lstr->getStringLength() << std::endl;
+        std::cout << std::boolalpha << "c_str         = " << lstr->c_str() << std::endl;
+        std::cout << std::endl;
+        auto lstr2 = Str::newFromString(vm, "-Testing-2", true);
+        auto lstr3 = Str::newFromStrings(vm, *lstr, *lstr2, true);
+        std::cout << std::boolalpha << "isConstString = " << lstr3->isConstString() << std::endl;
+        std::cout << std::boolalpha << "isEmptyString = " << lstr3->isEmptyString() << std::endl;
+        std::cout << std::boolalpha << "getLength     = " << lstr3->getStringLength() << std::endl;
+        std::cout << std::boolalpha << "c_str         = " << lstr3->c_str() << std::endl;
+        //*/
+
+        //*
         logStream() << "----------------------------------" << std::endl;
         logStream() << "GC OBJECTS:\n" << std::endl;
         for (auto obj = vm.gcListHead; obj != nullptr; obj = obj->next)
         {
-            obj->print();
+            obj->print(logStream());
             logStream() << std::endl;
         }
         logStream() << "----------------------------------" << std::endl;

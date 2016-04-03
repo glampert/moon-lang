@@ -137,7 +137,7 @@ void warning(const std::string & warnMessage,
 [[noreturn]] void unreachable(const std::string & srcFile,
                               const int lineNum)
 {
-    runtimeAssertionError("Trying to run unreachable code! Fix this!", srcFile, lineNum);
+    runtimeAssertionError("trying to run unreachable code! Fix this!", srcFile, lineNum);
 }
 
 } // namespace moon {}
