@@ -38,21 +38,14 @@ namespace moon
 struct Symbol;
 class SymbolTable;
 
-struct Function;
-class FunctionTable;
-
-struct TypeId;
-class TypeTable;
-
 struct SyntaxTreeNode;
 class SyntaxTree;
 
 struct ParseContext;
 class Parser;
 
-class VM;
-class Object;
 class Compiler;
+class VM;
 
 // ========================================================
 // Shorthand type aliases:
@@ -124,16 +117,14 @@ union SemanticVal
 
 struct ParseContext final
 {
-    SemanticVal       * yylval    = nullptr;
-    Lexer             * lexer     = nullptr;
-    Parser            * parser    = nullptr;
-    SymbolTable       * symTable  = nullptr;
-    FunctionTable     * fnTable   = nullptr;
-    TypeTable         * typeTable = nullptr;
-    SyntaxTree        * syntTree  = nullptr;
-    Object            ** objList  = nullptr;
-    std::string       * currText  = nullptr; // [optional]
-    const std::string * srcFile   = nullptr; // [optional]
+    SemanticVal       * yylval   = nullptr;
+    Lexer             * lexer    = nullptr;
+    Parser            * parser   = nullptr;
+    SymbolTable       * symTable = nullptr;
+    SyntaxTree        * syntTree = nullptr;
+    VM                * vm       = nullptr;
+    std::string       * currText = nullptr; // [optional]
+    const std::string * srcFile  = nullptr; // [optional]
 };
 
 // Bison needs this #define.
@@ -177,9 +168,12 @@ struct ScriptException   final : public BaseException { using BaseException::Bas
 
 struct Range final
 {
-    Int32 start;
+    Int32 begin;
     Int32 end;
 };
+
+template<typename T, UInt32 N>
+constexpr UInt32 arrayLength(const T (&)[N]) noexcept { return N; }
 
 // Fast 32-bits hash of a null-terminated C string:
 constexpr UInt32 NullHash = 0;
@@ -187,6 +181,9 @@ UInt32 hashCString(const char * cstr);
 
 // Get an empty C string ("\0").
 const char * getEmptyCString() noexcept;
+
+// Portable string compare ignoring character case.
+int compareCStringsNoCase(const char * s1, const char * s2, UInt32 count = ~0u);
 
 // Remove insignificant trailing zeros from a float, possibly also removing the '.'
 std::string trimTrailingFloatZeros(std::string trimmed);
@@ -207,12 +204,6 @@ std::string strPrintF(const char * format, ...);
 
 // ------------------------------------
 
-template<typename T, UInt32 N>
-constexpr UInt32 arrayLength(const T (&)[N]) noexcept
-{
-    return N;
-}
-
 struct CStrHasher final
 {
     std::size_t operator()(const char * cstr) const
@@ -230,8 +221,12 @@ struct CStrCmpEqual final
         return std::strcmp(a, b) == 0;
     }
 };
+
 template<typename T>
 using HashTableCStr = std::unordered_map<const char *, T, CStrHasher, CStrCmpEqual>;
+
+template<typename Key, typename Val>
+using HashTable = std::unordered_map<Key, Val>;
 
 // ========================================================
 // toString() helpers:

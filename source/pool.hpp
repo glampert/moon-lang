@@ -18,7 +18,7 @@ namespace moon
 {
 
 // ========================================================
-// class Pool<T, Granularity>
+// template class Pool<T, Granularity>:
 // ========================================================
 
 //
@@ -231,13 +231,13 @@ int Pool<T, Granularity>::getSize() const noexcept
 template<typename T>
 T * construct(T * obj, const T & other) // Copy constructor
 {
-    return ::new(obj) T(other);
+    return ::new(obj) T{ other };
 }
 
 template<typename T, typename... Args>
 T * construct(T * obj, Args&&... args) // Parameterized or default constructor
 {
-    return ::new(obj) T(std::forward<Args>(args)...);
+    return ::new(obj) T{ std::forward<Args>(args)... };
 }
 
 template<typename T>

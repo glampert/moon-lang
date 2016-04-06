@@ -4,7 +4,7 @@
 // File: vm.hpp
 // Author: Guilherme R. Lampert
 // Created on: 06/07/15
-// Brief: The Virtual Machine class.
+// Brief: The Virtual Machine class and Garbage Collector helper.
 // ================================================================================================
 
 #ifndef MOON_VM_HPP
@@ -18,6 +18,46 @@ namespace moon
 {
 
 // ========================================================
+// class GC:
+// ========================================================
+
+class GC final
+{
+public:
+
+    GC() = default;
+
+    // Not copyable.
+    GC(const GC &) = delete;
+    GC & operator = (const GC &) = delete;
+
+    template<typename T, typename... Args>
+    T * alloc(Args&&... args)
+    {
+        //TODO temp. we'll use a pool later on
+        T * newObj = (T*) ::operator new(sizeof(T));
+
+        ::new(newObj) T{ std::forward<Args>(args)... };
+        linkObject(newObj);
+        return newObj;
+    }
+
+    Object * linkObject(Object * obj)
+    {
+        MOON_ASSERT(obj != nullptr);
+        obj->gcNext = gcListHead;
+        gcListHead  = obj;
+        return obj;
+    }
+
+    const Object * getGCListHead() const noexcept { return gcListHead; }
+
+private:
+
+    Object * gcListHead = nullptr;
+};
+
+// ========================================================
 // class VM:
 // ========================================================
 
@@ -29,6 +69,11 @@ public:
     static constexpr int DefaultStackSize = 8192;
 
     // Helper types:
+    //
+    // TODO NOTES: in the compilation stage these get filled
+    // with push_backs. We should optimize to allocate the
+    // exact size beforehand.
+    //
     using DataVector = std::vector<Variant>;
     using CodeVector = std::vector<Instruction>;
 
@@ -37,10 +82,10 @@ public:
     Stack         locals;
     DataVector    data;
     CodeVector    code;
-    Object *      gcListHead;
-    TypeTable     runtimeTypes;
+    GC            gc;
+    TypeTable     types;
     FunctionTable functions;
-    Stack::Slice  funcArgv;
+    Stack::Slice  funcArgs;
 
     //TODO add a way of accessing all the program
     //globals by name. that will be useful if you
@@ -48,7 +93,7 @@ public:
     //configuration data!
     //
     //Also a method to call a script function or registered native
-    //call by name will be nice, e.g.: vm.call("foo", [args...]);
+    //call by name will be nice, e.g.: vm.call("foo", [args...], arg_count);
     //
     //A way of defining global script variables via the C++ code
 
@@ -76,7 +121,11 @@ public:
     void execute();
     void executeSingleInstruction(OpCode op, UInt32 operandIndex);
 
-    // Prints the current Program counter, data vector and stack.
+    // TODO other useful overloads for execute:
+    //void execute(int maxInstructions);
+    //void execute(int firstInstruction, int maxInstructions);
+
+    // Prints the current Program Counter, data vector and stack.
     void print(std::ostream & os) const;
 
 private:

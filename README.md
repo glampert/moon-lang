@@ -28,7 +28,7 @@ You might need to download and build Bison yourself if a recent binary image is 
 
 **Building on Windows** is currently not officially supported. The source code should be
 fully portable, so all that should be required for a Windows build is to install Bison
-and Flex and create a Visual Studio project. You should be able configure Bison and Flex
+and Flex and create a Visual Studio project. You should be able to configure Bison and Flex
 to run as prebuild steps.
 
 ### License

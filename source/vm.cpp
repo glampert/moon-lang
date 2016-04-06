@@ -4,7 +4,7 @@
 // File: vm.cpp
 // Author: Guilherme R. Lampert
 // Created on: 06/07/15
-// Brief: The Virtual Machine class.
+// Brief: The Virtual Machine and execution model.
 // ================================================================================================
 
 #include "vm.hpp"
@@ -130,7 +130,7 @@ static void opMemberStoreLocal(VM & vm, const UInt32 operandIndex)
 static void opCall(VM & vm, const UInt32 operandIndex)
 {
     const Variant argcVar = vm.stack.getTopVar();
-    vm.funcArgv = vm.stack.slice(vm.stack.getCurrSize() - argcVar.getAsInteger() - 1, argcVar.getAsInteger() + 1);
+    vm.funcArgs = vm.stack.slice(vm.stack.getCurrSize() - argcVar.getAsInteger() - 1, argcVar.getAsInteger() + 1);
 
     const Variant funcVar = vm.data[operandIndex];
     vm.stack.pop(); // the argCount
@@ -158,9 +158,9 @@ static void opCall(VM & vm, const UInt32 operandIndex)
 static void opFuncStart(VM & vm, UInt32)
 {
     // Copy from the main work stack to the function-local stack (including the argCount):
-    for (auto var = vm.funcArgv.first(); var; var = vm.funcArgv.next())
+    for (int i = 0; i < vm.funcArgs.getSize(); ++i)
     {
-        vm.locals.push(*var);
+        vm.locals.push(vm.funcArgs[i]);
     }
 
     // Save so we can return to the caller.
@@ -220,7 +220,7 @@ static void opNewObj(VM & vm, const UInt32 operandIndex)
     const auto args = vm.stack.slice(vm.stack.getCurrSize() - argc, argc);
 
     Variant newObj{ Variant::Type::Object };
-    newObj.value.asObject = newRuntimeObject(tid.value.asTypeId, &vm.gcListHead, args);
+    newObj.value.asObject = newRuntimeObject(vm, tid.value.asTypeId, args);
 
     vm.stack.popN(argc);
     vm.stack.push(newObj);
@@ -314,12 +314,11 @@ static_assert(arrayLength(opHandlerCallbacks) == UInt32(OpCode::Count),
 // ========================================================
 
 VM::VM(const bool loadBuiltIns, const int stackSize)
-    : stack        { stackSize   }
-    , locals       { stackSize   }
-    , gcListHead   { nullptr     }
-    , runtimeTypes { &gcListHead }
-    , pc           { 0           }
-    , retAddr      { 0           }
+    : stack   { stackSize }
+    , locals  { stackSize }
+    , types   { *this     }
+    , pc      { 0         }
+    , retAddr { 0         }
 {
     if (loadBuiltIns)
     {
@@ -384,7 +383,7 @@ static void dumpVariant(const Variant var, const int index, std::ostream & os)
     auto valStr  = toString(var);
     auto typeStr = toString(var.type);
 
-    if (var.type == Variant::Type::String)
+    if (var.type == Variant::Type::Str)
     {
         valStr = unescapeString(valStr.c_str());
     }
@@ -451,6 +450,63 @@ void VM::print(std::ostream & os) const
     }
     os << color::white() << "[[ printed " << stack.getCurrSize() << " variants ]]" << color::restore() << "\n";
     os << color::white() << "\n[[ ----------------------- ]]" << color::restore() << "\n";
+}
+
+std::string toString(const OpCode op)
+{
+    // OpCode to printable string (no colors added)
+    static const std::string opCodeNames[]
+    {
+        "NOOP",
+        "PROG_START",
+        "PROG_END",
+        "JMP",
+        "JMP_IF_TRUE",
+        "JMP_IF_FALSE",
+        "JMP_RETURN",
+        "CALL",
+        "NEW_VAR",
+        "NEW_RANGE",
+        "NEW_ARRAY",
+        "NEW_OBJ",
+        "FUNC_START",
+        "FUNC_END",
+        "FOR_LOOP_PREP",
+        "FOR_LOOP_TEST",
+        "FOR_LOOP_STEP",
+        "MATCH_PREP",
+        "MATCH_TEST",
+        "ARRAY_SUBSCRIPT",
+        "MEMBER_REF",
+        "LOAD_RVR",
+        "STORE_RVR",
+        "LOAD_GLOB",
+        "STORE_GLOB",
+        "MEMBER_STORE_GLOB",
+        "LOAD_LOCAL",
+        "STORE_LOCAL",
+        "MEMBER_STORE_LOCAL",
+        "CMP_NOT_EQUAL",
+        "CMP_EQUAL",
+        "CMP_GREATER_EQUAL",
+        "CMP_GREATER",
+        "CMP_LESS_EQUAL",
+        "CMP_LESS",
+        "LOGIC_OR",
+        "LOGIC_AND",
+        "SUB",
+        "ADD",
+        "MOD",
+        "DIV",
+        "MUL",
+        "LOGIC_NOT",
+        "NEGATE",
+        "PLUS"
+    };
+    static_assert(arrayLength(opCodeNames) == UInt32(OpCode::Count),
+                  "Keep this array in sync with the enum declaration!");
+
+    return opCodeNames[UInt32(op)];
 }
 
 } // namespace moon {}

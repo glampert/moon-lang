@@ -19,32 +19,30 @@ namespace moon
 // Variant:
 // ========================================================
 
-Variant variantFromSymbol(const Symbol & sym)
+Variant variantFromSymbol(VM & vm, const Symbol & sym)
 {
     Variant var;
 
     switch (sym.type)
     {
     case Symbol::Type::IntLiteral :
-        var.value.asInteger = sym.value.asInteger;
         var.type = Variant::Type::Integer;
+        var.value.asInteger = sym.value.asInteger;
         break;
 
     case Symbol::Type::FloatLiteral :
-        var.value.asFloat = sym.value.asFloat;
         var.type = Variant::Type::Float;
+        var.value.asFloat = sym.value.asFloat;
         break;
 
     case Symbol::Type::BoolLiteral :
-        var.value.asInteger = sym.value.asBoolean;
         var.type = Variant::Type::Integer;
+        var.value.asInteger = sym.value.asBoolean;
         break;
 
-//    case Symbol::Type::Identifier :
     case Symbol::Type::StrLiteral :
-        //FIXME this is temporary. We must copy the string because the symbol might be gone! (or use RcString)
-        var.value.asString = sym.value.asString->chars;
-        var.type = Variant::Type::String;
+        var.type = Variant::Type::Str;
+        var.value.asString = Str::newFromString(vm, sym.value.asString);
         break;
 
     default :
@@ -58,64 +56,82 @@ Variant::Type variantTypeFromTypeId(const TypeId * tid)
 {
     MOON_ASSERT(tid != nullptr && isRcStringValid(tid->name));
 
-    // Cached for subsequent lookups:
-    static constexpr auto hashInt   = ct::hashCString( "int"      );
-    static constexpr auto hashLong  = ct::hashCString( "long"     );
-    static constexpr auto hashFloat = ct::hashCString( "float"    );
-    static constexpr auto hashBool  = ct::hashCString( "bool"     );
-    //static constexpr auto hashRange = ct::hashCString( "range"    );
-    //static constexpr auto hashAny   = ct::hashCString( "any"      );
-    static constexpr auto hashObj   = ct::hashCString( "object"   );
-    static constexpr auto hashFunc  = ct::hashCString( "function" );
-    static constexpr auto hashStr   = ct::hashCString( "str"      );
-    //static constexpr auto hashArray = ct::hashCString( "array"    );
+    using VT = Variant::Type;
+    const auto hashId = tid->name->hashVal;
 
-    //TODO add the commented types at some point!
-    if (hashInt   == tid->name->hashVal) { return Variant::Type::Integer;  }
-    if (hashLong  == tid->name->hashVal) { return Variant::Type::Integer;  }
-    if (hashFloat == tid->name->hashVal) { return Variant::Type::Float;    }
-    if (hashBool  == tid->name->hashVal) { return Variant::Type::Integer;  }
-    //if (hashRange == tid->name->hashVal) { return Variant::Type::Range;    }
-    //if (hashAny   == tid->name->hashVal) { return Variant::Type::Any;      }
-    if (hashObj   == tid->name->hashVal) { return Variant::Type::Object;   }
-    if (hashFunc  == tid->name->hashVal) { return Variant::Type::Function; }
-    if (hashStr   == tid->name->hashVal) { return Variant::Type::String;   }
-    //if (hashArray == tid->name->hashVal) { return Variant::Type::Array;    }
+    if (ct::hashCString( "int"      ) == hashId) { return VT::Integer;  }
+    if (ct::hashCString( "long"     ) == hashId) { return VT::Integer;  }
+    if (ct::hashCString( "float"    ) == hashId) { return VT::Float;    }
+    if (ct::hashCString( "double"   ) == hashId) { return VT::Float;    }
+    if (ct::hashCString( "bool"     ) == hashId) { return VT::Integer;  }
+    if (ct::hashCString( "range"    ) == hashId) { return VT::Range;    }
+    if (ct::hashCString( "any"      ) == hashId) { return VT::Any;      }
+    if (ct::hashCString( "object"   ) == hashId) { return VT::Object;   }
+    if (ct::hashCString( "function" ) == hashId) { return VT::Function; }
+    if (ct::hashCString( "str"      ) == hashId) { return VT::Str;      }
+    if (ct::hashCString( "array"    ) == hashId) { return VT::Array;    }
+    if (ct::hashCString( "tid"      ) == hashId) { return VT::Tid;      }
 
     MOON_RUNTIME_EXCEPTION("bad variable type id '" + toString(tid->name) +
-                           "' (" + strPrintF("0x%08X", tid->name->hashVal) + ")");
+                           "' (" + strPrintF("0x%08X", hashId) + ")");
 }
 
 std::string toString(const Variant var)
 {
     switch (var.type)
     {
-    case Variant::Type::Null :
-        return "null";
-
     case Variant::Type::Integer :
-        return toString(var.value.asInteger);
-
+        {
+            return toString(var.value.asInteger);
+        }
     case Variant::Type::Float :
-        return toString(var.value.asFloat);
-
-    case Variant::Type::String :
-        return toString(var.value.asString);
-
+        {
+            return toString(var.value.asFloat);
+        }
     case Variant::Type::Function :
-        return toString(var.value.asFunction ? var.value.asFunction->name->chars : "null");
-
+        {
+            const auto fn = var.value.asFunction;
+            return toString(fn != nullptr ? fn->name->chars : "null");
+        }
     case Variant::Type::Tid :
-        return toString(var.value.asTypeId ? var.value.asTypeId->name->chars : "null");
-
+        {
+            const auto tid = var.value.asTypeId;
+            return toString(tid != nullptr ? tid->name->chars : "null");
+        }
+    case Variant::Type::Str :
+        {
+            const auto str = var.value.asString;
+            return toString(str != nullptr ? str->c_str() : "null");
+        }
     case Variant::Type::Object :
         {
-            auto addr = strPrintF(" @%016llX", static_cast<UInt64>(
-                                  reinterpret_cast<std::uintptr_t>(var.value.asVoidPtr)));
-            return (var.value.asObject ? (var.value.asObject->getTypeName() + addr) : "null");
+            const auto obj = var.value.asObject;
+            if (obj == nullptr) { return "null"; }
+            return strPrintF("%s %s",
+                   obj->getTypeName().c_str(),
+                   obj->getAddressString().c_str());
+        }
+    case Variant::Type::Array :
+        {
+            const auto arr = var.value.asArray;
+            if (arr == nullptr) { return "null"; }
+            return strPrintF("array(%s;%i) %s",
+                   arr->getDataTypeString().c_str(),
+                   arr->getArrayLength(),
+                   arr->getAddressString().c_str());
+        }
+    case Variant::Type::Range :
+        {
+            const auto r = var.value.asRange;
+            return strPrintF("range(%i..%i)", r.begin, r.end);
+        }
+    case Variant::Type::Any :
+        {
+            const auto anyType = toString(var.type);//FIXME actually need a second type for the Any type...
+            return strPrintF("any(tid=%s)", anyType.c_str());
         }
     default :
-        return "???";
+        return "null";
     } // switch (var.type)
 }
 
@@ -126,10 +142,13 @@ std::string toString(const Variant::Type type)
         color::red()     + std::string("null")     + color::restore(),
         color::blue()    + std::string("int")      + color::restore(),
         color::yellow()  + std::string("float")    + color::restore(),
-        color::white()   + std::string("str")      + color::restore(),
         color::green()   + std::string("function") + color::restore(),
         color::cyan()    + std::string("tid")      + color::restore(),
-        color::magenta() + std::string("object")   + color::restore()
+        color::white()   + std::string("str")      + color::restore(),
+        color::magenta() + std::string("object")   + color::restore(),
+        color::yellow()  + std::string("array")    + color::restore(),
+        color::white()   + std::string("range")    + color::restore(),
+        color::blue()    + std::string("any")      + color::restore()
     };
     static_assert(arrayLength(typeNames) == UInt32(Variant::Type::Count),
                   "Keep this array in sync with the enum declaration!");
@@ -350,10 +369,8 @@ void FunctionTable::print(std::ostream & os) const
 // TypeTable:
 // ========================================================
 
-TypeTable::TypeTable(Object ** gcListHead)
+TypeTable::TypeTable(VM & vm)
 {
-    MOON_ASSERT(gcListHead != nullptr);
-
     // Register the built-ins:
     auto builtIns = getBuiltInTypeNames();
     for (int i = 0; builtIns[i].name != nullptr; ++i)
@@ -361,24 +378,33 @@ TypeTable::TypeTable(Object ** gcListHead)
         if (!builtIns[i].internalType)
         {
             Object * templateObj = nullptr;
-            auto thisTid = addTypeId(builtIns[i].name.get(), builtIns[i].instCb, templateObj, true);
+            auto thisTid = addTypeId(builtIns[i].name.get(), builtIns[i].newInstance, templateObj, true);
 
             // Once we added the new entry, we can now update the template
             // object instance passing to the factory callback this TypeId.
-            if (builtIns[i].instCb)
+            if (builtIns[i].newInstance)
             {
-                templateObj = builtIns[i].instCb(thisTid, gcListHead);
-                const_cast<TypeId *>(thisTid)->templateObject = templateObj;
+                templateObj = builtIns[i].newInstance(vm, thisTid);
                 templateObj->setUpMembersTable();
+                templateObj->markTypeTemplate();
+
+                const_cast<TypeId *>(thisTid)->templateObject = templateObj;
             }
         }
     }
 
-    stringTypeId = findTypeId("str");
-    MOON_ASSERT(stringTypeId != nullptr);
-
-    arrayTypeId = findTypeId("array");
-    MOON_ASSERT(arrayTypeId != nullptr);
+    // These are used frequently, so we profit from pre-caching them.
+    intTypeId      = findTypeId("int");      MOON_ASSERT(intTypeId      != nullptr);
+    longTypeId     = findTypeId("long");     MOON_ASSERT(longTypeId     != nullptr);
+    floatTypeId    = findTypeId("float");    MOON_ASSERT(floatTypeId    != nullptr);
+    doubleTypeId   = findTypeId("double");   MOON_ASSERT(doubleTypeId   != nullptr);
+    boolTypeId     = findTypeId("bool");     MOON_ASSERT(boolTypeId     != nullptr);
+    rangeTypeId    = findTypeId("range");    MOON_ASSERT(rangeTypeId    != nullptr);
+    anyTypeId      = findTypeId("any");      MOON_ASSERT(anyTypeId      != nullptr);
+    objectTypeId   = findTypeId("object");   MOON_ASSERT(objectTypeId   != nullptr);
+    functionTypeId = findTypeId("function"); MOON_ASSERT(functionTypeId != nullptr);
+    strTypeId      = findTypeId("str");      MOON_ASSERT(strTypeId      != nullptr);
+    arrayTypeId    = findTypeId("array");    MOON_ASSERT(arrayTypeId    != nullptr);
 }
 
 const TypeId * TypeTable::addTypeId(ConstRcString * name, ObjectFactoryCB instCb,
@@ -424,7 +450,7 @@ void TypeTable::print(std::ostream & os) const
         for (auto && entry : *this)
         {
             const char * builtIn = (entry.second->isBuiltIn      ? "yes" : "no");
-            const char * instCb  = (entry.second->createInstance ? "yes" : "no");
+            const char * instCb  = (entry.second->newInstance    ? "yes" : "no");
             const char * tplObj  = (entry.second->templateObject ? "yes" : "no");
             const char * alias   = (entry.second->isTypeAlias    ? entry.second->name->chars : "-----");
 
@@ -443,13 +469,13 @@ void TypeTable::print(std::ostream & os) const
 // Object:
 // ========================================================
 
-Object::Object(const TypeId * tid, Object ** gcListHead)
-    : typeId{ tid }
+Object::Object(const TypeId * tid) noexcept
+    : typeId { tid     }
+    , gcNext { nullptr }
 {
-    MOON_ASSERT(gcListHead != nullptr);
-
-    next = (*gcListHead);
-    (*gcListHead) = this;
+    flags.isAlive       = true;
+    flags.isPersistent  = false;
+    flags.isTemplateObj = false;
 }
 
 Object::~Object()
@@ -507,15 +533,18 @@ std::string Object::getTypeName() const
     return (typeId != nullptr) ? typeId->name->chars : "object";
 }
 
+std::string Object::getAddressString() const
+{
+    return strPrintF("[@%016llX]", static_cast<UInt64>(reinterpret_cast<std::uintptr_t>(this)));
+}
+
 std::string Object::getStringRepresentation() const
 {
     std::string nameStr, typeStr, valStr, finalStr;
     const int memberCount = getMemberCount();
 
     // Add the object's own address:
-    finalStr += strPrintF("[@%016llX]\n", static_cast<UInt64>(
-                          reinterpret_cast<std::uintptr_t>(this)));
-
+    finalStr += getAddressString() + "\n";
     finalStr += getTypeName();
     finalStr += "{";
 
@@ -535,10 +564,19 @@ std::string Object::getStringRepresentation() const
         finalStr += ": ";
         finalStr += typeStr;
         finalStr += " => ";
-        finalStr += (members[m].data.type == Variant::Type::String) ?
-                             unescapeString(valStr.c_str()) : valStr;
+        finalStr += (members[m].data.type == Variant::Type::Str) ?
+                          unescapeString(valStr.c_str()) : valStr;
         finalStr += ",\n";
     }
+
+    #if MOON_PRINT_RT_OBJECT_FLAGS
+    finalStr += "  flags => '";
+    if (flags.isAlive)       { finalStr += "A"; }
+    else                     { finalStr += "D"; }
+    if (flags.isPersistent)  { finalStr += "P"; }
+    if (flags.isTemplateObj) { finalStr += "T"; }
+    finalStr += "',\n";
+    #endif // MOON_PRINT_RT_OBJECT_FLAGS
 
     finalStr += "}\n";
     return finalStr;
@@ -547,10 +585,8 @@ std::string Object::getStringRepresentation() const
 void Object::addMember(ConstRcString * name, const Variant data)
 {
     MOON_ASSERT(!hasMember(name) && "Object already has a member with the same name!");
-
     // Takes shared ownership of the name.
-    addRcStringRef(name);
-    members.push_back({ name, data });
+    members.push_back({ addRcStringRef(name), data });
 }
 
 void Object::addMember(const char * name, const Variant data)
@@ -606,37 +642,48 @@ int Object::findMemberIndex(const char * name) const
 // Runtime Object allocator:
 // ========================================================
 
-Object * newRuntimeObject(const TypeId * tid, Object ** gcListHead, Stack::Slice constructorArgs)
+Object * newRuntimeObject(VM & vm, const TypeId * tid, Stack::Slice constructorArgs)
 {
     MOON_ASSERT(tid != nullptr);
-    MOON_ASSERT(gcListHead != nullptr);
-
-    if (tid->createInstance == nullptr)
+    if (tid->newInstance == nullptr)
     {
         MOON_RUNTIME_EXCEPTION("can't dynamically allocate instance of type '" + toString(tid->name) + "'");
     }
 
-    Object * inst = tid->createInstance(tid, gcListHead);
+    Object * inst = tid->newInstance(vm, tid);
     inst->initialize(constructorArgs);
     return inst;
 }
 
-// ========================================================
-// Script Struct:
-// ========================================================
-
-Object * Struct::createInstance(const TypeId * tid, Object ** gcListHead)
+void freeRuntimeObject(VM & vm, Object * obj)
 {
-    return new Struct{ tid, gcListHead };
+    (void)vm;
+    obj->flags.isAlive = false;
+    //TODO actually return it to the CG
+    //remember to call the object destructor!
 }
 
 // ========================================================
-// Script Str:
+// Script Struct and Enum allocators:
 // ========================================================
 
-Object * Str::createInstance(const TypeId * tid, Object ** gcListHead)
+Object * Struct::newInstance(VM & vm, const TypeId * tid)
 {
-    return new Str{ tid, gcListHead };
+    return vm.gc.alloc<Struct>(tid);
+}
+
+Object * Enum::newInstance(VM & vm, const TypeId * tid)
+{
+    return vm.gc.alloc<Enum>(tid);
+}
+
+// ========================================================
+// Script String:
+// ========================================================
+
+Object * Str::newInstance(VM & vm, const TypeId * tid)
+{
+    return vm.gc.alloc<Str>(tid);
 }
 
 Str * Str::newFromString(VM & vm, const std::string & str, const bool makeConst)
@@ -647,11 +694,11 @@ Str * Str::newFromString(VM & vm, const std::string & str, const bool makeConst)
 Str * Str::newFromString(VM & vm, const char * cstr, const UInt32 length, const bool makeConst)
 {
     MOON_ASSERT(cstr != nullptr);
-    auto newStr = static_cast<Str *>(Str::createInstance(vm.runtimeTypes.stringTypeId, &vm.gcListHead));
+    auto newStr = static_cast<Str *>(Str::newInstance(vm, vm.types.strTypeId));
 
     // The size of the small internal buffer of a std::string should be more of less the
     // whole size of the type minus a length and pointer, likely sizeof(size_t) bytes each.
-    constexpr auto minConstStrLen = sizeof(std::string) - (sizeof(std::size_t) * 2);
+    constexpr std::size_t minConstStrLen = sizeof(std::string) - (sizeof(std::size_t) * 2);
 
     // If the string is short enough to fit in the small string buffer of
     // std::string we ignore the user hint and avoid the extra allocation.
@@ -667,6 +714,14 @@ Str * Str::newFromString(VM & vm, const char * cstr, const UInt32 length, const 
         }
     }
 
+    return newStr;
+}
+
+Str * Str::newFromString(VM & vm, ConstRcString * rstr)
+{
+    MOON_ASSERT(isRcStringValid(rstr));
+    auto newStr = static_cast<Str *>(Str::newInstance(vm, vm.types.strTypeId));
+    newStr->constString = addRcStringRef(rstr);
     return newStr;
 }
 
@@ -693,7 +748,7 @@ Variant Str::unaryOp(const OpCode op, const Str & str)
     }
     //
     // let foo = ""; // empty string
-    // let foo: str; // null string
+    // let foo: str; // null string object
     //
     // if not foo then
     //   print("foo is null or empty");
@@ -731,7 +786,7 @@ Variant Str::binaryOp(const OpCode op, const Str & strA, const Str & strB)
         result.value.asInteger = (strA.compare(strB) < 0);
         break;
 
-    // Logic and/or for empty string:
+    // Logic AND/OR for empty string:
     case OpCode::LogicOr :
         result.value.asInteger = (!strA.isEmptyString()) || (!strB.isEmptyString());
         break;
@@ -746,7 +801,7 @@ Variant Str::binaryOp(const OpCode op, const Str & strA, const Str & strB)
     return result;
 }
 
-int Str::compare(const Str & other) const noexcept
+int Str::compare(const Str & other) const
 {
     if (isConstString() && other.isConstString())
     {
@@ -755,42 +810,51 @@ int Str::compare(const Str & other) const noexcept
     return std::strcmp(c_str(), other.c_str());
 }
 
-bool Str::cmpEqual(const Str & other) const noexcept
+bool Str::cmpEqual(const Str & other) const
 {
     // We can use the optimized hash comparison when testing with ==, !=.
     if (isConstString() && other.isConstString())
     {
         return cmpRcStringsEqual(constString, other.constString);
     }
-    return std::strcmp(c_str(), other.c_str());
+    return std::strcmp(c_str(), other.c_str()) == 0;
 }
 
-int Str::getStringLength() const noexcept
+std::string Str::getStringRepresentation() const
+{
+    // Add the object's own address:
+    std::string finalStr = getAddressString() + "\n";
+    finalStr += getTypeName();
+    finalStr += "{\n";
+
+    finalStr += "  length => " + toString(getStringLength()) + ",\n";
+    finalStr += "  is_const => " + toString(isConstString() ? "yes" : "no") + ",\n";
+    finalStr += "  chars => \"" + unescapeString(c_str()) + "\",\n";
+
+    #if MOON_PRINT_RT_OBJECT_FLAGS
+    finalStr += "  flags => '";
+    if (flags.isAlive)       { finalStr += "A"; }
+    else                     { finalStr += "D"; }
+    if (flags.isPersistent)  { finalStr += "P"; }
+    if (flags.isTemplateObj) { finalStr += "T"; }
+    finalStr += "',\n";
+    #endif // MOON_PRINT_RT_OBJECT_FLAGS
+
+    finalStr += "}\n";
+    return finalStr;
+}
+
+void Str::clear()
 {
     if (isConstString())
     {
-        return static_cast<int>(constString->length);
+        releaseRcString(constString);
+        constString = nullptr;
     }
-    return static_cast<int>(mutableString.length());
-}
-
-bool Str::isEmptyString() const noexcept
-{
-    if (isConstString())
+    else
     {
-        return constString->length == 0;
+        mutableString.clear();
     }
-    return mutableString.empty();
-}
-
-bool Str::isConstString() const noexcept
-{
-    return constString != nullptr;
-}
-
-const char * Str::c_str() const noexcept
-{
-    return (constString != nullptr) ? constString->chars : mutableString.c_str();
 }
 
 Str::~Str()
@@ -805,18 +869,233 @@ Str::~Str()
 // Script Array:
 // ========================================================
 
-Object * Array::createInstance(const TypeId * tid, Object ** gcListHead)
+Object * Array::newInstance(VM & vm, const TypeId * tid)
 {
-    return new Array{ tid, gcListHead };
+    return vm.gc.alloc<Array>(tid);
 }
 
-// ========================================================
-// Script Enum:
-// ========================================================
-
-Object * Enum::createInstance(const TypeId * tid, Object ** gcListHead)
+Array * Array::newEmpty(VM & vm, const TypeId * dataType, const int capacityHint)
 {
-    return new Enum{ tid, gcListHead };
+    auto newArray = static_cast<Array *>(Array::newInstance(vm, vm.types.arrayTypeId));
+    newArray->setItemTypeSize(dataType);
+    newArray->reserveCapacity(capacityHint);
+    return newArray;
+}
+
+Array * Array::newFromArgs(VM & vm, const TypeId * dataType, Stack::Slice args)
+{
+    auto newArray = static_cast<Array *>(Array::newInstance(vm, vm.types.arrayTypeId));
+
+    const int argCount = args.getSize();
+    newArray->setItemTypeSize(dataType);
+    newArray->reserveCapacity(argCount);
+
+    for (int i = 0; i < argCount; ++i)
+    {
+        newArray->push(args[i]);
+    }
+
+    return newArray;
+}
+
+Array * Array::newFromRawData(VM & vm, const TypeId * dataType, const void * data, const int lengthInItems)
+{
+    MOON_ASSERT(data != nullptr);
+    auto newArray = static_cast<Array *>(Array::newInstance(vm, vm.types.arrayTypeId));
+    newArray->setItemTypeSize(dataType);
+    newArray->push(data, lengthInItems);
+    return newArray;
+}
+
+void Array::push(const Variant var)
+{
+    if (var.type != varType)
+    {
+        MOON_RUNTIME_EXCEPTION("trying to push " + toString(var.type) +
+                               " into array of " + toString(varType));
+    }
+
+    reserveCapacity(arrayLen + 1);
+    appendInternal(&var.value, 1);
+}
+
+void Array::push(const Array & other)
+{
+    if (other.varType != varType)
+    {
+        MOON_RUNTIME_EXCEPTION("trying to append array of " + toString(other.varType) +
+                               " into array of " + toString(varType));
+    }
+    if (other.isEmptyArray())
+    {
+        return;
+    }
+
+    MOON_ASSERT(itemSize == other.itemSize);
+    reserveCapacity(arrayLen + other.arrayLen);
+    appendInternal(other.getDataPtr(), other.arrayLen);
+}
+
+void Array::push(const void * data, const int lengthInItems)
+{
+    // Assumes the input data format matches the array type.
+    MOON_ASSERT(data != nullptr);
+    reserveCapacity(arrayLen + lengthInItems);
+    appendInternal(data, lengthInItems);
+}
+
+Variant Array::getIndex(const int index) const
+{
+    MOON_ASSERT(itemSize > 0);
+    MOON_ASSERT(UInt32(itemSize) <= sizeof(Variant::Value));
+
+    if (index < 0 || index >= arrayLen)
+    {
+        MOON_RUNTIME_EXCEPTION("array index " + toString(index) +
+                               " is out-of-bound for array of length " +
+                               toString(arrayLen));
+    }
+
+    Variant var{ varType };
+    std::memcpy(&var.value, getDataPtr() + (index * itemSize), itemSize);
+    return var;
+}
+
+void Array::setIndex(const int index, const Variant var)
+{
+    MOON_ASSERT(itemSize > 0);
+    MOON_ASSERT(UInt32(itemSize) <= sizeof(Variant::Value));
+
+    if (index < 0 || index >= arrayLen)
+    {
+        MOON_RUNTIME_EXCEPTION("array index " + toString(index) +
+                               " is out-of-bound for array of length " +
+                               toString(arrayLen));
+    }
+    if (var.type != varType)
+    {
+        MOON_RUNTIME_EXCEPTION("trying to insert " + toString(var.type) +
+                               " into array of " + toString(varType));
+    }
+
+    std::memcpy(getDataPtr() + (index * itemSize), &var.value, itemSize);
+}
+
+void Array::setItemTypeSize(const TypeId * tid)
+{
+    MOON_ASSERT(tid != nullptr && isRcStringValid(tid->name));
+
+    using VT = Variant::Type;
+    const auto hashId = tid->name->hashVal;
+
+    if      (ct::hashCString( "int"      ) == hashId) { varType = VT::Integer;  itemSize = sizeof(Int32);      }
+    else if (ct::hashCString( "long"     ) == hashId) { varType = VT::Integer;  itemSize = sizeof(Int64);      }
+    else if (ct::hashCString( "float"    ) == hashId) { varType = VT::Float;    itemSize = sizeof(Float32);    }
+    else if (ct::hashCString( "double"   ) == hashId) { varType = VT::Float;    itemSize = sizeof(Float64);    }
+    else if (ct::hashCString( "bool"     ) == hashId) { varType = VT::Integer;  itemSize = sizeof(Int8);       }
+    else if (ct::hashCString( "range"    ) == hashId) { varType = VT::Range;    itemSize = sizeof(Range);      }
+    else if (ct::hashCString( "any"      ) == hashId) { varType = VT::Any;      itemSize = sizeof(Variant);    }
+    else if (ct::hashCString( "object"   ) == hashId) { varType = VT::Object;   itemSize = sizeof(Object *);   }
+    else if (ct::hashCString( "function" ) == hashId) { varType = VT::Function; itemSize = sizeof(Function *); }
+    else if (ct::hashCString( "str"      ) == hashId) { varType = VT::Str;      itemSize = sizeof(Str *);      }
+    else if (ct::hashCString( "array"    ) == hashId) { varType = VT::Array;    itemSize = sizeof(Array *);    }
+    else if (ct::hashCString( "tid"      ) == hashId) { varType = VT::Tid;      itemSize = sizeof(TypeId *);   }
+    else
+    {
+        MOON_RUNTIME_EXCEPTION("bad variable type id '" + toString(tid->name) +
+                               "' (" + strPrintF("0x%08X", hashId) + ")");
+    }
+}
+
+void Array::reserveCapacity(const int capacityHint)
+{
+    if (capacityHint <= getArrayCapacity())
+    {
+        return;
+    }
+
+    auto vec = castTo<VecType>();
+    if (!isVector)
+    {
+        // Save the old in-place data buffer:
+        const Backing oldData = backingStore;
+        const Int32   oldLen  = arrayLen;
+
+        // Blast the old data into space...
+        std::memset(&backingStore, 0, sizeof(backingStore));
+        arrayLen = 0;
+
+        // New vector gets placement newed in the old in-place backing buffer:
+        ::new(vec) VecType{};
+        isVector = true;
+
+        // Copy the old data back in:
+        vec->resize(capacityHint * itemSize);
+        appendInternal(&oldData, oldLen);
+    }
+    else // Already in vector mode.
+    {
+        vec->resize(capacityHint * itemSize);
+    }
+}
+
+int Array::getArrayCapacity() const noexcept
+{
+    MOON_ASSERT(itemSize > 0);
+    MOON_ASSERT(UInt32(itemSize) <= sizeof(Variant::Value));
+
+    const UInt32 bytesAllocated = isVector ? castTo<VecType>()->size() : sizeof(backingStore);
+    return static_cast<int>(bytesAllocated / itemSize);
+}
+
+void Array::appendInternal(const void * data, const int lengthInItems)
+{
+    MOON_ASSERT(itemSize > 0);
+    MOON_ASSERT(UInt32(itemSize) <= sizeof(Variant::Value));
+    MOON_ASSERT((getArrayCapacity() - arrayLen) >= lengthInItems);
+
+    if (lengthInItems > 0)
+    {
+        std::memcpy(getDataPtr() + (arrayLen * itemSize), data, lengthInItems * itemSize);
+        arrayLen += lengthInItems;
+    }
+}
+
+std::string Array::getStringRepresentation() const
+{
+    // Add the object's own address:
+    std::string finalStr = getAddressString() + "\n";
+    finalStr += getTypeName();
+    finalStr += "{\n";
+
+    finalStr += "  length => " + toString(arrayLen) + ",\n";
+    finalStr += "  item_size => " + toString(itemSize) + ",\n";
+    finalStr += "  item_type => " + toString(varType)  + ",\n";
+    finalStr += "  dynamic => " + toString(isDynamicArray() ? "yes" : "no") + ",\n";
+
+    const UInt32 capBytes = isVector ? castTo<VecType>()->capacity() : sizeof(backingStore);
+    finalStr += "  capacity => " + toString((itemSize > 0) ? capBytes / itemSize : 0u) + ",\n";
+    finalStr += "  mem_bytes => " + toString(capBytes) + ",\n";
+
+    #if MOON_PRINT_RT_OBJECT_FLAGS
+    finalStr += "  flags => '";
+    if (flags.isAlive)       { finalStr += "A"; }
+    else                     { finalStr += "D"; }
+    if (flags.isPersistent)  { finalStr += "P"; }
+    if (flags.isTemplateObj) { finalStr += "T"; }
+    finalStr += "',\n";
+    #endif // MOON_PRINT_RT_OBJECT_FLAGS
+
+    finalStr += "}\n";
+    return finalStr;
+}
+
+Array::~Array()
+{
+    if (isVector)
+    {
+        destroy(castTo<VecType>());
+    }
 }
 
 // ========================================================
@@ -831,13 +1110,14 @@ const BuiltInTypeDesc * getBuiltInTypeNames()
         { ConstRcStrUPtr{ newConstRcString( "int"       ) }, nullptr, false },
         { ConstRcStrUPtr{ newConstRcString( "long"      ) }, nullptr, false },
         { ConstRcStrUPtr{ newConstRcString( "float"     ) }, nullptr, false },
+        { ConstRcStrUPtr{ newConstRcString( "double"    ) }, nullptr, false },
         { ConstRcStrUPtr{ newConstRcString( "bool"      ) }, nullptr, false },
         { ConstRcStrUPtr{ newConstRcString( "range"     ) }, nullptr, false },
         { ConstRcStrUPtr{ newConstRcString( "any"       ) }, nullptr, false },
         { ConstRcStrUPtr{ newConstRcString( "object"    ) }, nullptr, false },
         { ConstRcStrUPtr{ newConstRcString( "function"  ) }, nullptr, false },
-        { ConstRcStrUPtr{ newConstRcString( "str"       ) }, &Str::createInstance,   false },
-        { ConstRcStrUPtr{ newConstRcString( "array"     ) }, &Array::createInstance, false },
+        { ConstRcStrUPtr{ newConstRcString( "str"       ) }, &Str::newInstance,   false },
+        { ConstRcStrUPtr{ newConstRcString( "array"     ) }, &Array::newInstance, false },
         // Internal types (not actual types usable in code):
         { ConstRcStrUPtr{ newConstRcString( "varargs"   ) }, nullptr, true },
         { ConstRcStrUPtr{ newConstRcString( "void"      ) }, nullptr, true },

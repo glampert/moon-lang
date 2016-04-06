@@ -13,6 +13,9 @@
 namespace moon
 {
 
+//TODO missing operators for Object, Tid, Array Range and Any Variant::Types!
+//String operators must also be reviewed to include logic not/or/and
+
 // ------------------------------------------------------------------
 // BINARY OPERATOR TABLES:
 //
@@ -265,7 +268,7 @@ static const OpDefs float_func  = {{ 0,   0,   0,   0,   0,   0,     0,   0,    
 static const OpDefs str_null    = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
 static const OpDefs str_int     = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
 static const OpDefs str_float   = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
-static const OpDefs str_str     = {{ 1,   1,   1,   1,   1,   1,     0,   0,     0,   1,   0,   0,   0 }}; //TODO allow and/or on string-string
+static const OpDefs str_str     = {{ 1,   1,   1,   1,   1,   1,     1,   1,     0,   1,   0,   0,   0 }};
 static const OpDefs str_func    = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
 //                                   !=   ==   >=   >    <=   <      or   and    -    +    %    /    *
 static const OpDefs func_null   = {{ 1,   1,   1,   1,   1,   1,     1,   1,     0,   0,   0,   0,   0 }};
@@ -274,16 +277,22 @@ static const OpDefs func_float  = {{ 0,   0,   0,   0,   0,   0,     0,   0,    
 static const OpDefs func_str    = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
 static const OpDefs func_func   = {{ 1,   1,   1,   1,   1,   1,     1,   1,     0,   0,   0,   0,   0 }};
 
+//TODO finish up this table!
 static constexpr UInt32 Cols = static_cast<UInt32>(Variant::Type::Count);
 static constexpr UInt32 Rows = static_cast<UInt32>(Variant::Type::Count);
 static const OpDefs * opsTable[Cols][Rows]
 {
-/*                  Null       Integer       Float        String      Function */
-/* Null     */ { &null_null,  &null_int,  &null_float,  &null_str,  &null_func  },
-/* Integer  */ { &int_null,   &int_int,   &int_float,   &int_str,   &int_func   },
-/* Float    */ { &float_null, &float_int, &float_float, &float_str, &float_func },
-/* String   */ { &str_null,   &str_int,   &str_float,   &str_str,   &str_func   },
-/* Function */ { &func_null,  &func_int,  &func_float,  &func_str,  &func_func  },
+/*                 Null       Integer       Float        Function      Tid       Str        Object    Array    Range    Any */
+/* Null     */ { &null_null,  &null_int,  &null_float,  &null_func,  nullptr,   &null_str,  nullptr,  nullptr, nullptr, nullptr },
+/* Integer  */ { &int_null,   &int_int,   &int_float,   &int_func,   nullptr,   &int_str,   nullptr,  nullptr, nullptr, nullptr },
+/* Float    */ { &float_null, &float_int, &float_float, &float_func, nullptr,   &float_str, nullptr,  nullptr, nullptr, nullptr },
+/* Function */ { &func_null,  &func_int,  &func_float,  &func_func,  nullptr,   &func_str,  nullptr,  nullptr, nullptr, nullptr },
+/* Tid      */ { nullptr,     nullptr,    nullptr,      nullptr,     nullptr,   nullptr,    nullptr,  nullptr, nullptr, nullptr },
+/* Str      */ { &str_null,   &str_int,   &str_float,   &str_func,   nullptr,   &str_str,   nullptr,  nullptr, nullptr, nullptr },
+/* Object   */ { nullptr,     nullptr,    nullptr,      nullptr,     nullptr,   nullptr,    nullptr,  nullptr, nullptr, nullptr },
+/* Array    */ { nullptr,     nullptr,    nullptr,      nullptr,     nullptr,   nullptr,    nullptr,  nullptr, nullptr, nullptr },
+/* Range    */ { nullptr,     nullptr,    nullptr,      nullptr,     nullptr,   nullptr,    nullptr,  nullptr, nullptr, nullptr },
+/* Any      */ { nullptr,     nullptr,    nullptr,      nullptr,     nullptr,   nullptr,    nullptr,  nullptr, nullptr, nullptr }
 };
 
 // ========================================================
@@ -292,6 +301,10 @@ static const OpDefs * opsTable[Cols][Rows]
 
 static Variant binaryOpOnStrings(const OpCode op, const Variant varA, const Variant varB)
 {
+    //TODO
+    (void)op; (void)varA; (void)varB;
+    MOON_UNREACHABLE();
+#if 0
     // Concatenate strings with operator +
     if (op == OpCode::Add)
     {
@@ -303,7 +316,7 @@ static Variant binaryOpOnStrings(const OpCode op, const Variant varA, const Vari
         std::strcpy(newStr, varA.value.asString);
         std::strcat(newStr, varB.value.asString);
 
-        Variant result{ Variant::Type::String };
+        Variant result{ Variant::Type::Str };
         result.value.asString = newStr;
         return result;
     }
@@ -322,6 +335,7 @@ static Variant binaryOpOnStrings(const OpCode op, const Variant varA, const Vari
     default                      : { MOON_UNREACHABLE(); }
     } // switch (op)
     return result;
+#endif//0
 }
 
 static Variant binaryOpOnObjects(const OpCode op, const Variant varA, const Variant varB)
@@ -402,7 +416,7 @@ Variant performBinaryOp(const OpCode op, const Variant varA, const Variant varB)
         }
 
     // Strings only work with other strings:
-    case Variant::Type::String :
+    case Variant::Type::Str :
         return binaryOpOnStrings(op, varA, varB);
 
     // Generic objects only allows basic comparisons:
@@ -566,7 +580,7 @@ void performAssignmentWithConversion(Variant & dest, const Variant source)
     {
     CASE_1( Variant::Type::Integer,  asInteger  );
     CASE_1( Variant::Type::Float,    asFloat    );
-    CASE_2( Variant::Type::String,   asString   );
+    CASE_2( Variant::Type::Str,      asString   );
     CASE_2( Variant::Type::Function, asFunction );
     CASE_2( Variant::Type::Tid,      asTypeId   );
     CASE_2( Variant::Type::Object,   asObject   );
@@ -597,26 +611,27 @@ struct OpsTableTest
         // Logical:
         MOON_ASSERT(isBinaryOpValid(OpCode::CmpNotEqual, Variant::Type::Integer, Variant::Type::Float)    == true);
         MOON_ASSERT(isBinaryOpValid(OpCode::CmpEqual,    Variant::Type::Float,   Variant::Type::Integer)  == true);
-        MOON_ASSERT(isBinaryOpValid(OpCode::CmpLess,     Variant::Type::String,  Variant::Type::String)   == true);
+        MOON_ASSERT(isBinaryOpValid(OpCode::CmpLess,     Variant::Type::Str,     Variant::Type::Str)      == true);
         MOON_ASSERT(isBinaryOpValid(OpCode::LogicAnd,    Variant::Type::Float,   Variant::Type::Float)    == true);
 
-        MOON_ASSERT(isBinaryOpValid(OpCode::CmpNotEqual, Variant::Type::Integer, Variant::Type::String)   == false);
+        MOON_ASSERT(isBinaryOpValid(OpCode::CmpNotEqual, Variant::Type::Integer, Variant::Type::Str)      == false);
         MOON_ASSERT(isBinaryOpValid(OpCode::CmpEqual,    Variant::Type::Float,   Variant::Type::Function) == false);
-        MOON_ASSERT(isBinaryOpValid(OpCode::CmpLess,     Variant::Type::String,  Variant::Type::Null)     == false);
-        MOON_ASSERT(isBinaryOpValid(OpCode::LogicAnd,    Variant::Type::String,  Variant::Type::String)   == false);
+        MOON_ASSERT(isBinaryOpValid(OpCode::CmpLess,     Variant::Type::Str,     Variant::Type::Null)     == false);
+        MOON_ASSERT(isBinaryOpValid(OpCode::LogicAnd,    Variant::Type::Str,     Variant::Type::Str)      == true);
+        MOON_ASSERT(isBinaryOpValid(OpCode::LogicOr,     Variant::Type::Str,     Variant::Type::Str)      == true);
 
         // Arithmetical:
-        MOON_ASSERT(isBinaryOpValid(OpCode::Add, Variant::Type::String,  Variant::Type::String)   == true);
+        MOON_ASSERT(isBinaryOpValid(OpCode::Add, Variant::Type::Str,     Variant::Type::Str)      == true);
         MOON_ASSERT(isBinaryOpValid(OpCode::Add, Variant::Type::Integer, Variant::Type::Float)    == true);
         MOON_ASSERT(isBinaryOpValid(OpCode::Sub, Variant::Type::Float,   Variant::Type::Integer)  == true);
         MOON_ASSERT(isBinaryOpValid(OpCode::Mod, Variant::Type::Float,   Variant::Type::Float)    == true);
         MOON_ASSERT(isBinaryOpValid(OpCode::Mod, Variant::Type::Integer, Variant::Type::Float)    == true);
 
-        MOON_ASSERT(isBinaryOpValid(OpCode::Add, Variant::Type::String,  Variant::Type::Float)    == false);
-        MOON_ASSERT(isBinaryOpValid(OpCode::Add, Variant::Type::Integer, Variant::Type::String)   == false);
+        MOON_ASSERT(isBinaryOpValid(OpCode::Add, Variant::Type::Str,     Variant::Type::Float)    == false);
+        MOON_ASSERT(isBinaryOpValid(OpCode::Add, Variant::Type::Integer, Variant::Type::Str)      == false);
         MOON_ASSERT(isBinaryOpValid(OpCode::Sub, Variant::Type::Float,   Variant::Type::Function) == false);
-        MOON_ASSERT(isBinaryOpValid(OpCode::Mod, Variant::Type::String,  Variant::Type::Integer)  == false);
-        MOON_ASSERT(isBinaryOpValid(OpCode::Div, Variant::Type::String,  Variant::Type::String)   == false);
+        MOON_ASSERT(isBinaryOpValid(OpCode::Mod, Variant::Type::Str,     Variant::Type::Integer)  == false);
+        MOON_ASSERT(isBinaryOpValid(OpCode::Div, Variant::Type::Str,     Variant::Type::Str)      == false);
 
         logStream() << "Moon: Operations table test passed.\n";
     }
@@ -635,13 +650,6 @@ struct BinOpsTest
         varB.type = Variant::Type::Float;
         varB.value.asFloat = 1;
         result = performBinaryOp(OpCode::CmpEqual, varA, varB);
-        MOON_ASSERT(result.type == Variant::Type::Integer && result.toBool() == true);
-
-        varA.type = Variant::Type::String;
-        varA.value.asString = "Hello";
-        varB.type = Variant::Type::String;
-        varB.value.asString = "World";
-        result = performBinaryOp(OpCode::CmpNotEqual, varA, varB);
         MOON_ASSERT(result.type == Variant::Type::Integer && result.toBool() == true);
 
         varA.type = Variant::Type::Null;
@@ -672,13 +680,6 @@ struct BinOpsTest
         varB.value.asInteger = 2;
         result = performBinaryOp(OpCode::Mod, varA, varB);
         MOON_ASSERT(result.type == Variant::Type::Integer && result.value.asInteger == 1);
-
-        varA.type = Variant::Type::String;
-        varA.value.asString = "Hello";
-        varB.type = Variant::Type::String;
-        varB.value.asString = "World";
-        result = performBinaryOp(OpCode::Add, varA, varB);
-        MOON_ASSERT(result.type == Variant::Type::String && std::strcmp(result.value.asString, "HelloWorld") == 0);
 
         logStream() << "Moon: Binary ops test passed.\n";
     }

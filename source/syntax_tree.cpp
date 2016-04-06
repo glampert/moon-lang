@@ -89,6 +89,7 @@ std::string toString(const SyntaxTreeNode::Eval evalType)
         color::yellow() + std::string("EVAL_INT")     + color::restore(),
         color::yellow() + std::string("EVAL_LONG")    + color::restore(),
         color::yellow() + std::string("EVAL_FLOAT")   + color::restore(),
+        color::yellow() + std::string("EVAL_DOUBLE")  + color::restore(),
         color::yellow() + std::string("EVAL_BOOL")    + color::restore(),
         color::yellow() + std::string("EVAL_STRING")  + color::restore(),
         color::yellow() + std::string("EVAL_ARRAY")   + color::restore(),
@@ -107,9 +108,9 @@ SyntaxTreeNode::Eval evalTypeFromSymbol(const Symbol & sym)
     switch (sym.type)
     {
     case Symbol::Type::IntLiteral   : return SyntaxTreeNode::Eval::Long;
-    case Symbol::Type::FloatLiteral : return SyntaxTreeNode::Eval::Float;
+    case Symbol::Type::FloatLiteral : return SyntaxTreeNode::Eval::Double;
     case Symbol::Type::BoolLiteral  : return SyntaxTreeNode::Eval::Bool;
-    case Symbol::Type::StrLiteral   : return SyntaxTreeNode::Eval::String;
+    case Symbol::Type::StrLiteral   : return SyntaxTreeNode::Eval::Str;
     case Symbol::Type::Identifier   : return SyntaxTreeNode::Eval::UDT;
     default                         : return SyntaxTreeNode::Eval::Undefined;
     } // switch (sym.type)
@@ -125,8 +126,9 @@ const Symbol * symbolFromEval(const SymbolTable & symTable, const SyntaxTreeNode
     case SyntaxTreeNode::Eval::Int     : return symTable.findSymbol("int");
     case SyntaxTreeNode::Eval::Long    : return symTable.findSymbol("long");
     case SyntaxTreeNode::Eval::Float   : return symTable.findSymbol("float");
+    case SyntaxTreeNode::Eval::Double  : return symTable.findSymbol("double");
     case SyntaxTreeNode::Eval::Bool    : return symTable.findSymbol("bool");
-    case SyntaxTreeNode::Eval::String  : return symTable.findSymbol("str");
+    case SyntaxTreeNode::Eval::Str     : return symTable.findSymbol("str");
     case SyntaxTreeNode::Eval::Array   : return symTable.findSymbol("array");
     case SyntaxTreeNode::Eval::Range   : return symTable.findSymbol("range");
     case SyntaxTreeNode::Eval::Any     : return symTable.findSymbol("any");

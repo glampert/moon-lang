@@ -37,8 +37,9 @@ struct SyntaxTreeNode final
         Int,
         Long,
         Float,
+        Double,
         Bool,
-        String,
+        Str,
         Array,
         Range,
         Any,
@@ -117,7 +118,7 @@ struct SyntaxTreeNode final
     const SyntaxTreeNode * children[3]; // Pointers to the these node's children.
     const Symbol * const symbol;        // Pointer to a symbol, if applicable.
     const Type nodeType;                // What type of node is it. See the 'Type' enum above.
-    const Eval evalType;                // Evaluation or "return value" type of the node.
+    Eval evalType;                      // Evaluation or "return value" type of the node. Might be updated after construction.
 
     // All-in-one constructor:
     SyntaxTreeNode(Type type,

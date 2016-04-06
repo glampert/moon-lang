@@ -37,7 +37,8 @@ DEBUG_FLAGS = -g                 \
               -DMOON_DEBUG=1
 
 GLOBAL_DEFINES = -DMOON_ENABLE_ASSERT=1 \
-                 -DMOON_PRINT_USE_ANSI_COLOR_CODES=1
+                 -DMOON_PRINT_USE_ANSI_COLOR_CODES=1 \
+                 -DMOON_PRINT_RT_OBJECT_FLAGS=1
 
 WARNS_USED = -Wall                   \
              -Wextra                 \

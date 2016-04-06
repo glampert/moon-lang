@@ -107,22 +107,32 @@ void to_string(VM & vm, Stack::Slice args) // (varargs) -> string
     auto fmt = args.next();
     std::string outputStr;
 
-    //TODO a flag to print integers as characters
     if (fmt != nullptr)
     {
-        if (fmt->type != Variant::Type::String)
+        if (fmt->type != Variant::Type::Str || fmt->value.asString == nullptr)
         {
             MOON_RUNTIME_EXCEPTION("to_string() format flag should be a string, "
                                    "e.g.: \"b\", \"f\", \"h\", \"p\", etc");
         }
 
         // Print with specific format:
-        const char * flag = fmt->value.asString;
+        const char * flag = fmt->value.asString->c_str();
         switch (*flag)
         {
         case 'b' : // boolean
             outputStr = toString(var->toBool());
             // Anything but zero/null will be true, including negative numbers.
+            break;
+
+        case 'c' : // character
+            if (var->type == Variant::Type::Integer)
+            {
+                outputStr = strPrintF("%c", static_cast<char>(var->value.asInteger));
+            }
+            else
+            {
+                outputStr = "?";
+            }
             break;
 
         case 'f' : // float
@@ -201,13 +211,8 @@ void to_string(VM & vm, Stack::Slice args) // (varargs) -> string
         outputStr = toString(*var);
     }
 
-    //FIXME temp: str is never freed for now...
-    auto newStr = new char[outputStr.length() + 1];
-    std::strcpy(newStr, outputStr.c_str());
-
-    Variant result{ Variant::Type::String };
-    result.value.asString = newStr;
-
+    Variant result{ Variant::Type::Str };
+    result.value.asString = Str::newFromString(vm, outputStr, /* makeConst = */ false);
     vm.setReturnValue(result);
 }
 
@@ -229,13 +234,13 @@ void to_string(VM & vm, Stack::Slice args) // (varargs) -> string
 
 void registerNativeBuiltInFunctions(FunctionTable & funcTable)
 {
-    const auto RetString = Variant::Type::String;
+    const auto retString = Variant::Type::Str;
 
     ADD_VARARGS_FUNC( funcTable, nullptr,    assert,    Function::VarArgs | Function::AddCallerInfo | Function::DebugOnly );
     ADD_VARARGS_FUNC( funcTable, nullptr,    panic,     Function::VarArgs | Function::AddCallerInfo );
     ADD_VARARGS_FUNC( funcTable, nullptr,    print,     Function::VarArgs );
     ADD_VARARGS_FUNC( funcTable, nullptr,    println,   Function::VarArgs );
-    ADD_VARARGS_FUNC( funcTable, &RetString, to_string, Function::VarArgs );
+    ADD_VARARGS_FUNC( funcTable, &retString, to_string, Function::VarArgs );
 }
 
 #undef ADD_VARARGS_FUNC

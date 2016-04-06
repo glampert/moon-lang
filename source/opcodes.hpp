@@ -19,6 +19,7 @@ namespace moon
 // OpCode constants:
 // ========================================================
 
+//TODO provide more descriptive comments on each op
 enum class OpCode : UInt8
 {
     NoOp = 0,
@@ -124,6 +125,9 @@ enum class OpCode : UInt8
 // must also fit in a byte. Hence the name "bytecode" sometimes used.
 static_assert(UInt32(OpCode::Count) <= 255, "Too many opcodes! Value must fit in a byte!");
 
+// OpCode to printable string. No color coding added.
+std::string toString(OpCode op);
+
 inline bool isJumpOpCode(const OpCode op) noexcept
 {
     return op == OpCode::Jmp        ||
@@ -138,8 +142,6 @@ inline bool referencesStackData(const OpCode op) noexcept
            op == OpCode::StoreLocal ||
            op == OpCode::MemberStoreLocal;
 }
-
-std::string toString(OpCode op);
 
 // ========================================================
 // VM instruction representation:

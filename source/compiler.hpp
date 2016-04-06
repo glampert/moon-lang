@@ -41,8 +41,8 @@ struct IntermediateInstr final
     OpCode              op;
 };
 
-using DataMap  = std::unordered_map<const Symbol *, UInt32>;
-using InstrMap = std::unordered_map<const IntermediateInstr *, UInt32>;
+using DataMap  = HashTable<const Symbol *, UInt32>;
+using InstrMap = HashTable<const IntermediateInstr *, UInt32>;
 
 // ========================================================
 // class Compiler:
@@ -124,16 +124,8 @@ public:
 
 private:
 
-    void createMappings(VM::DataVector & progData,
-                        VM::CodeVector & progCode,
-                        FunctionTable  & funcTable,
-                        TypeTable      & typeTable,
-                        IntermediateInstr * listHead,
-                        bool skipFunctions);
-
-    void fixReferences(const IntermediateInstr * instr,
-                       VM::CodeVector & progCode,
-                       FunctionTable  & funcTable);
+    void createMappings(VM & vm, IntermediateInstr * listHead, bool skipFunctions);
+    void fixReferences(const IntermediateInstr * instr, VM::CodeVector & progCode, FunctionTable & funcTable);
 
     void intermediateToVM(VM & vm);
     void collectFunctionVarSymbols(const SyntaxTreeNode * root);

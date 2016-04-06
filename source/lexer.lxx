@@ -246,6 +246,7 @@ NEW_LINE      [\n\r]
 "int"            { LEX_LOG_TYPE( "int"      ); return moon::Parser::token::TID_INT;          }
 "long"           { LEX_LOG_TYPE( "long"     ); return moon::Parser::token::TID_LONG;         }
 "float"          { LEX_LOG_TYPE( "float"    ); return moon::Parser::token::TID_FLT;          }
+"double"         { LEX_LOG_TYPE( "double"   ); return moon::Parser::token::TID_DBL;          }
 "bool"           { LEX_LOG_TYPE( "bool"     ); return moon::Parser::token::TID_BOOL;         }
 "str"            { LEX_LOG_TYPE( "str"      ); return moon::Parser::token::TID_STR;          }
 "array"          { LEX_LOG_TYPE( "array"    ); return moon::Parser::token::TID_ARRAY;        }

@@ -110,8 +110,9 @@ static Variant::Type varTypeForNodeEval(const Compiler & compiler, const SyntaxT
     case SyntaxTreeNode::Eval::Int    : return Variant::Type::Integer;
     case SyntaxTreeNode::Eval::Long   : return Variant::Type::Integer;
     case SyntaxTreeNode::Eval::Float  : return Variant::Type::Float;
+    case SyntaxTreeNode::Eval::Double : return Variant::Type::Float;
     case SyntaxTreeNode::Eval::Bool   : return Variant::Type::Integer;
-    case SyntaxTreeNode::Eval::String : return Variant::Type::String;
+    case SyntaxTreeNode::Eval::Str    : return Variant::Type::Str;
     case SyntaxTreeNode::Eval::UDT    :
         {
             const Symbol * symbol = node->symbol;
@@ -126,11 +127,7 @@ static Variant::Type varTypeForNodeEval(const Compiler & compiler, const SyntaxT
     } // switch (eval)
 }
 
-static UInt32 addSymbolToProgData(VM::DataVector & progData,
-                                  FunctionTable & funcTable,
-                                  TypeTable & typeTable,
-                                  const Symbol & sym,
-                                  const Variant::Type type)
+static UInt32 addSymbolToProgData(VM & vm, const Symbol & sym, const Variant::Type type)
 {
     Variant var{}; // Default initialized to null.
 
@@ -142,7 +139,7 @@ static UInt32 addSymbolToProgData(VM::DataVector & progData,
         // Some of the types require special handing:
         if (type == Variant::Type::Function)
         {
-            var.value.asFunction = funcTable.findFunction(sym.name);
+            var.value.asFunction = vm.functions.findFunction(sym.name);
             if (var.value.asFunction == nullptr)
             {
                 // We should not hit this error. The parser should have already validated undefined func calls.
@@ -151,7 +148,7 @@ static UInt32 addSymbolToProgData(VM::DataVector & progData,
         }
         else if (type == Variant::Type::Tid)
         {
-            var.value.asTypeId = typeTable.findTypeId(sym.name);
+            var.value.asTypeId = vm.types.findTypeId(sym.name);
             if (var.value.asTypeId == nullptr)
             {
                 MOON_INTERNAL_EXCEPTION("referencing undefined type '" + toString(sym.name) + "'");
@@ -160,11 +157,11 @@ static UInt32 addSymbolToProgData(VM::DataVector & progData,
     }
     else // Literal constants/strings:
     {
-        var = variantFromSymbol(sym);
+        var = variantFromSymbol(vm, sym);
     }
 
-    progData.push_back(var);
-    return static_cast<UInt32>(progData.size() - 1);
+    vm.data.push_back(var);
+    return static_cast<UInt32>(vm.data.size() - 1);
 }
 
 static void printIntermediateInstrListHelper(const IntermediateInstr * head, std::ostream & os)
@@ -643,7 +640,7 @@ static IntermediateInstr * setUpMemberOffsetLoadChain(Compiler & compiler, const
         const auto & member = lastMemberTypeId->templateObject->getMemberAt(lastMemberOffset);
         if (member.data.type == Variant::Type::Object)
         {
-            lastMemberTypeId = member.data.value.asObject->typeId;
+            lastMemberTypeId = member.data.value.asObject->getTypeId();
         }
 
         // [0:1] is the first obj.member pair. A chain might follow.
@@ -666,7 +663,7 @@ static IntermediateInstr * setUpMemberOffsetLoadChain(Compiler & compiler, const
             const auto & subMember = lastMemberTypeId->templateObject->getMemberAt(lastMemberOffset);
             if (subMember.data.type == Variant::Type::Object)
             {
-                lastMemberTypeId = subMember.data.value.asObject->typeId;
+                lastMemberTypeId = subMember.data.value.asObject->getTypeId();
             }
         }
     }
@@ -802,7 +799,7 @@ static IntermediateInstr * emitMemberRef(Compiler & compiler, const SyntaxTreeNo
         const auto & member = compiler.lastMemberTypeId->templateObject->getMemberAt(memberOffset);
         if (member.data.type == Variant::Type::Object)
         {
-            compiler.lastMemberTypeId = member.data.value.asObject->typeId;
+            compiler.lastMemberTypeId = member.data.value.asObject->getTypeId();
         }
     }
     else // Going down a chain of obj.member.member.member ...
@@ -821,7 +818,7 @@ static IntermediateInstr * emitMemberRef(Compiler & compiler, const SyntaxTreeNo
         const auto & member = compiler.lastMemberTypeId->templateObject->getMemberAt(memberOffset);
         if (member.data.type == Variant::Type::Object)
         {
-            compiler.lastMemberTypeId = member.data.value.asObject->typeId;
+            compiler.lastMemberTypeId = member.data.value.asObject->getTypeId();
         }
     }
 
@@ -1097,6 +1094,7 @@ static IntermediateInstr * emitMatchDefault(Compiler & compiler, const SyntaxTre
 // Some will emit instructions and possibly recurse by calling
 // traverseTreeRecursive() again with the child nodes of the subtree.
 // ----------------------------------------------------------------------------
+//TODO note: should avoid emitting those no-ops for type nodes and such...
 static const EmitInstrForNodeCB emitInstrCallbacks[]
 {
     &emitProgStart,                                         // TranslationUnit
@@ -1169,7 +1167,7 @@ static IntermediateInstr * traverseTreeRecursive(Compiler & compiler, const Synt
 
 void Compiler::compile(VM & vm)
 {
-    runtimeTypes = &vm.runtimeTypes;
+    runtimeTypes = &vm.types;
     globCodeListHead = traverseTreeRecursive(*this, syntTree.getRoot());
     intermediateToVM(vm);
 }
@@ -1369,8 +1367,7 @@ void Compiler::intermediateToVM(VM & vm)
 
     // This step removes duplicate data and unneeded noops from the intermediate code.
     // It also serves to separate the function definition from the rest of the code.
-    createMappings(vm.data, vm.code, vm.functions, vm.runtimeTypes,
-                   globCodeListHead, /* skipFunctions = */ true);
+    createMappings(vm, globCodeListHead, /* skipFunctions = */ true);
 
     // Pad the end with an instruction to anchor any potential jumps to the
     // end of the program, since we have removed all the other noop anchors.
@@ -1378,8 +1375,7 @@ void Compiler::intermediateToVM(VM & vm)
     vm.code.push_back(packInstruction(OpCode::ProgEnd, 0));
 
     // Now we perform the same mapping for the function that got set aside in the previous step.
-    createMappings(vm.data, vm.code, vm.functions, vm.runtimeTypes,
-                   funcCodeListHead, /* skipFunctions = */ false);
+    createMappings(vm, funcCodeListHead, /* skipFunctions = */ false);
 
     // And map back the instructions into the code vector:
     IntermediateInstr * instr;
@@ -1393,9 +1389,7 @@ void Compiler::intermediateToVM(VM & vm)
     }
 }
 
-void Compiler::createMappings(VM::DataVector & progData, VM::CodeVector & progCode,
-                              FunctionTable  & funcTable, TypeTable & typeTable,
-                              IntermediateInstr * listHead, const bool skipFunctions)
+void Compiler::createMappings(VM & vm, IntermediateInstr * listHead, const bool skipFunctions)
 {
     IntermediateInstr * instr        = listHead;
     IntermediateInstr * prevInstr    = listHead;
@@ -1442,21 +1436,20 @@ void Compiler::createMappings(VM::DataVector & progData, VM::CodeVector & progCo
                 // Each symbol is added once.
                 if (dataMapping.find(instr->operand.symbol) == std::end(dataMapping))
                 {
-                    auto index = addSymbolToProgData(progData, funcTable, typeTable,
-                                                     *(instr->operand.symbol), instr->type);
+                    auto index = addSymbolToProgData(vm, *(instr->operand.symbol), instr->type);
                     dataMapping.emplace(instr->operand.symbol, index);
                 }
             }
 
             // Operand index is set later. For now this instruction is just a placeholder.
-            progCode.push_back(packInstruction(instr->op, 0));
-            instrMapping.emplace(instr, progCode.size() - 1);
+            vm.code.push_back(packInstruction(instr->op, 0));
+            instrMapping.emplace(instr, vm.code.size() - 1);
         }
         else
         {
             // The noop doesn't get inserted, so this instruction maps to the
-            // index of the next instruction to be added to the progCode vector.
-            instrMapping.emplace(instr, progCode.size());
+            // index of the next instruction to be added to the vm.code vector.
+            instrMapping.emplace(instr, vm.code.size());
         }
 
         // Advance to the next on list:

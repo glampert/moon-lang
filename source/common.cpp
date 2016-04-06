@@ -157,6 +157,48 @@ std::string escapeString(const char * unescaped)
     return escaped;
 }
 
+int compareCStringsNoCase(const char * s1, const char * s2, UInt32 count)
+{
+    MOON_ASSERT(s1 != nullptr);
+    MOON_ASSERT(s2 != nullptr);
+
+    if (s1 == s2)
+    {
+        return 0; // Same pointers, same string.
+    }
+
+    int c1, c2;
+    do
+    {
+        if (count == 0)
+        {
+            return 0; // Strings are equal until end.
+        }
+        --count;
+
+        c1 = *s1++;
+        c2 = *s2++;
+
+        int diff = c1 - c2;
+        while (diff) // Not the same char? Try changing the case...
+        {
+            if (c1 <= 'Z' && c1 >= 'A')
+            {
+                diff += ('a' - 'A');
+                if (!diff) { break; }
+            }
+            if (c2 <= 'Z' && c2 >= 'A')
+            {
+                diff -= ('a' - 'A');
+                if (!diff) { break; }
+            }
+            return (diff < 0) ? -1 : (diff > 0) ? 1 : 0;
+        }
+    } while (c1);
+
+    return 0; // Strings are equal.
+}
+
 UInt32 hashCString(const char * cstr)
 {
     MOON_ASSERT(cstr != nullptr);

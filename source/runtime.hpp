@@ -27,6 +27,8 @@ namespace moon
 struct Function;
 struct TypeId;
 class  Object;
+class  Array;
+class  Str;
 
 // ========================================================
 // Runtime Variant (the common data type):
@@ -39,12 +41,13 @@ struct Variant final
         Null = 0,
         Integer,
         Float,
-        String,
         Function,
-
-        //TODO these don't yet have operators for them!
-        Tid, // Type id
+        Tid,
+        Str,
         Object,
+        Array,
+        Range,
+        Any,
 
         // Number of types. Internal use.
         Count
@@ -52,13 +55,15 @@ struct Variant final
 
     union Value
     {
+        const void     * asVoidPtr;
         Int64            asInteger;
         Float64          asFloat;
-        const char     * asString; //TODO  replace with Str* at some point
         const Function * asFunction;
         const TypeId   * asTypeId;
+        Str            * asString;
         Object         * asObject;
-        void           * asVoidPtr;
+        Array          * asArray;
+        Range            asRange;
 
         Value() noexcept { asInteger = 0; }
     };
@@ -80,6 +85,11 @@ struct Variant final
     // Miscellaneous helpers:
     //
 
+    const void * getAsVoidPointer() const
+    {
+        // No specific type assumed.
+        return value.asVoidPtr;
+    }
     Int64 getAsInteger() const
     {
         MOON_ASSERT(type == Type::Integer);
@@ -89,11 +99,6 @@ struct Variant final
     {
         MOON_ASSERT(type == Type::Float);
         return value.asFloat;
-    }
-    const char * getAsCString() const
-    {
-        MOON_ASSERT(type == Type::String);
-        return value.asString;
     }
     const Function * getAsFunction() const
     {
@@ -105,15 +110,25 @@ struct Variant final
         MOON_ASSERT(type == Type::Tid);
         return value.asTypeId;
     }
+    Str * getAsString() const
+    {
+        MOON_ASSERT(type == Type::Str);
+        return value.asString;
+    }
     Object * getAsObject() const
     {
         MOON_ASSERT(type == Type::Object);
         return value.asObject;
     }
-    void * getAsVoidPointer() const
+    Array * getAsArray() const
     {
-        // No specific type assumed.
-        return value.asVoidPtr;
+        MOON_ASSERT(type == Type::Array);
+        return value.asArray;
+    }
+    Range getAsRange() const
+    {
+        MOON_ASSERT(type == Type::Range);
+        return value.asRange;
     }
 
     bool isZero() const noexcept { return value.asInteger == 0; }
@@ -132,7 +147,7 @@ std::string binaryOpToString(OpCode op);  // Prints the symbol if available, e.g
 std::string unaryOpToString(OpCode op);   // Prints the symbol or falls back to toString(OpCode).
 
 // Conversion helpers:
-Variant variantFromSymbol(const Symbol & sym);
+Variant variantFromSymbol(VM & vm, const Symbol & sym);
 Variant::Type variantTypeFromTypeId(const TypeId * tid);
 
 // Binary operator on Variant (*, %, ==, !=, etc):
@@ -398,13 +413,13 @@ void registerNativeBuiltInFunctions(FunctionTable & funcTable);
 // struct BuiltInTypeDesc:
 // ========================================================
 
-using ObjectFactoryCB = Object * (*)(const TypeId *, Object **);
+using ObjectFactoryCB = Object * (*)(VM &, const TypeId *);
 
 struct BuiltInTypeDesc final
 {
-    ConstRcStrUPtr name;
-    ObjectFactoryCB instCb;
-    const bool internalType; // Tells if this entry goes into the TypeTable.
+    ConstRcStrUPtr  name;
+    ObjectFactoryCB newInstance;
+    const bool      internalType; // Tells if this entry goes into the TypeTable.
 };
 
 // Return an array with a null entry terminating it.
@@ -417,7 +432,7 @@ const BuiltInTypeDesc * getBuiltInTypeNames();
 struct TypeId final
 {
     ConstRcString * name;           // Unique type name within a program.
-    ObjectFactoryCB createInstance; // Factory callback. May be null. Some built-ins don't have it.
+    ObjectFactoryCB newInstance;    // Factory callback. May be null. Some built-ins don't have it.
     const Object  * templateObject; // For a list of members. We just use the types and names.
     bool            isBuiltIn;      // int, float, string, array, etc.
     bool            isTypeAlias;    // Also true if this type was aliased by some other.
@@ -432,10 +447,19 @@ class TypeTable final
 {
 public:
 
-    explicit TypeTable(Object ** gcListHead);
+    explicit TypeTable(VM & vm);
 
-    // Cached ids for the common runtime classes:
-    const TypeId * stringTypeId;
+    // Cached ids for the common runtime types:
+    const TypeId * intTypeId;
+    const TypeId * longTypeId;
+    const TypeId * floatTypeId;
+    const TypeId * doubleTypeId;
+    const TypeId * boolTypeId;
+    const TypeId * rangeTypeId;
+    const TypeId * anyTypeId;
+    const TypeId * objectTypeId;
+    const TypeId * functionTypeId;
+    const TypeId * strTypeId;
     const TypeId * arrayTypeId;
 
     // Finds an already registered TypeId by name or returns null if nothing is found.
@@ -473,41 +497,27 @@ class Object
 {
 public:
 
-    //
-    // Common Object data:
-    //
+    friend class GC;
 
-    // Runtime type identifier and template for composite objects.
-    const TypeId * typeId;
+    // Miscellaneous flag bits:
+    struct BitFlags
+    {
+        bool isAlive       : 1;
+        bool isPersistent  : 1;
+        bool isTemplateObj : 1;
+    } flags;
 
-    // Link in the list of dynamically allocated GC objects.
-    Object * next;
-
-    // List of members. Since objects are generally small, a plain
-    // array+linear-search should be faster and more memory efficient
-    // than a full-blown hash-table on the average case.
-    struct Member final
+    // Member variable record (name ref is held by the object):
+    struct Member
     {
         ConstRcString * name;
         Variant         data;
     };
-    std::vector<Member> members;
-
-    /*
-    struct BitFlags
-    {
-        bool isAlive      : 1;
-        bool isPersistent : 1;
-        bool isTemplate   : 1;
-    };
-    BitFlags flags;
-    */
 
     //
     // Object interface:
     //
 
-    Object(const TypeId * tid, Object ** gcListHead);
     virtual ~Object();
 
     // Not copyable.
@@ -522,6 +532,7 @@ public:
     virtual void print(std::ostream & os) const;
     virtual std::string getStringRepresentation() const;
     virtual std::string getTypeName() const;
+    virtual std::string getAddressString() const;
 
     // Add new member to the object. The C-string overload
     // of this method will allocate a new ref counted string.
@@ -561,27 +572,54 @@ public:
     {
         return static_cast<int>(members.size());
     }
+    Range getMembersRange() const noexcept
+    {
+        return { 0, getMemberCount() };
+    }
+
+    // Query the dynamic type of the object (Array, Str, Struct, user-defined, etc).
+    const TypeId * getTypeId() const noexcept
+    {
+        return typeId;
+    }
+    void setTypeId(const TypeId * tid) noexcept
+    {
+        typeId = tid;
+    }
+
+    void markTypeTemplate()
+    {
+        flags.isPersistent  = true;
+        flags.isTemplateObj = true;
+    }
+    const Object * getGCLink() const noexcept { return gcNext; }
+
+protected:
+
+    // No direct construction. Use either Type::newInstance() or specialized allocator.
+    explicit Object(const TypeId * tid) noexcept;
+
+private:
+
+    // Runtime type identifier and template for composite objects.
+    const TypeId * typeId;
+
+    // Link in the list of dynamically allocated GC objects.
+    Object * gcNext;
+
+    // List of members. Since objects are generally small, a plain
+    // array+linear-search should be faster and more memory efficient
+    // than a full-blown hash-table on the average case.
+    std::vector<Member> members;
 };
 
+// ================================================================================================
+// Runtime script classes:
+// ================================================================================================
+
 // Allocator used by the NEW_OBJ instruction.
-Object * newRuntimeObject(const TypeId * tid, Object ** gcListHead, Stack::Slice constructorArgs);
-
-// ================================================================================================
-// Runtime classes:
-// ================================================================================================
-
-//
-//NOTE some of these object types will be allocated quite often.
-// Should we use a couple memory pools to reduce fragmentation?
-// Actually, could use a single memory pool sized for the largest type?
-// union {
-//   Struct,
-//   Str,
-//   Array,
-//   Enum
-// }
-// ???
-//
+Object * newRuntimeObject(VM & vm, const TypeId * tid, Stack::Slice constructorArgs);
+void freeRuntimeObject(VM & vm, Object * obj);
 
 // ========================================================
 // Script Struct:
@@ -592,12 +630,33 @@ class Struct final
 {
 public:
 
+    friend class GC;
+    static Object * newInstance(VM & vm, const TypeId * tid);
+
+private:
+    // Import the parent's constructor.
     using Object::Object;
-    static Object * createInstance(const TypeId * tid, Object ** gcListHead);
 };
 
 // ========================================================
-// Script Str:
+// Script Enum:
+// ========================================================
+
+class Enum final
+    : public Object
+{
+public:
+
+    friend class GC;
+    static Object * newInstance(VM & vm, const TypeId * tid);
+
+private:
+    // Import the parent's constructor.
+    using Object::Object;
+};
+
+// ========================================================
+// Script String:
 // ========================================================
 
 class Str final
@@ -605,9 +664,9 @@ class Str final
 {
 public:
 
-    using Object::Object;
-    static Object * createInstance(const TypeId * tid, Object ** gcListHead);
-
+    friend class GC;
+    static Object * newInstance(VM & vm, const TypeId * tid);
+    static Str * newFromString(VM & vm, ConstRcString * rstr);
     static Str * newFromString(VM & vm, const std::string & str, bool makeConst);
     static Str * newFromString(VM & vm, const char * cstr, UInt32 length, bool makeConst);
     static Str * newFromStrings(VM & vm, const Str & strA, const Str & strB, bool makeConst);
@@ -615,17 +674,52 @@ public:
     static Variant unaryOp(OpCode op, const Str & str);
     static Variant binaryOp(OpCode op, const Str & strA, const Str & strB);
 
-    int  compare(const Str & other)  const noexcept;
-    bool cmpEqual(const Str & other) const noexcept;
+    std::string getStringRepresentation() const override;
+    void clear();
 
-    int  getStringLength() const noexcept;
-    bool isEmptyString()   const noexcept;
-    bool isConstString()   const noexcept;
-    const char * c_str()   const noexcept;
+    int  compare(const Str & other)  const;
+    bool cmpEqual(const Str & other) const;
+
+    int compareNoCase(const Str & other) const
+    {
+        return compareCStringsNoCase(c_str(), other.c_str());
+    }
+    bool cmpEqualNoCase(const Str & other) const
+    {
+        return compareCStringsNoCase(c_str(), other.c_str()) == 0;
+    }
+
+    // Miscellaneous accessors:
+    int getStringLength() const noexcept
+    {
+        if (isConstString())
+        {
+            return static_cast<int>(constString->length);
+        }
+        return static_cast<int>(mutableString.length());
+    }
+    bool isEmptyString() const noexcept
+    {
+        if (isConstString())
+        {
+            return constString->length == 0;
+        }
+        return mutableString.empty();
+    }
+    bool isConstString() const noexcept
+    {
+        return constString != nullptr;
+    }
+    const char * c_str() const noexcept
+    {
+        return (constString != nullptr) ? constString->chars : mutableString.c_str();
+    }
 
     ~Str();
 
 private:
+    // Import the parent's constructor.
+    using Object::Object;
 
     // When the const ref string is null we are
     // using the C++ string, and vice versa.
@@ -642,24 +736,89 @@ class Array final
 {
 public:
 
+    friend class GC;
+    static Object * newInstance(VM & vm, const TypeId * tid);
+    static Array * newEmpty(VM & vm, const TypeId * dataType, int capacityHint);
+    static Array * newFromArgs(VM & vm, const TypeId * dataType, Stack::Slice args);
+    static Array * newFromRawData(VM & vm, const TypeId * dataType, const void * data, int lengthInItems);
+
+    std::string getStringRepresentation() const override;
+    std::string getDataTypeString() const { return toString(varType); }
+
+    void push(Variant var);
+    void push(const Array & other);
+    void push(const void * data, int lengthInItems);
+
+    Variant getIndex(int index) const;
+    void setIndex(int index, Variant var);
+
+    void setItemTypeSize(const TypeId * tid);
+    void reserveCapacity(int capacityHint);
+    int  getArrayCapacity() const noexcept; // In items
+
+    void pop(const int count) noexcept
+    {
+        arrayLen -= count;
+        if (arrayLen < 0)
+        {
+            arrayLen = 0;
+        }
+    }
+    void clear() noexcept
+    {
+        arrayLen = 0;
+    }
+
+    bool isEmptyArray()   const noexcept { return arrayLen == 0; }
+    bool isSmallArray()   const noexcept { return !isVector; }
+    bool isDynamicArray() const noexcept { return isVector;  }
+    int  getArrayLength() const noexcept { return arrayLen;  } // In items
+    int  getItemSize()    const noexcept { return itemSize;  } // In bytes
+
+    ~Array();
+
+private:
+    // Import the parent's constructor.
     using Object::Object;
-    static Object * createInstance(const TypeId * tid, Object ** gcListHead);
 
-    // small array optimization?             - probably
-    // array concatenation with operator +?  - probably
-};
+    template<typename T>
+    T * castTo() noexcept
+    {
+        return reinterpret_cast<T *>(&backingStore);
+    }
+    template<typename T>
+    const T * castTo() const noexcept
+    {
+        return reinterpret_cast<const T *>(&backingStore);
+    }
+    UInt8 * getDataPtr() noexcept
+    {
+        return isVector ? castTo<VecType>()->data() : castTo<UInt8>();
+    }
+    const UInt8 * getDataPtr() const noexcept
+    {
+        return isVector ? castTo<VecType>()->data() : castTo<UInt8>();
+    }
+    void appendInternal(const void * data, int lengthInItems);
 
-// ========================================================
-// Script Enum:
-// ========================================================
+    using VecType = std::vector<UInt8>;
+    static constexpr int SmallBufSize = 56;
 
-class Enum final
-    : public Object
-{
-public:
+    // On a 64-bits arch, sizeof(Array) is 128
+    union Backing
+    {
+        // We only resort to the dynamic vector once the SmallBufSize
+        // small array capacity is depleted. This prevents allocations
+        // for very small arrays like vec3s, vec4s and the like.
+        alignas(VecType) UInt8 vectorBytes[sizeof(VecType)];
+        alignas(Variant) UInt8 smallBufBytes[SmallBufSize];
+    };
 
-    using Object::Object;
-    static Object * createInstance(const TypeId * tid, Object ** gcListHead);
+    Backing       backingStore{};
+    Int32         arrayLen = 0;
+    Int32         itemSize = 0;
+    bool          isVector = false;
+    Variant::Type varType  = Variant::Type::Null;
 };
 
 } // namespace moon {}
