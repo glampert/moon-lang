@@ -1026,7 +1026,7 @@ void Array::reserveCapacity(const int capacityHint)
         arrayLen = 0;
 
         // New vector gets placement newed in the old in-place backing buffer:
-        ::new(vec) VecType{};
+        construct(vec);
         isVector = true;
 
         // Copy the old data back in:

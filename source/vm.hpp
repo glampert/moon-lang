@@ -37,7 +37,7 @@ public:
         //TODO temp. we'll use a pool later on
         T * newObj = (T*) ::operator new(sizeof(T));
 
-        ::new(newObj) T{ std::forward<Args>(args)... };
+        ::new(newObj) T(std::forward<Args>(args)...);
         linkObject(newObj);
         return newObj;
     }
