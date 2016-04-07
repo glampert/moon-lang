@@ -104,8 +104,8 @@ static UInt32 getProgDataIndex(const DataMap & dataMapping, const Symbol * sym)
 
 static Variant::Type varTypeForNodeEval(const Compiler & compiler, const SyntaxTreeNode * node)
 {
-    const auto eval = node->evalType;
-    switch (eval)
+    const auto stEval = node->evalType;
+    switch (stEval)
     {
     case SyntaxTreeNode::Eval::Int    : return Variant::Type::Integer;
     case SyntaxTreeNode::Eval::Long   : return Variant::Type::Integer;
@@ -123,8 +123,8 @@ static Variant::Type varTypeForNodeEval(const Compiler & compiler, const SyntaxT
             return compiler.symbolToTypeId(symbol) ? Variant::Type::Tid : Variant::Type::Object;
         }
     default :
-        MOON_INTERNAL_EXCEPTION("eval type '" + toString(eval) + "' doesn't map directly to a variant!");
-    } // switch (eval)
+        MOON_INTERNAL_EXCEPTION("can't convert STEval '" + toString(stEval) + "' to Variant type!");
+    } // switch (stEval)
 }
 
 static UInt32 addSymbolToProgData(VM & vm, const Symbol & sym, const Variant::Type type)

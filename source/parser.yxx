@@ -61,21 +61,54 @@ namespace moon
 using STNode = SyntaxTreeNode::Type;
 using STEval = SyntaxTreeNode::Eval;
 
+[[noreturn]] static void parserError(ParseContext & ctx, const std::string & message) noexcept(false)
+{
+    MOON_ASSERT(ctx.lexer != nullptr);
+    const std::string filename = (ctx.srcFile != nullptr) ? *ctx.srcFile : "???";
+    parserError(message, filename, ctx.lexer->lineno(), ctx.currText);
+}
+
 /*------------------------------------------------------------------*/
-//FIXME temp; testing
+//FIXME temp; testing this new stuff...
 
 struct VarInfo
 {
-    const STEval   stEval;
-    const TypeId * typeId;
+    const SyntaxTreeNode::Eval stEval;
+    const Variant::Type        varType;
+    const TypeId * const       typeId;
 };
 
 // [var_symbol, var_info]
-static HashTable<const Symbol *, VarInfo> * g_globalVars = new HashTable<const Symbol *, VarInfo>{};
-static HashTable<const Symbol *, VarInfo> * g_localVars  = nullptr;
+using VarInfoTable = HashTable<const Symbol *, VarInfo>;
+static VarInfoTable * g_globalVars = new VarInfoTable{};
+static VarInfoTable * g_localVars  = nullptr;
 
 static bool g_parsingAFunction = false;
 static const Symbol * g_currentFunction = nullptr;
+
+static void beginFunc(ParseContext & ctx, const Symbol * funcNameSymbol)
+{
+    if (g_parsingAFunction)
+    {
+        parserError(ctx, "nested functions are currently unsupported");
+    }
+
+    g_localVars        = new VarInfoTable{};
+    g_currentFunction  = funcNameSymbol;
+    g_parsingAFunction = true;
+
+    printf("BEGIN FUNC %s\n", g_currentFunction->name->chars);
+}
+
+static void endFunc(ParseContext & ctx)
+{
+    (void)ctx;
+    printf("END FUNC %s\n", g_currentFunction->name->chars);
+
+    g_localVars        = nullptr;
+    g_currentFunction  = nullptr;
+    g_parsingAFunction = false;
+}
 
 /*------------------------------------------------------------------*/
 
@@ -89,9 +122,69 @@ static Variant::Type eval2VarType(const STEval stEval)
     case STEval::Float  : return Variant::Type::Float;
     case STEval::Double : return Variant::Type::Float;
     case STEval::Str    : return Variant::Type::Str;
+    case STEval::Array  : return Variant::Type::Array;
+    case STEval::Range  : return Variant::Type::Range;
+    case STEval::Any    : return Variant::Type::Any;
     case STEval::UDT    : return Variant::Type::Object;
-    default : MOON_INTERNAL_EXCEPTION("can't covert STEval to Variant::Type!");
+    default : MOON_INTERNAL_EXCEPTION("can't convert STEval '" + toString(stEval) + "' to Variant type!");
     } // switch (stEval)
+}
+
+static const TypeId * eval2TypeId(const TypeTable & typeTable, const STEval stEval)
+{
+    switch (stEval)
+    {
+    case STEval::Int    : return typeTable.intTypeId;
+    case STEval::Long   : return typeTable.longTypeId;
+    case STEval::Bool   : return typeTable.boolTypeId;
+    case STEval::Float  : return typeTable.floatTypeId;
+    case STEval::Double : return typeTable.doubleTypeId;
+    case STEval::Str    : return typeTable.strTypeId;
+    case STEval::Array  : return typeTable.arrayTypeId;
+    case STEval::Range  : return typeTable.rangeTypeId;
+    case STEval::Any    : return typeTable.anyTypeId;
+    case STEval::UDT    : return typeTable.objectTypeId;
+    default : MOON_INTERNAL_EXCEPTION("can't convert STEval '" + toString(stEval) + "' to TypeId!");
+    } // switch (stEval)
+}
+
+/*------------------------------------------------------------------*/
+
+static void registerVariable(ParseContext & ctx,
+                             const Symbol * nameSymbol,
+                             const SyntaxTreeNode * initNode,
+                             const SyntaxTreeNode * typeNode,
+                             const STEval stEval, VarInfoTable & destTable)
+{
+    const SyntaxTreeNode * tidNode = nullptr;
+
+    if (typeNode != nullptr)
+    {
+        tidNode = typeNode;
+    }
+    else if (initNode != nullptr)
+    {
+        tidNode = initNode;
+    }
+    else
+    {
+        parserError(ctx, "variable declaration requires an initializer");
+    }
+
+    const auto typeId = (stEval == STEval::UDT) ?
+        ctx.vm->types.findTypeId(tidNode->symbol->name) :
+        eval2TypeId(ctx.vm->types, stEval);
+
+    if (typeId == nullptr)
+    {
+        std::string tname = color::white() + toString(tidNode->symbol->name) + color::restore();
+        parserError(ctx, "cannot declare variable of undeclared type '" + tname + "'");
+    }
+
+    destTable.insert(std::make_pair(nameSymbol, VarInfo{ stEval, eval2VarType(stEval), typeId }));
+
+    printf("ADDING VAR: %s, %s, %s, %s\n", nameSymbol->name->chars, toString(stEval).c_str(),
+           toString(typeId->name).c_str(), toString(eval2VarType(stEval)).c_str());
 }
 
 /*------------------------------------------------------------------*/
@@ -126,7 +219,7 @@ static SyntaxTreeNode * newVarDeclNode(ParseContext & ctx, const Symbol * nameSy
         {
             if (initNode == nullptr || initNode->symbol == nullptr)
             {
-                ctx.parser->error("variable declaration requires an initializer");
+                parserError(ctx, "variable declaration requires an initializer");
             }
 
             // A global can be initialized from other globals
@@ -135,7 +228,7 @@ static SyntaxTreeNode * newVarDeclNode(ParseContext & ctx, const Symbol * nameSy
             {
                 std::string srcName = color::white() + toString(nameSymbol->name) + color::restore();
                 std::string dstName = color::white() + toString(initNode->symbol->name) + color::restore();
-                ctx.parser->error("initializing global variable '" + srcName + "' from unknown identifier '" + dstName + "'");
+                parserError(ctx, "initializing global variable '" + srcName + "' from unknown identifier '" + dstName + "'");
             }
 
             stEval = globIter->second.stEval;
@@ -145,14 +238,14 @@ static SyntaxTreeNode * newVarDeclNode(ParseContext & ctx, const Symbol * nameSy
         if (g_globalVars->find(nameSymbol) != g_globalVars->end())
         {
             std::string vname = color::white() + toString(nameSymbol->name) + color::restore();
-            ctx.parser->error("redefinition of global variable '" + vname + "'");
+            parserError(ctx, "redefinition of global variable '" + vname + "'");
         }
 
-        g_globalVars->insert(std::make_pair(nameSymbol, VarInfo{ stEval, nullptr }));//TODO TypeId
-        printf("ADDING GLOBAL: %s, %s\n", nameSymbol->name->chars, toString(stEval).c_str());
+        registerVariable(ctx, nameSymbol, initNode, typeNode, stEval, *g_globalVars);
     }
     else
     {
+        MOON_ASSERT(g_currentFunction != nullptr);
         MOON_ASSERT(g_globalVars != nullptr);
         MOON_ASSERT(g_localVars  != nullptr);
 
@@ -160,7 +253,7 @@ static SyntaxTreeNode * newVarDeclNode(ParseContext & ctx, const Symbol * nameSy
         {
             if (initNode == nullptr || initNode->symbol == nullptr)
             {
-                ctx.parser->error("variable declaration requires an initializer");
+                parserError(ctx, "variable declaration requires an initializer");
             }
 
             // A local can be initialized from other locals or globals
@@ -173,7 +266,7 @@ static SyntaxTreeNode * newVarDeclNode(ParseContext & ctx, const Symbol * nameSy
                 {
                     std::string srcName = color::white() + toString(nameSymbol->name) + color::restore();
                     std::string dstName = color::white() + toString(initNode->symbol->name) + color::restore();
-                    ctx.parser->error("initializing local variable '" + srcName + "' from unknown identifier '" + dstName + "'");
+                    parserError(ctx, "initializing local variable '" + srcName + "' from unknown identifier '" + dstName + "'");
                 }
                 stEval = localIter->second.stEval;
             }
@@ -187,11 +280,10 @@ static SyntaxTreeNode * newVarDeclNode(ParseContext & ctx, const Symbol * nameSy
         if (g_localVars->find(nameSymbol) != g_localVars->end())
         {
             std::string vname = color::white() + toString(nameSymbol->name) + color::restore();
-            ctx.parser->error("redefinition of local variable '" + vname + "'");
+            parserError(ctx, "redefinition of local variable '" + vname + "'");
         }
 
-        g_localVars->insert(std::make_pair(nameSymbol, VarInfo{ stEval, nullptr }));//TODO TypeId
-        printf("ADDING LOCAL to %s: %s, %s\n", g_currentFunction->name->chars, nameSymbol->name->chars, toString(stEval).c_str());
+        registerVariable(ctx, nameSymbol, initNode, typeNode, stEval, *g_localVars);
     }
 
     return ctx.syntTree->newNodeWithSymbol(STNode::VarDeclStatement,
@@ -278,7 +370,7 @@ static void collectObjMembers(ParseContext & ctx, const SyntaxTreeNode * root, O
     if (objOut->hasMember(varName))
     {
         std::string mname = color::white() + toString(varName) + color::restore();
-        ctx.parser->error("object member '" + mname + "' was defined more than once");
+        parserError(ctx, "object member '" + mname + "' was defined more than once");
     }
 
     Variant data{ eval2VarType(evalType) };
@@ -309,6 +401,19 @@ static void collectObjMembers(ParseContext & ctx, const SyntaxTreeNode * root, O
 
     objOut->addMember(varName, data);
     collectObjMembers(ctx, root->getChild(0), objOut);
+}
+
+/*------------------------------------------------------------------*/
+
+int yylex(SemanticVal * yylval, ParseContext & ctx)
+{
+    ctx.yylval = yylval;
+    return ctx.lexer->yylex();
+}
+
+void Parser::error(const std::string & message)
+{
+    parserError(ctx, message);
 }
 
 } /* namespace moon */
@@ -634,8 +739,8 @@ expression
     | func_call_expression
     | "(" expression ")"
         {
-            /* Wrapping an expr in ( ) gives it the highest precedence.
-            Just reapply the rule with the new precedence. */
+            // Wrapping an expr in ( ) gives it the highest precedence.
+            // Just reapply the rule with the new precedence.
             $$ = $2;
         }
     ;
@@ -682,22 +787,15 @@ func_parameter_list_declaration
 func_call_expression
     : IDENTIFIER "(" parameter_list ")"
         {
-            /* Second child is the parameter_list chain.
-               First is reserved for chaining the call itself to another parameter_list */
+            // Second child is the parameter_list chain.
+            // First is reserved for chaining the call itself to another parameter_list
             $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprFuncCall, $1, nullptr, $3);
         }
     ;
 
 func_declaration
     : "func" IDENTIFIER "(" func_parameter_list_declaration ")" optional_return_type
-            { g_parsingAFunction = true;
-            g_currentFunction = $2;
-            g_localVars = new HashTable<const Symbol *, VarInfo>{};
-            printf("BEGIN FUNC %s\n", g_currentFunction->name->chars); }
-            optional_statement_list
-            { g_parsingAFunction = false;
-            printf("END FUNC %s\n", g_currentFunction->name->chars);
-            g_currentFunction = nullptr; g_localVars = nullptr; } end_statement
+      { beginFunc(ctx, $2); } optional_statement_list { endFunc(ctx); } end_statement
         {
             // child[0] = parameter list
             // child[1] = function body
@@ -709,7 +807,7 @@ func_declaration
             if (ctx.vm->functions.findFunction(funcName))
             {
                 std::string fname = color::white() + toString(funcName) + color::restore();
-                Parser::error("function '" + fname + "' was defined more than once");
+                parserError(ctx, "function '" + fname + "' was defined more than once");
             }
 
             UInt32 extraFlags = 0;
@@ -757,7 +855,7 @@ optional_return_type
 array_expression
     : "[" parameter_list "]"
         {
-            /* First child reserved for parameter_list chains */
+            // First child reserved for parameter_list chains
             $$ = ctx.syntTree->newNode(STNode::ExprArrayLiteral, nullptr, $2, nullptr, STEval::Array);
         }
     ;
@@ -765,12 +863,12 @@ array_expression
 array_subscript_expression
     : identifier_expression "[" expression "]"
         {
-            /* First child reserved for parameter_list chains */
+            // First child reserved for parameter_list chains
             $$ = ctx.syntTree->newNode(STNode::ExprArraySubscript, nullptr, $1, $3);
         }
     | func_call_expression "[" expression "]"
         {
-            /* Only makes sense when the function returns an array type */
+            // Only makes sense when the function returns an array type
             $$ = ctx.syntTree->newNode(STNode::ExprArraySubscript, nullptr, $1, $3);
         }
     ;
@@ -782,7 +880,7 @@ array_subscript_expression
 object_constructor_expression
     : type_identifier "{" parameter_list "}"
         {
-            /* First child reserved for parameter_list chains */
+            // First child reserved for parameter_list chains
             $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprObjectConstructor, $1->symbol,
                                                            nullptr, $3, $1, $1->evalType);
         }
@@ -908,7 +1006,7 @@ while_statement
 for_statement
     : "for" IDENTIFIER "in" range_or_array_or_ident_or_call "do" optional_statement_list end_statement
         {
-            /* loopVarNode type has to be inferred from the loop expression/range */
+            // loopVarNode type has to be inferred from the loop expression/range
             auto loopVarNode = ctx.syntTree->newNodeWithSymbol(STNode::VarDeclStatement, $2);
             $$ = ctx.syntTree->newNodeWithSymbol(STNode::ForStatement, nullptr, loopVarNode, $4, $6);
         }
@@ -976,7 +1074,7 @@ range_or_array_or_ident_or_call
 range_expression
     : range_param ".." range_param
         {
-            /* First child reserved for parameter_list chains */
+            // First child reserved for parameter_list chains
             $$ = ctx.syntTree->newNode(STNode::ExprRange, nullptr, $1, $3, STEval::Range);
         }
     ;
@@ -998,10 +1096,10 @@ range_param
         }
     | STR_LITERAL
         {
-            auto symbol = $1;
+            const auto symbol = $1;
             if (symbol->value.asString->length != 1)
             {
-                Parser::error("only character literals are allowed in range expressions");
+                parserError(ctx, "only character literals are allowed in range expressions");
             }
             $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprLiteralConst, symbol,
                           nullptr, nullptr, nullptr, evalTypeFromSymbol(*symbol));
@@ -1050,7 +1148,7 @@ enum_constant
         }
     | IDENTIFIER "=" enum_constant
         {
-            /* Second child is the name of a previously defined constant */
+            // Second child is the name of a previously defined constant
             $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprNameIdent, $1,
                                        nullptr, $3, nullptr, $3->evalType);
         }
@@ -1066,14 +1164,14 @@ type_alias_declaration
             $$ = ctx.syntTree->newNodeWithSymbol(STNode::TypeAliasDeclStatement, $2,
                                                  $4, nullptr, nullptr, STEval::UDT);
 
-            auto aliasName = $2->name;
-            auto typeName  = $4->symbol->name;
+            const auto aliasName = $2->name;
+            const auto typeName  = $4->symbol->name;
 
             // Redefinition not allowed.
             if (ctx.vm->types.findTypeId(aliasName))
             {
                 std::string tname = color::white() + toString(aliasName) + color::restore();
-                Parser::error("type alias '" + tname + "' was defined more than once");
+                parserError(ctx, "type alias '" + tname + "' was defined more than once");
             }
 
             // New definition:
@@ -1081,7 +1179,7 @@ type_alias_declaration
             if (existingType == nullptr)
             {
                 std::string tname = color::white() + toString(typeName) + color::restore();
-                Parser::error("trying to alias undefined type '" + tname + "'");
+                parserError(ctx, "trying to alias undefined type '" + tname + "'");
             }
 
             ctx.vm->types.addTypeAlias(existingType, aliasName);
@@ -1095,11 +1193,11 @@ struct_declaration
                                               $4, nullptr, nullptr, STEval::UDT);
 
             // Redefinition not allowed.
-            auto typeName = $2->name;
+            const auto typeName = $2->name;
             if (ctx.vm->types.findTypeId(typeName))
             {
                 std::string tname = color::white() + toString(typeName) + color::restore();
-                Parser::error("struct '" + tname + "' was defined more than once");
+                parserError(ctx, "struct '" + tname + "' was defined more than once");
             }
 
             Object * templateObj = Struct::newInstance(*ctx.vm, nullptr);
@@ -1125,25 +1223,3 @@ struct_member_list
     ;
 
 %%
-
-/* +-------------------------------------------------+ *
- * | Epilogue section, appended to output CPP file:  | *
- * +-------------------------------------------------+ */
-
-namespace moon
-{
-
-int yylex(SemanticVal * yylval, ParseContext & ctx)
-{
-    ctx.yylval = yylval;
-    return ctx.lexer->yylex();
-}
-
-void Parser::error(const std::string & message)
-{
-    MOON_ASSERT(ctx.lexer != nullptr);
-    const std::string filename = (ctx.srcFile != nullptr) ? *ctx.srcFile : "???";
-    parserError(message, filename, ctx.lexer->lineno(), ctx.currText);
-}
-
-} /* namespace moon */

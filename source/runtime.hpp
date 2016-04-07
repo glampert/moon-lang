@@ -617,7 +617,7 @@ private:
 // Runtime script classes:
 // ================================================================================================
 
-// Allocator used by the NEW_OBJ instruction.
+// Allocator used by the NEW_OBJ instruction (forwards to the GC'd newInstance callback).
 Object * newRuntimeObject(VM & vm, const TypeId * tid, Stack::Slice constructorArgs);
 void freeRuntimeObject(VM & vm, Object * obj);
 
