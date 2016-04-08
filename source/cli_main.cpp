@@ -38,8 +38,6 @@ NOTES ON THE LANGUAGE SYNTAX SIDE:
 - Built-in assert() function.
 - Built-in panic() function.
 
-- Concept of modules/namespaces?
-
 - Assign functions to variables (a Function/Callable type?)
 
 - C-style language to keep it simple:

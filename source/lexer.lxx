@@ -276,7 +276,6 @@ NEW_LINE      [\n\r]
 "type"           { LEX_LOG_KEYW( "type"     ); return moon::Parser::token::KW_TYPE;          }
 "enum"           { LEX_LOG_KEYW( "enum"     ); return moon::Parser::token::KW_ENUM;          }
 "struct"         { LEX_LOG_KEYW( "struct"   ); return moon::Parser::token::KW_STRUCT;        }
-"module"         { LEX_LOG_KEYW( "module"   ); return moon::Parser::token::KW_MODULE;        }
 
     /* ---- Literal constants: ---- */
 {INT_LITERAL}    { LEX_LOG_LIT( "int-literal"     ); AS_MOON_LEXER(this).lexOnIntLiteral();   return moon::Parser::token::INT_LITERAL;  }

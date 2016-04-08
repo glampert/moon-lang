@@ -35,8 +35,10 @@
  * | Additional verbatin code sections:              | *
  * +-------------------------------------------------+ */
 
-/* 'Requires' section is added to generated parser header file.
- * Good place for forward declaration and types used in the yylval union. */
+/*
+ * 'Requires' section is added to generated parser header file.
+ * Good place for forward declaration and types used in the yylval union.
+ */
 %code requires
 {
 
@@ -46,8 +48,10 @@
 
 } /* %code requires */
 
-/* The unqualified code section is added to the implementation file, after
- * the parser header is included, which is the right place for these. */
+/*
+ * The unqualified code section is added to the implementation file, after
+ * the parser header is included, which is the right place for these.
+ */
 %code
 {
 
@@ -490,7 +494,6 @@ void Parser::error(const std::string & message)
 %token KW_TYPE                    "type"
 %token KW_ENUM                    "enum"
 %token KW_STRUCT                  "struct"
-%token KW_MODULE                  "module"
 
 /* Literal constants: */
 %token <asSymbol> INT_LITERAL     "literal integer constant"
@@ -523,7 +526,6 @@ void Parser::error(const std::string & message)
  * Operator associativity: LEFT or RIGHT.
  * NOTE: Using associativity equivalent to the C language.
  */
-
 %right OP_MODULO_EQUAL
 %right OP_DIVIDE_EQUAL
 %right OP_MULTIPLY_EQUAL
@@ -550,22 +552,27 @@ void Parser::error(const std::string & message)
  * Types referenced inside the rules by the '$' signs.
  * E.g.: if you reference a '$' in rule 'type_identifier'
  * it will be a variable of type 'SyntaxTreeNode', as defined
- * in the SemanticVal union by the 'asSTNode' field.
+ * in the SemanticVal/YYSTYPE union by the 'asSTNode' field.
  */
-
 %type <asSTNode> type_identifier builtin_type optional_return_type
 %type <asSTNode> literal_const_expression identifier_expression
 %type <asSTNode> expression array_expression array_subscript_expression object_constructor_expression
-%type <asSTNode> translation_unit module_declaration statement statement_list optional_statement_list
+%type <asSTNode> translation_unit statement optional_statement_list
 %type <asSTNode> for_statement while_statement loop_statement break_statement continue_statement
 %type <asSTNode> if_statement elseif_statement else_statement elseif_or_else_or_end
 %type <asSTNode> enum_declaration enum_constant enum_constant_list
 %type <asSTNode> struct_declaration struct_member_list
 %type <asSTNode> func_call_expression func_declaration func_parameter_list_declaration parameter_list return_statement
-%type <asSTNode> match_statement match_case match_case_list match_param
+%type <asSTNode> match_statement match_case match_default match_case_list match_param match_case_param
 %type <asSTNode> range_expression range_param range_or_array_or_ident_or_call
 %type <asSTNode> let_var_declaration typed_var_declaration
 %type <asSTNode> type_alias_declaration
+
+/*
+ * Rule the parser starts from. If not explicitly stated,
+ * it uses the first nonterminal rule in the below grammar.
+ */
+%start translation_unit
 
 /* +-------------------------------------------------+ *
  * | Yacc/Bison grammar rules:                       | *
@@ -614,25 +621,29 @@ void Parser::error(const std::string & message)
 | Miscellaneous statements, literals, built-in types |
 `---------------------------------------------------*/
 
+/* Starting rule */
 translation_unit
-    : statement_list
+    : optional_statement_list
         {
             auto treeRoot = ctx.syntTree->newNode(STNode::TranslationUnit, $1, nullptr, nullptr, STEval::Void);
             ctx.syntTree->setRoot(treeRoot);
         }
     ;
 
-statement_list
-    : statement_list statement
+/* Zero or more statements allowed */
+optional_statement_list
+    : optional_statement_list statement
         {
             $$ = ctx.syntTree->newNode(STNode::Statement, $1, $2, nullptr, STEval::Void);
         }
-    | %empty { $$ = nullptr; }
+    | %empty
+        {
+            $$ = nullptr;
+        }
     ;
 
 statement
-    : module_declaration
-    | struct_declaration
+    : struct_declaration
     | enum_declaration
     | type_alias_declaration
     | func_declaration
@@ -646,11 +657,6 @@ statement
     | break_statement
     | continue_statement
     | expression ";"
-    ;
-
-optional_statement_list
-    : statement_list
-    | optional_semicolon { $$ = nullptr; }
     ;
 
 optional_semicolon
@@ -688,10 +694,6 @@ type_identifier
 
 identifier_expression
     : IDENTIFIER { $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprNameIdent, $1); }
-    ;
-
-module_declaration
-    : "module" IDENTIFIER ";" { $$ = ctx.syntTree->newNodeWithSymbol(STNode::ModuleDefinition, $2); }
     ;
 
 /*------------------------.
@@ -732,7 +734,7 @@ expression
     | expression[L] "/"   expression[R] { $$ = newBinaryOpNode(ctx, STNode::ExprDivide,          $L, $R); }
     | expression[L] "*"   expression[R] { $$ = newBinaryOpNode(ctx, STNode::ExprMultiply,        $L, $R); }
     |               "not" expression[R] { $$ = newUnaryOpNode(ctx,  STNode::ExprLogicNot,            $R); }
-    |               "-"   expression[R] { $$ = newUnaryOpNode(ctx,  STNode::ExprUnaryMinus,          $R); }
+    |               "-"   expression[R] { $$ = newUnaryOpNode(ctx,  STNode::ExprUnaryMinus,          $R); } /*TODO might be able to fix precedence issue with %prec. check man pages*/
     |               "+"   expression[R] { $$ = newUnaryOpNode(ctx,  STNode::ExprUnaryPlus,           $R); }
     | expression[L] "."   expression[R] { $$ = newBinaryOpNode(ctx, STNode::ExprMemberRef,       $L, $R); }
     | array_subscript_expression
@@ -959,9 +961,9 @@ elseif_or_else_or_end
     | end_statement { $$ = nullptr; }
     ;
 
-/*-------------------------.
-| Loops and sub-statements |
-`-------------------------*/
+/*--------------------------.
+| Loops and jump statements |
+`--------------------------*/
 
 return_statement
     : "return" ";"
@@ -970,8 +972,7 @@ return_statement
         }
     | "return" expression ";"
         {
-            $$ = ctx.syntTree->newNode(STNode::ReturnStatement, $2,
-                                   nullptr, nullptr, $2->evalType);
+            $$ = ctx.syntTree->newNode(STNode::ReturnStatement, $2, nullptr, nullptr, $2->evalType);
         }
     ;
 
@@ -1016,12 +1017,18 @@ for_statement
 | Match switch statement |
 `-----------------------*/
 
-/* Things we allow on a 'match X with' statement: */
+/* Things allowed on a 'match X with' statement: */
 match_param
     : literal_const_expression
     | identifier_expression
     | array_subscript_expression
     | func_call_expression
+    ;
+
+/* Things that can appear as the argument of a 'case' statement: */
+match_case_param
+    : literal_const_expression
+    | range_or_array_or_ident_or_call
     ;
 
 match_statement
@@ -1031,28 +1038,27 @@ match_statement
         }
     ;
 
-match_case
-    : "case" literal_const_expression "->" optional_statement_list end_statement
-        {
-            $$ = ctx.syntTree->newNode(STNode::MatchCaseStatement, $2, $4);
-        }
-    | "case" range_or_array_or_ident_or_call "->" optional_statement_list end_statement
-        {
-            $$ = ctx.syntTree->newNode(STNode::MatchCaseStatement, $2, $4);
-        }
-    | "default" "->" optional_statement_list end_statement
+match_default
+    : "default" "->" optional_statement_list end_statement
         {
             $$ = ctx.syntTree->newNode(STNode::MatchDefaultStatement, nullptr, $3);
         }
     ;
 
+match_case
+    : "case" match_case_param "->" optional_statement_list end_statement
+        {
+            $$ = ctx.syntTree->newNode(STNode::MatchCaseStatement, $2, $4);
+        }
+    ;
+
 match_case_list
-    : match_case
-    | match_case match_case_list
+    : match_case match_case_list
         {
             $$ = $1;
             $$->setChild(2, $2);
         }
+    | match_default
     | %empty
         {
             $$ = nullptr;
@@ -1080,7 +1086,7 @@ range_expression
     ;
 
 /*
- * Possible types for a range parameter:
+ * Possible elements for a range parameter:
  * variables/identifiers:         x .. y
  * function return val:           0 .. len()
  * integer literals:              0 .. 10
@@ -1099,7 +1105,7 @@ range_param
             const auto symbol = $1;
             if (symbol->value.asString->length != 1)
             {
-                parserError(ctx, "only character literals are allowed in range expressions");
+                parserError(ctx, "only single character literals are allowed in range expressions");
             }
             $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprLiteralConst, symbol,
                           nullptr, nullptr, nullptr, evalTypeFromSymbol(*symbol));
@@ -1115,19 +1121,6 @@ enum_declaration
         {
             $$ = ctx.syntTree->newNodeWithSymbol(STNode::EnumDeclStatement, $2,
                                             $4, nullptr, nullptr, STEval::UDT);
-        }
-    ;
-
-enum_constant_list
-    : enum_constant
-    | enum_constant "," enum_constant_list
-        {
-            $$ = $1;
-            $$->setChild(0, $3);
-        }
-    | %empty
-        {
-            $$ = nullptr;
         }
     ;
 
@@ -1151,6 +1144,19 @@ enum_constant
             // Second child is the name of a previously defined constant
             $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprNameIdent, $1,
                                        nullptr, $3, nullptr, $3->evalType);
+        }
+    ;
+
+enum_constant_list
+    : enum_constant
+    | enum_constant "," enum_constant_list
+        {
+            $$ = $1;
+            $$->setChild(0, $3);
+        }
+    | %empty
+        {
+            $$ = nullptr;
         }
     ;
 

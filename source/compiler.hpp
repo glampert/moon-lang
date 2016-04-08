@@ -151,7 +151,7 @@ private:
     // Temp store we use to gather local vars and function parameters.
     std::vector<TypedSymbol> funcLocalIdentifiers;
 
-    // Temp for the globals found so far in a module.
+    // Temp for the globals found so far in a translation unit.
     std::vector<TypedSymbol> globalIdentifiers;
 
     // These are used to combine repeated program data/symbols
