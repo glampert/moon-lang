@@ -74,6 +74,7 @@ using STEval = SyntaxTreeNode::Eval;
 
 /*------------------------------------------------------------------*/
 //FIXME temp; testing this new stuff...
+//TODO remove the debug printfs!
 
 struct VarInfo
 {
@@ -87,19 +88,33 @@ using VarInfoTable = HashTable<const Symbol *, VarInfo>;
 static VarInfoTable * g_globalVars = new VarInfoTable{};
 static VarInfoTable * g_localVars  = nullptr;
 
-static bool g_parsingAFunction = false;
 static const Symbol * g_currentFunction = nullptr;
+static const Symbol * g_currentUDT = nullptr;
+
+static bool isParsingFunction() noexcept { return g_currentFunction != nullptr; }
+static bool isParsingUDT()      noexcept { return g_currentUDT != nullptr; }
+
+static void requireGlobalScope(ParseContext & ctx, const char * elementName)
+{
+    if (isParsingFunction() || isParsingUDT())
+    {
+        parserError(ctx, toString(elementName) + " can only be declared at the global scope");
+    }
+}
 
 static void beginFunc(ParseContext & ctx, const Symbol * funcNameSymbol)
 {
-    if (g_parsingAFunction)
+    if (isParsingFunction())
     {
         parserError(ctx, "nested functions are currently unsupported");
+    }
+    if (isParsingUDT())
+    {
+        parserError(ctx, "member functions are currently unsupported");
     }
 
     g_localVars        = new VarInfoTable{};
     g_currentFunction  = funcNameSymbol;
-    g_parsingAFunction = true;
 
     printf("BEGIN FUNC %s\n", g_currentFunction->name->chars);
 }
@@ -111,10 +126,40 @@ static void endFunc(ParseContext & ctx)
 
     g_localVars        = nullptr;
     g_currentFunction  = nullptr;
-    g_parsingAFunction = false;
+}
+
+static void beginUDT(ParseContext & ctx, const Symbol * typeNameSymbol, const char * elementName)
+{
+    requireGlobalScope(ctx, elementName);
+    g_currentUDT = typeNameSymbol;
+
+    printf("BEGIN UDT %s\n", g_currentUDT->name->chars);
+}
+
+static void endUDT(ParseContext & ctx)
+{
+    (void)ctx;
+    printf("END UDT %s\n", g_currentUDT->name->chars);
+
+    g_currentUDT = nullptr;
 }
 
 /*------------------------------------------------------------------*/
+
+static STEval varType2Eval(const Variant::Type varType)
+{
+    switch (varType)
+    {
+    case Variant::Type::Integer : return STEval::Long;
+    case Variant::Type::Float   : return STEval::Double;
+    case Variant::Type::Str     : return STEval::Str;
+    case Variant::Type::Array   : return STEval::Array;
+    case Variant::Type::Range   : return STEval::Range;
+    case Variant::Type::Any     : return STEval::Any;
+    case Variant::Type::Object  : return STEval::UDT;
+    default : MOON_INTERNAL_EXCEPTION("can't convert Variant type '" + toString(varType) + "' to STEval!");
+    } // switch (varType)
+}
 
 static Variant::Type eval2VarType(const STEval stEval)
 {
@@ -182,7 +227,7 @@ static void registerVariable(ParseContext & ctx,
     if (typeId == nullptr)
     {
         std::string tname = color::white() + toString(tidNode->symbol->name) + color::restore();
-        parserError(ctx, "cannot declare variable of undeclared type '" + tname + "'");
+        parserError(ctx, "cannot declare variable of undefined type '" + tname + "'");
     }
 
     destTable.insert(std::make_pair(nameSymbol, VarInfo{ stEval, eval2VarType(stEval), typeId }));
@@ -193,29 +238,10 @@ static void registerVariable(ParseContext & ctx,
 
 /*------------------------------------------------------------------*/
 
-static SyntaxTreeNode * newLiteralNode(ParseContext & ctx, const STEval stEval, const Symbol * symbol)
+static STEval registerGlobalOrLocal(ParseContext & ctx, const Symbol * nameSymbol, SyntaxTreeNode * initNode,
+                                    const SyntaxTreeNode * typeNode, STEval stEval)
 {
-    return ctx.syntTree->newNodeWithEval(STNode::ExprLiteralConst, symbol, stEval);
-}
-
-/*------------------------------------------------------------------*/
-
-static SyntaxTreeNode * newTypeIdNode(ParseContext & ctx, const STEval stEval,
-                                      const Symbol * symbol = nullptr)
-{
-    if (symbol == nullptr)
-    {
-        symbol = symbolFromEval(*ctx.symTable, stEval);
-    }
-    return ctx.syntTree->newNodeWithEval(STNode::ExprTypeIdent, symbol, stEval);
-}
-
-/*------------------------------------------------------------------*/
-
-static SyntaxTreeNode * newVarDeclNode(ParseContext & ctx, const Symbol * nameSymbol, SyntaxTreeNode * initNode,
-                                       const SyntaxTreeNode * typeNode, STEval stEval)
-{
-    if (!g_parsingAFunction)
+    if (!isParsingFunction()) // Global scope or parsing a function declaration?
     {
         MOON_ASSERT(g_globalVars != nullptr);
 
@@ -249,7 +275,6 @@ static SyntaxTreeNode * newVarDeclNode(ParseContext & ctx, const Symbol * nameSy
     }
     else
     {
-        MOON_ASSERT(g_currentFunction != nullptr);
         MOON_ASSERT(g_globalVars != nullptr);
         MOON_ASSERT(g_localVars  != nullptr);
 
@@ -290,9 +315,41 @@ static SyntaxTreeNode * newVarDeclNode(ParseContext & ctx, const Symbol * nameSy
         registerVariable(ctx, nameSymbol, initNode, typeNode, stEval, *g_localVars);
     }
 
+    return stEval;
+}
+
+/*------------------------------------------------------------------*/
+
+static SyntaxTreeNode * newVarDeclNode(ParseContext & ctx, const Symbol * nameSymbol, SyntaxTreeNode * initNode,
+                                       const SyntaxTreeNode * typeNode, STEval stEval)
+{
+    // Member vars get collected somewhere else.
+    if (!isParsingUDT())
+    {
+        stEval = registerGlobalOrLocal(ctx, nameSymbol, initNode, typeNode, stEval);
+    }
     return ctx.syntTree->newNodeWithSymbol(STNode::VarDeclStatement,
                                            nameSymbol, initNode, typeNode,
                                            nullptr, stEval);
+}
+
+/*------------------------------------------------------------------*/
+
+static SyntaxTreeNode * newLiteralNode(ParseContext & ctx, const STEval stEval, const Symbol * symbol)
+{
+    return ctx.syntTree->newNodeWithEval(STNode::ExprLiteralConst, symbol, stEval);
+}
+
+/*------------------------------------------------------------------*/
+
+static SyntaxTreeNode * newTypeIdNode(ParseContext & ctx, const STEval stEval,
+                                      const Symbol * symbol = nullptr)
+{
+    if (symbol == nullptr)
+    {
+        symbol = symbolFromEval(*ctx.symTable, stEval);
+    }
+    return ctx.syntTree->newNodeWithEval(STNode::ExprTypeIdent, symbol, stEval);
 }
 
 /*------------------------------------------------------------------*/
@@ -336,26 +393,24 @@ static SyntaxTreeNode * newUnaryOpNode(ParseContext & ctx, const STNode type, co
 
 /*------------------------------------------------------------------*/
 
-static void collectFunctionArgTypes(const SyntaxTreeNode * root,
-                                    Variant::Type * argTypesOut,
-                                    UInt32 & argCountOut,
-                                    UInt32 & extraFlagsOut)
+static void collectFunctionArgTypes(const SyntaxTreeNode * root, Variant::Type * argTypesOut,
+                                    UInt32 & argCountOut, UInt32 & extraFlagsOut)
 {
     if (root == nullptr)
     {
         return;
     }
 
-    auto argNode  = root->getChild(1);
-    auto evalType = argNode->evalType;
+    auto argNode = root->getChild(1);
+    auto stEval  = argNode->evalType;
 
-    if (evalType == STEval::VarArgs)
+    if (stEval == STEval::VarArgs)
     {
         extraFlagsOut |= Function::VarArgs;
         return;
     }
 
-    argTypesOut[argCountOut++] = eval2VarType(evalType);
+    argTypesOut[argCountOut++] = eval2VarType(stEval);
     collectFunctionArgTypes(root->getChild(0), argTypesOut, argCountOut, extraFlagsOut);
 }
 
@@ -368,43 +423,209 @@ static void collectObjMembers(ParseContext & ctx, const SyntaxTreeNode * root, O
         return;
     }
 
-    auto evalType = root->evalType;
-    auto varName  = root->symbol->name;
+    const auto stEval  = root->evalType;
+    const auto varName = root->symbol->name;
 
     if (objOut->hasMember(varName))
     {
         std::string mname = color::white() + toString(varName) + color::restore();
-        parserError(ctx, "object member '" + mname + "' was defined more than once");
+        parserError(ctx, objOut->getTypeName() + " member '" + mname + "' was defined more than once");
     }
 
-    Variant data{ eval2VarType(evalType) };
+    Variant data{ eval2VarType(stEval) };
 
     // Members that reference other User Defined Types require special handling.
     if (data.type == Variant::Type::Object)
     {
         MOON_ASSERT(root->getChild(1) != nullptr);
-        auto typeName = root->getChildSymbol(1)->name;
 
-        Object * templateObj;
+        const auto typeName = root->getChildSymbol(1)->name;
         const TypeId * typeId = ctx.vm->types.findTypeId(typeName);
 
         if (typeId == nullptr)
         {
-            templateObj = Struct::newInstance(*ctx.vm, nullptr);
-            typeId = ctx.vm->types.addTypeId(typeName, &Struct::newInstance, templateObj, false);
-            templateObj->setTypeId(typeId);
-            templateObj->markTypeTemplate();
-        }
-        else
-        {
-            templateObj = const_cast<Object *>(typeId->templateObject);
+            std::string tname = color::white() + toString(typeName) + color::restore();
+            parserError(ctx, "cannot declare member variable of undefined type '" + tname + "'");
         }
 
-        data.value.asObject = templateObj;
+        data.value.asObject = const_cast<Object *>(typeId->templateObject);
     }
 
+    printf("ADDING OBJ MEMBER: %s: %s\n", toString(varName).c_str(), toString(data.type).c_str());
     objOut->addMember(varName, data);
     collectObjMembers(ctx, root->getChild(0), objOut);
+}
+
+/*------------------------------------------------------------------*/
+
+static void initEnumMembers(ParseContext & ctx, const SyntaxTreeNode * root, Object * objOut, Int64 & nextEnumIntVal)
+{
+    if (root == nullptr)
+    {
+        return;
+    }
+
+    const auto stEval  = root->evalType;
+    const auto varName = root->symbol->name;
+
+    if (objOut->hasMember(varName))
+    {
+        std::string mname = color::white() + toString(varName) + color::restore();
+        parserError(ctx, objOut->getTypeName() + " member '" + mname + "' was defined more than once");
+    }
+
+    Variant data{ eval2VarType(stEval) };
+    const auto initExprNode = root->getChild(1);
+
+    if (initExprNode != nullptr)
+    {
+        if (initExprNode->nodeType == STNode::ExprLiteralConst)
+        {
+            if (initExprNode->evalType == STEval::Int ||
+                initExprNode->evalType == STEval::Long)
+            {
+                MOON_ASSERT(data.type == Variant::Type::Integer);
+                data = variantFromSymbol(*ctx.vm, *initExprNode->symbol);
+            }
+            else // string, float, bool
+            {
+                const auto initVal = variantFromSymbol(*ctx.vm, *initExprNode->symbol);
+                MOON_ASSERT(data.type == initVal.type);
+                data = initVal;
+                // Enum strings have program lifetime.
+                if (data.type == Variant::Type::Str)
+                {
+                    data.getAsString()->flags.isPersistent = true;
+                }
+            }
+        }
+        else // identifier / other enum member ref
+        {
+            if (initExprNode->nodeType == STNode::ExprNameIdent)
+            {
+                const auto initVal = objOut->findMemberVar(initExprNode->symbol->name);
+                MOON_ASSERT(data.type == initVal.type);
+                data = initVal;
+            }
+            else
+            {
+                MOON_ASSERT(initExprNode->nodeType == STNode::ExprMemberRef);
+
+                // Already checked when parsing, so an assert suffices.
+                const auto otherEnum = ctx.vm->types.findTypeId(initExprNode->getChildSymbol(0)->name);
+                MOON_ASSERT(otherEnum != nullptr);
+
+                const auto initVal = otherEnum->templateObject->findMemberVar(initExprNode->getChildSymbol(1)->name);
+                MOON_ASSERT(data.type == initVal.type);
+                data = initVal;
+            }
+        }
+    }
+    else // sequential integer list
+    {
+        MOON_ASSERT(data.type == Variant::Type::Integer);
+        data.value.asInteger = nextEnumIntVal++;
+    }
+
+    if (data.type == Variant::Type::Integer)
+    {
+        nextEnumIntVal = data.value.asInteger + 1;
+    }
+
+    printf("ADDING ENUM CONST: %s: %s\n", toString(varName).c_str(), toString(data.type).c_str());
+    objOut->addMember(varName, data);
+    initEnumMembers(ctx, root->getChild(0), objOut, nextEnumIntVal);
+}
+
+/*------------------------------------------------------------------*/
+
+static STEval enumMemberConstantReference(ParseContext & ctx, SyntaxTreeNode * eTypeNode, SyntaxTreeNode * eConstNode)
+{
+    MOON_ASSERT(eTypeNode->symbol  != nullptr);
+    MOON_ASSERT(eConstNode->symbol != nullptr);
+
+    const auto typeName = eTypeNode->symbol->name;
+    const auto enumType = ctx.vm->types.findTypeId(typeName);
+
+    if (enumType == nullptr)
+    {
+        std::string ename = color::white() + toString(typeName) + color::restore();
+        parserError(ctx, "reference to undefined enum type '" + ename + "'");
+    }
+    MOON_ASSERT(enumType->templateObject != nullptr);
+
+    const auto constName = eConstNode->symbol->name;
+    const auto enumConst = enumType->templateObject->findMemberIndex(constName);
+
+    if (enumConst < 0)
+    {
+        std::string cname = color::white() + toString(typeName) + "." + toString(constName) + color::restore();
+        parserError(ctx, "reference to undefined enum constant '" + cname + "'");
+    }
+
+    // Okay
+    const STEval stEvalConst = varType2Eval(enumType->templateObject->getMemberAt(enumConst).data.type);
+    eTypeNode->evalType  = STEval::UDT;
+    eConstNode->evalType = stEvalConst;
+    return stEvalConst;
+}
+
+/*------------------------------------------------------------------*/
+
+static void checkEnumInitializers(ParseContext & ctx, const SyntaxTreeNode * root,
+                                  const SyntaxTreeNode * iterNode, int & numOfNonIntegralConstants)
+{
+    if (iterNode == nullptr)
+    {
+        return;
+    }
+
+    if (iterNode->evalType == STEval::Undefined)
+    {
+        // Trying to init the constant with itself?
+        if (iterNode->symbol == iterNode->getChildSymbol(1))
+        {
+            std::string cname = color::white() + toString(iterNode->symbol->name) + color::restore();
+            parserError(ctx, "assigning enum constant '" + cname + "' to itself");
+        }
+
+        // Reference to a previously defined constant in this enum?
+        bool foundIt = false;
+        for (auto node = root; node != iterNode; node = node->getChild(0))
+        {
+            if (node->symbol == iterNode->getChildSymbol(1))
+            {
+                const_cast<SyntaxTreeNode *>(iterNode)->evalType = node->evalType;
+                const_cast<SyntaxTreeNode *>(iterNode->getChild(1))->evalType = node->evalType;
+                foundIt = true;
+                break;
+            }
+        }
+
+        if (!foundIt)
+        {
+            std::string cname = color::white() + toString(iterNode->getChildSymbol(1)->name) + color::restore();
+            parserError(ctx, "assigning undefined identifier '" + cname + "' to enum constant");
+        }
+    }
+
+    // If not explicitly initialized, we assume sequential integer constants.
+    // But in that case, previous constants must also be integers.
+    if (iterNode->getChild(1) == nullptr)
+    {
+        if (numOfNonIntegralConstants != 0)
+        {
+            parserError(ctx, "unable to deduce next constant value for enum with non-integer constants");
+        }
+    }
+
+    if (iterNode->evalType != STEval::Int &&
+        iterNode->evalType != STEval::Long)
+    {
+        ++numOfNonIntegralConstants;
+    }
+
+    checkEnumInitializers(ctx, root, iterNode->getChild(0), numOfNonIntegralConstants);
 }
 
 /*------------------------------------------------------------------*/
@@ -441,11 +662,11 @@ void Parser::error(const std::string & message)
 %token OP_MULTIPLY                "*"
 %token OP_DIVIDE                  "/"
 %token OP_MODULO                  "%"
-%token OP_PLUS_EQUAL              "+="
-%token OP_MINUS_EQUAL             "-="
-%token OP_MULTIPLY_EQUAL          "*="
-%token OP_DIVIDE_EQUAL            "/="
-%token OP_MODULO_EQUAL            "%="
+%token OP_PLUS_ASSIGN             "+="
+%token OP_MINUS_ASSIGN            "-="
+%token OP_MULTIPLY_ASSIGN         "*="
+%token OP_DIVIDE_ASSIGN           "/="
+%token OP_MODULO_ASSIGN           "%="
 
 /* Operators: comparisson */
 %token OP_CMP_GREATER_THAN        ">"
@@ -524,15 +745,17 @@ void Parser::error(const std::string & message)
 
 /*
  * Operator associativity: LEFT or RIGHT.
- * NOTE: Using associativity equivalent to the C language.
+ * NOTES:
+ * - Using associativity equivalent to the C language.
+ * - Order of this list matters! Lower on page, higher precedence.
+ * - These should match the order in the 'expression' rule below.
  */
-%right OP_MODULO_EQUAL
-%right OP_DIVIDE_EQUAL
-%right OP_MULTIPLY_EQUAL
-%right OP_MINUS_EQUAL
-%right OP_PLUS_EQUAL
+%right OP_MODULO_ASSIGN
+%right OP_DIVIDE_ASSIGN
+%right OP_MULTIPLY_ASSIGN
+%right OP_MINUS_ASSIGN
+%right OP_PLUS_ASSIGN
 %right OP_ASSIGN
-%right OP_LOGIC_NOT
 %left  OP_LOGIC_OR
 %left  OP_LOGIC_AND
 %left  OP_CMP_NOT_EQUAL
@@ -546,6 +769,14 @@ void Parser::error(const std::string & message)
 %left  OP_MODULO
 %left  OP_DIVIDE
 %left  OP_MULTIPLY
+%right OP_LOGIC_NOT
+
+/* Context depended fix for unary +,-. See:
+ * https://www.gnu.org/software/bison/manual/html_node/Contextual-Precedence.html */
+%right UNARY_MINUS
+%right UNARY_PLUS
+
+/* Member dereference with the dot operator */
 %left  MEMBER_REF
 
 /*
@@ -733,10 +964,10 @@ expression
     | expression[L] "%"   expression[R] { $$ = newBinaryOpNode(ctx, STNode::ExprModulo,          $L, $R); }
     | expression[L] "/"   expression[R] { $$ = newBinaryOpNode(ctx, STNode::ExprDivide,          $L, $R); }
     | expression[L] "*"   expression[R] { $$ = newBinaryOpNode(ctx, STNode::ExprMultiply,        $L, $R); }
-    |               "not" expression[R] { $$ = newUnaryOpNode(ctx,  STNode::ExprLogicNot,            $R); }
-    |               "-"   expression[R] { $$ = newUnaryOpNode(ctx,  STNode::ExprUnaryMinus,          $R); } /*TODO might be able to fix precedence issue with %prec. check man pages*/
-    |               "+"   expression[R] { $$ = newUnaryOpNode(ctx,  STNode::ExprUnaryPlus,           $R); }
-    | expression[L] "."   expression[R] { $$ = newBinaryOpNode(ctx, STNode::ExprMemberRef,       $L, $R); }
+    | "not" expression[R] { $$ = newUnaryOpNode(ctx, STNode::ExprLogicNot, $R); }
+    | "-" expression[R] %prec UNARY_MINUS { $$ = newUnaryOpNode(ctx, STNode::ExprUnaryMinus, $R); }
+    | "+" expression[R] %prec UNARY_PLUS  { $$ = newUnaryOpNode(ctx, STNode::ExprUnaryPlus, $R);  }
+    | expression[L] "." expression[R] { $$ = newBinaryOpNode(ctx, STNode::ExprMemberRef, $L, $R); }
     | array_subscript_expression
     | func_call_expression
     | "(" expression ")"
@@ -796,13 +1027,12 @@ func_call_expression
     ;
 
 func_declaration
-    : "func" IDENTIFIER "(" func_parameter_list_declaration ")" optional_return_type
-      { beginFunc(ctx, $2); } optional_statement_list { endFunc(ctx); } end_statement
+    : "func" IDENTIFIER { beginFunc(ctx, $2); } "(" func_parameter_list_declaration ")" optional_return_type optional_statement_list end_statement
         {
             // child[0] = parameter list
             // child[1] = function body
             // child[2] = return type
-            $$ = ctx.syntTree->newNodeWithSymbol(STNode::FuncDeclStatement, $2, $4, $8, $6, $6->evalType);
+            $$ = ctx.syntTree->newNodeWithSymbol(STNode::FuncDeclStatement, $2, $5, $8, $7, $7->evalType);
 
             // Redefinition not allowed. We also don't currently support function overloads.
             auto funcName = $2->name;
@@ -820,13 +1050,13 @@ func_declaration
             const Variant::Type * pRetType = nullptr;
             Variant::Type retTypeTemp;
 
-            if ($6->evalType != STEval::Void)
+            if ($7->evalType != STEval::Void)
             {
-                retTypeTemp = eval2VarType($6->evalType);
+                retTypeTemp = eval2VarType($7->evalType);
                 pRetType = &retTypeTemp;
             }
 
-            collectFunctionArgTypes($4, argTypes, argCount, extraFlags);
+            collectFunctionArgTypes($5, argTypes, argCount, extraFlags);
             if (extraFlags & Function::VarArgs)
             {
                 argCount = 0;
@@ -835,6 +1065,7 @@ func_declaration
             // Register the new function:
             ctx.vm->functions.addFunction(funcName, pRetType, (argCount != 0) ? argTypes : nullptr,
                                           argCount, 0, extraFlags, nullptr);
+            endFunc(ctx);
         }
     ;
 
@@ -897,8 +1128,6 @@ typed_var_declaration
     : IDENTIFIER ":" type_identifier
         {
             $$ = newVarDeclNode(ctx, $1, nullptr, $3, $3->evalType);
-//            $$ = ctx.syntTree->newNodeWithSymbol(STNode::VarDeclStatement,
-//                                  $1, nullptr, $3, nullptr, $3->evalType);
         }
     ;
 
@@ -907,21 +1136,14 @@ let_var_declaration
     : "let" IDENTIFIER ":" type_identifier "=" expression ";"
         {
             $$ = newVarDeclNode(ctx, $2, $6, $4, $4->evalType);
-//            $$ = ctx.syntTree->newNodeWithSymbol(STNode::VarDeclStatement,
-//                                       $2, $6, $4, nullptr, $4->evalType);
         }
     | "let" IDENTIFIER ":" type_identifier ";"
         {
             $$ = newVarDeclNode(ctx, $2, nullptr, $4, $4->evalType);
-//            $$ = ctx.syntTree->newNodeWithSymbol(STNode::VarDeclStatement,
-//                                  $2, nullptr, $4, nullptr, $4->evalType);
         }
     | "let" IDENTIFIER "=" expression ";"
         {
             $$ = newVarDeclNode(ctx, $2, $4, nullptr, $4->evalType);
-            /* Eval Type unspecified; inferred from the expression */
-//            $$ = ctx.syntTree->newNodeWithSymbol(STNode::VarDeclStatement,
-//                                  $2, $4, nullptr, nullptr, $4->evalType);
         }
     ;
 
@@ -1117,33 +1339,59 @@ range_param
 `-----------------*/
 
 enum_declaration
-    : "type" IDENTIFIER "enum" enum_constant_list end_statement
+    : "type" IDENTIFIER "enum" { beginUDT(ctx, $2, "enum"); } enum_constant_list end_statement
         {
             $$ = ctx.syntTree->newNodeWithSymbol(STNode::EnumDeclStatement, $2,
-                                            $4, nullptr, nullptr, STEval::UDT);
+                                            $5, nullptr, nullptr, STEval::UDT);
+
+            // Redefinition not allowed.
+            const auto typeName = $2->name;
+            if (ctx.vm->types.findTypeId(typeName))
+            {
+                std::string tname = color::white() + toString(typeName) + color::restore();
+                parserError(ctx, "enum '" + tname + "' was defined more than once");
+            }
+
+            Object * templateObj = Enum::newInstance(*ctx.vm, nullptr);
+            auto newTypeId = ctx.vm->types.addTypeId(typeName, &Enum::newInstance, templateObj, false);
+            templateObj->setTypeId(newTypeId);
+            templateObj->markTypeTemplate();
+
+            // This will search for undefined STEvals in the initializers and update
+            // them if the enum const references a global constant or a previously
+            // defined sibling constant in this enum. It also checks that uninitialized
+            // constant are not used on an enum with non-integral values.
+            int numOfNonIntegralConstants = 0;
+            checkEnumInitializers(ctx, $5, $5, numOfNonIntegralConstants);
+
+            Int64 nextEnumIntVal = 0;
+            initEnumMembers(ctx, $5, templateObj, nextEnumIntVal);
+            endUDT(ctx);
         }
     ;
 
 enum_constant
     : IDENTIFIER
-        {
+        { // Uninitialized enum constant
             $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprNameIdent, $1,
                                   nullptr, nullptr, nullptr, STEval::Long);
         }
-    | IDENTIFIER "=" INT_LITERAL
-        {
-            /*FIXME should allow other types of literal constants actually, not just int ...*/
-            auto enumValNode = ctx.syntTree->newNodeWithSymbol(STNode::ExprLiteralConst, $3,
-                                        nullptr, nullptr, nullptr, evalTypeFromSymbol(*$3));
-
-            $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprNameIdent, $1,
-                     nullptr, enumValNode, nullptr, enumValNode->evalType);
-        }
-    | IDENTIFIER "=" enum_constant
-        {
-            // Second child is the name of a previously defined constant
+    | IDENTIFIER "=" literal_const_expression
+        { // Constant initialized from compile-time literal value
             $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprNameIdent, $1,
                                        nullptr, $3, nullptr, $3->evalType);
+        }
+    | IDENTIFIER "=" identifier_expression
+        { // Constant with explicit initializer (a prev constant from this enum)
+            $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprNameIdent, $1,
+                                       nullptr, $3, nullptr, $3->evalType);
+        }
+    | IDENTIFIER "=" identifier_expression "." identifier_expression
+        { // Constant initialized from a reference to a member constant of another enum
+            const auto stEval = enumMemberConstantReference(ctx, $3, $5);
+            auto initExpr = newBinaryOpNode(ctx, STNode::ExprMemberRef, $3, $5);
+            $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprNameIdent, $1,
+                                       nullptr, initExpr, nullptr, stEval);
         }
     ;
 
@@ -1165,7 +1413,7 @@ enum_constant_list
 `--------------------------------*/
 
 type_alias_declaration
-    : "type" IDENTIFIER "=" type_identifier ";"
+    : "type" IDENTIFIER "=" type_identifier { requireGlobalScope(ctx, "type alias"); } ";"
         {
             $$ = ctx.syntTree->newNodeWithSymbol(STNode::TypeAliasDeclStatement, $2,
                                                  $4, nullptr, nullptr, STEval::UDT);
@@ -1181,7 +1429,7 @@ type_alias_declaration
             }
 
             // New definition:
-            auto existingType = ctx.vm->types.findTypeId(typeName);
+            const auto existingType = ctx.vm->types.findTypeId(typeName);
             if (existingType == nullptr)
             {
                 std::string tname = color::white() + toString(typeName) + color::restore();
@@ -1193,10 +1441,10 @@ type_alias_declaration
     ;
 
 struct_declaration
-    : "type" IDENTIFIER "struct" struct_member_list end_statement
+    : "type" IDENTIFIER "struct" { beginUDT(ctx, $2, "struct"); } struct_member_list end_statement
         {
             $$ = ctx.syntTree->newNodeWithSymbol(STNode::StructDeclStatement, $2,
-                                              $4, nullptr, nullptr, STEval::UDT);
+                                              $5, nullptr, nullptr, STEval::UDT);
 
             // Redefinition not allowed.
             const auto typeName = $2->name;
@@ -1211,7 +1459,8 @@ struct_declaration
             templateObj->setTypeId(newTypeId);
             templateObj->markTypeTemplate();
 
-            collectObjMembers(ctx, $4, templateObj);
+            collectObjMembers(ctx, $5, templateObj);
+            endUDT(ctx);
         }
     ;
 

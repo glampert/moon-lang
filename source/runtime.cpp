@@ -466,6 +466,23 @@ void TypeTable::print(std::ostream & os) const
 }
 
 // ========================================================
+
+#if MOON_PRINT_RT_OBJECT_FLAGS
+static void appendObjFlags(const Object::BitFlags flags, std::string & strOut)
+{
+    strOut += "  flags => '";
+    if (flags.isAlive)       { strOut += "A"; }
+    else                     { strOut += "D"; }
+    if (flags.isPersistent)  { strOut += "P"; }
+    if (flags.isTemplateObj) { strOut += "T"; }
+    if (flags.isBuiltInType) { strOut += "B"; }
+    if (flags.isStructType)  { strOut += "S"; }
+    if (flags.isEnumType)    { strOut += "E"; }
+    strOut += "',\n";
+}
+#endif // MOON_PRINT_RT_OBJECT_FLAGS
+
+// ========================================================
 // Object:
 // ========================================================
 
@@ -476,6 +493,9 @@ Object::Object(const TypeId * tid) noexcept
     flags.isAlive       = true;
     flags.isPersistent  = false;
     flags.isTemplateObj = false;
+    flags.isBuiltInType = false;
+    flags.isStructType  = false;
+    flags.isEnumType    = false;
 }
 
 Object::~Object()
@@ -570,12 +590,7 @@ std::string Object::getStringRepresentation() const
     }
 
     #if MOON_PRINT_RT_OBJECT_FLAGS
-    finalStr += "  flags => '";
-    if (flags.isAlive)       { finalStr += "A"; }
-    else                     { finalStr += "D"; }
-    if (flags.isPersistent)  { finalStr += "P"; }
-    if (flags.isTemplateObj) { finalStr += "T"; }
-    finalStr += "',\n";
+    appendObjFlags(flags, finalStr);
     #endif // MOON_PRINT_RT_OBJECT_FLAGS
 
     finalStr += "}\n";
@@ -669,12 +684,16 @@ void freeRuntimeObject(VM & vm, Object * obj)
 
 Object * Struct::newInstance(VM & vm, const TypeId * tid)
 {
-    return vm.gc.alloc<Struct>(tid);
+    auto obj = vm.gc.alloc<Struct>(tid);
+    obj->flags.isStructType = true;
+    return obj;
 }
 
 Object * Enum::newInstance(VM & vm, const TypeId * tid)
 {
-    return vm.gc.alloc<Enum>(tid);
+    auto obj = vm.gc.alloc<Enum>(tid);
+    obj->flags.isEnumType = true;
+    return obj;
 }
 
 // ========================================================
@@ -683,7 +702,9 @@ Object * Enum::newInstance(VM & vm, const TypeId * tid)
 
 Object * Str::newInstance(VM & vm, const TypeId * tid)
 {
-    return vm.gc.alloc<Str>(tid);
+    auto obj = vm.gc.alloc<Str>(tid);
+    obj->flags.isBuiltInType = true;
+    return obj;
 }
 
 Str * Str::newFromString(VM & vm, const std::string & str, const bool makeConst)
@@ -832,12 +853,7 @@ std::string Str::getStringRepresentation() const
     finalStr += "  chars => \"" + unescapeString(c_str()) + "\",\n";
 
     #if MOON_PRINT_RT_OBJECT_FLAGS
-    finalStr += "  flags => '";
-    if (flags.isAlive)       { finalStr += "A"; }
-    else                     { finalStr += "D"; }
-    if (flags.isPersistent)  { finalStr += "P"; }
-    if (flags.isTemplateObj) { finalStr += "T"; }
-    finalStr += "',\n";
+    appendObjFlags(flags, finalStr);
     #endif // MOON_PRINT_RT_OBJECT_FLAGS
 
     finalStr += "}\n";
@@ -871,7 +887,9 @@ Str::~Str()
 
 Object * Array::newInstance(VM & vm, const TypeId * tid)
 {
-    return vm.gc.alloc<Array>(tid);
+    auto obj = vm.gc.alloc<Array>(tid);
+    obj->flags.isBuiltInType = true;
+    return obj;
 }
 
 Array * Array::newEmpty(VM & vm, const TypeId * dataType, const int capacityHint)
@@ -1078,12 +1096,7 @@ std::string Array::getStringRepresentation() const
     finalStr += "  mem_bytes => " + toString(capBytes) + ",\n";
 
     #if MOON_PRINT_RT_OBJECT_FLAGS
-    finalStr += "  flags => '";
-    if (flags.isAlive)       { finalStr += "A"; }
-    else                     { finalStr += "D"; }
-    if (flags.isPersistent)  { finalStr += "P"; }
-    if (flags.isTemplateObj) { finalStr += "T"; }
-    finalStr += "',\n";
+    appendObjFlags(flags, finalStr);
     #endif // MOON_PRINT_RT_OBJECT_FLAGS
 
     finalStr += "}\n";

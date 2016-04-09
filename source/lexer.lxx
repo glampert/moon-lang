@@ -227,11 +227,11 @@ NEW_LINE      [\n\r]
 "*"              { LEX_LOG_TOKEN( "*"   ); return moon::Parser::token::OP_MULTIPLY;          }
 "/"              { LEX_LOG_TOKEN( "/"   ); return moon::Parser::token::OP_DIVIDE;            }
 "%"              { LEX_LOG_TOKEN( "%"   ); return moon::Parser::token::OP_MODULO;            }
-"+="             { LEX_LOG_TOKEN( "+="  ); return moon::Parser::token::OP_PLUS_EQUAL;        }
-"-="             { LEX_LOG_TOKEN( "-="  ); return moon::Parser::token::OP_MINUS_EQUAL;       }
-"*="             { LEX_LOG_TOKEN( "*="  ); return moon::Parser::token::OP_MULTIPLY_EQUAL;    }
-"/="             { LEX_LOG_TOKEN( "/="  ); return moon::Parser::token::OP_DIVIDE_EQUAL;      }
-"%="             { LEX_LOG_TOKEN( "%="  ); return moon::Parser::token::OP_MODULO_EQUAL;      }
+"+="             { LEX_LOG_TOKEN( "+="  ); return moon::Parser::token::OP_PLUS_ASSIGN;       }
+"-="             { LEX_LOG_TOKEN( "-="  ); return moon::Parser::token::OP_MINUS_ASSIGN;      }
+"*="             { LEX_LOG_TOKEN( "*="  ); return moon::Parser::token::OP_MULTIPLY_ASSIGN;   }
+"/="             { LEX_LOG_TOKEN( "/="  ); return moon::Parser::token::OP_DIVIDE_ASSIGN;     }
+"%="             { LEX_LOG_TOKEN( "%="  ); return moon::Parser::token::OP_MODULO_ASSIGN;     }
 ">"              { LEX_LOG_TOKEN( ">"   ); return moon::Parser::token::OP_CMP_GREATER_THAN;  }
 "<"              { LEX_LOG_TOKEN( "<"   ); return moon::Parser::token::OP_CMP_LESS_THAN;     }
 ">="             { LEX_LOG_TOKEN( ">="  ); return moon::Parser::token::OP_CMP_GREATER_EQUAL; }

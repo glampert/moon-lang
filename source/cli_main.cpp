@@ -35,8 +35,8 @@ NOTES ON THE LANGUAGE SYNTAX SIDE:
 
 - Define some construct for debug only code, e.g. some `debug` keyword, like in D.
 
-- Built-in assert() function.
-- Built-in panic() function.
+- Built-in assert() function (with func-file-line info).
+- Built-in panic() function (with func-file-line info).
 
 - Assign functions to variables (a Function/Callable type?)
 
@@ -398,6 +398,13 @@ int main(int argc, const char * argv[])
         logStream() << compiler.syntTree << "\n";
 
         //****** TEMP
+        logStream() << "----------------------------------" << std::endl;
+        logStream() << "GC OBJECTS:\n" << std::endl;
+        for (const Object * obj = vm.gc.getGCListHead(); obj != nullptr; obj = obj->getGCLink())
+        {
+            obj->print(logStream());
+            logStream() << std::endl;
+        }
         return 0;
 
         compiler.compile(vm);

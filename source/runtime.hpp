@@ -505,6 +505,9 @@ public:
         bool isAlive       : 1;
         bool isPersistent  : 1;
         bool isTemplateObj : 1;
+        bool isBuiltInType : 1;
+        bool isStructType  : 1;
+        bool isEnumType    : 1;
     } flags;
 
     // Member variable record (name ref is held by the object):
