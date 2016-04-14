@@ -279,13 +279,6 @@ static void testScriptArray(VM & vm)
 
 int main(int argc, const char * argv[])
 {
-#if MOON_DEBUG
-    moon::logStream() << "Moon: This is a debug build.\n";
-    #if MOON_ENABLE_ASSERT
-    moon::logStream() << "Moon: Runtime asserts are enabled.\n";
-    #endif // MOON_ENABLE_ASSERT
-#endif // MOON_DEBUG
-
     ////////
     {
         auto a = newInstr(0);
@@ -322,6 +315,8 @@ int main(int argc, const char * argv[])
 
     // Misc temporary tests
     {
+        assert(hashCString("hello") == hashCString("hello", std::strlen("hello")));
+
         logStream() << "sizeof(VM)                = " << sizeof(VM) << std::endl;
         logStream() << "sizeof(Compiler)          = " << sizeof(Compiler) << std::endl;
         logStream() << "sizeof(Parser)            = " << sizeof(Parser) << std::endl;
@@ -397,7 +392,12 @@ int main(int argc, const char * argv[])
         //logStream() << vm.types << "\n";
         logStream() << compiler.syntTree << "\n";
 
+        #if MOON_ENABLE_ASSERT
+        compiler.syntTree.validateNodes();
+        #endif // MOON_ENABLE_ASSERT
+
         //****** TEMP
+        /*
         logStream() << "----------------------------------" << std::endl;
         logStream() << "GC OBJECTS:\n" << std::endl;
         for (const Object * obj = vm.gc.getGCListHead(); obj != nullptr; obj = obj->getGCLink())
@@ -405,7 +405,8 @@ int main(int argc, const char * argv[])
             obj->print(logStream());
             logStream() << std::endl;
         }
-        return 0;
+        */
+        //return 0;
 
         compiler.compile(vm);
         logStream() << compiler << "\n";

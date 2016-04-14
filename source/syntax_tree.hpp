@@ -30,6 +30,7 @@ struct SyntaxTreeNode final
     {
         // Placeholder types (used internally):
         Undefined,
+        Null,
         Void,
         VarArgs,
 
@@ -43,6 +44,8 @@ struct SyntaxTreeNode final
         Array,
         Range,
         Any,
+        Func,
+        Tid,
 
         // User Defined Type flag.
         // (accompanied by an identifier/symbol).
@@ -55,6 +58,7 @@ struct SyntaxTreeNode final
     enum class Type : UInt8
     {
         // Other:
+        NoOp,
         TranslationUnit,
         ModuleDefinition,
 
@@ -88,6 +92,8 @@ struct SyntaxTreeNode final
         ExprTypeIdent,
         ExprLiteralConst,
         ExprObjectConstructor,
+        ExprTypecast,
+        ExprTypeof,
         ExprAssign,
         ExprCmpNotEqual,
         ExprCmpEqual,
@@ -115,9 +121,9 @@ struct SyntaxTreeNode final
         Count
     };
 
-    const SyntaxTreeNode * children[3]; // Pointers to the these node's children.
+    const SyntaxTreeNode * children[3]; // Pointers to this node's children, if any.
     const Symbol * const symbol;        // Pointer to a symbol, if applicable.
-    const Type nodeType;                // What type of node is it. See the 'Type' enum above.
+    const Type nodeType;                // What type of node is this. See the 'Type' enum above.
     Eval evalType;                      // Evaluation or "return value" type of the node. Might be updated after construction.
 
     // All-in-one constructor:
@@ -151,17 +157,9 @@ struct SyntaxTreeNode final
     }
 };
 
-// ========================================================
-// SyntaxTreeNode helpers:
-// ========================================================
-
 // Node enum constants to printable strings (with color tags):
 std::string toString(SyntaxTreeNode::Type nodeType);
 std::string toString(SyntaxTreeNode::Eval evalType);
-
-// Deduce AST node evaluation type from its symbol or vice-versa:
-SyntaxTreeNode::Eval evalTypeFromSymbol(const Symbol & sym);
-const Symbol * symbolFromEval(const SymbolTable & symTable, SyntaxTreeNode::Eval eval);
 
 // ========================================================
 // class SyntaxTree:
@@ -187,6 +185,13 @@ public:
     // Simple recursive listing of each node for debug logging.
     void print(std::ostream & os) const;
 
+    // Does a full tree traversal and performs basic checking on each
+    // node for consistency with the expected states for each node type.
+    // This operation can be slow, so it is only advised using it for debug
+    // validation and internal assertions. If an inconsistency is found,
+    // the function throws with MOON_INTERNAL_EXCEPTION().
+    void validateNodes() const;
+
     //
     // Allocate and construct a new node, incrementing the tree's node count.
     // The new node is still not linked to the tree. After allocation, a node
@@ -211,6 +216,8 @@ public:
                                      SyntaxTreeNode::Eval eval);
 
 private:
+
+    static void checkNodeRecursive(const SyntaxTreeNode * const node);
 
     // Also a reference to a node in the pool.
     const SyntaxTreeNode * root = nullptr;

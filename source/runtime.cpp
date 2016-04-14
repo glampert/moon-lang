@@ -195,43 +195,69 @@ void Function::invoke(VM & vm, Stack::Slice args) const
     }
 }
 
-void Function::validateArguments(Stack::Slice args) const
+void Function::validateArguments(const Stack::Slice args) const
+{
+    std::string errorMessage;
+    if (!validateArguments(args, errorMessage))
+    {
+        MOON_RUNTIME_EXCEPTION(errorMessage);
+    }
+}
+
+bool Function::validateArguments(const Stack::Slice args, std::string & errorMessageOut) const
 {
     // No args or varargs validated by the function itself.
     if (argumentTypes == nullptr || argumentCount == 0)
     {
-        return;
+        return true;
     }
 
     const UInt32 argsIn = args.getSize();
     if (argsIn != argumentCount)
     {
-        MOON_RUNTIME_EXCEPTION("function '" + toString(name) + "' expected " +
-                               toString(argumentCount) + " argument(s) but " +
-                               toString(argsIn) + " where provided.");
+        errorMessageOut = "function '" + toString(name) + "' expected " +
+                          toString(argumentCount) + " argument(s) but " +
+                          toString(argsIn) + " where provided.";
+        return false;
     }
 
+    // Check the types:
     for (UInt32 a = 0; a < argsIn; ++a)
     {
         const Variant::Type typeIn = args[a].type;
         const Variant::Type typeExpected = argumentTypes[a];
 
-        if (typeIn != typeExpected)
+        // Allow implicit conversions between numerical types.
+        if (!isAssignmentValid(typeExpected, typeIn))
         {
-            MOON_RUNTIME_EXCEPTION("function '" + toString(name) + "' expected " +
-                                   toString(typeExpected) + " for argument " + toString(a) +
-                                   " but " + toString(typeIn) + " was provided.");
+            errorMessageOut = "function '" + toString(name) + "' expected " +
+                              toString(typeExpected) + " for argument " + toString(a + 1) +
+                              " but " + toString(typeIn) + " was provided.";
+            return false;
         }
     }
+
+    return true; // Valid call.
 }
 
 void Function::validateReturnValue(const Variant retVal) const
 {
-    if (hasReturnVal() && (*returnType != retVal.type))
+    std::string errorMessage;
+    if (!validateReturnValue(retVal.type, errorMessage))
     {
-        MOON_RUNTIME_EXCEPTION("function '" + toString(name) + "' was expected to return " +
-                               toString(*returnType) + " but instead returned " + toString(retVal.type));
+        MOON_RUNTIME_EXCEPTION(errorMessage);
     }
+}
+
+bool Function::validateReturnValue(const Variant::Type retValType, std::string & errorMessageOut) const
+{
+    if (hasReturnVal() && !isAssignmentValid(*returnType, retValType))
+    {
+        errorMessageOut = "function '" + toString(name) + "' was expected to return " +
+                          toString(*returnType) + " but instead returned " + toString(retValType);
+        return false;
+    }
+    return true;
 }
 
 void Function::print(std::ostream & os) const
@@ -393,7 +419,12 @@ TypeTable::TypeTable(VM & vm)
         }
     }
 
-    // These are used frequently, so we profit from pre-caching them.
+    // Null is a special case. It is not a type in its own right,
+    // but a literal value. However, it still requires a dummy type id.
+    nullTypeId = addTypeId("null", nullptr, nullptr, true);
+    MOON_ASSERT(nullTypeId != nullptr);
+
+    // These are used frequently, so we profit from caching them.
     intTypeId      = findTypeId("int");      MOON_ASSERT(intTypeId      != nullptr);
     longTypeId     = findTypeId("long");     MOON_ASSERT(longTypeId     != nullptr);
     floatTypeId    = findTypeId("float");    MOON_ASSERT(floatTypeId    != nullptr);
@@ -405,6 +436,7 @@ TypeTable::TypeTable(VM & vm)
     functionTypeId = findTypeId("function"); MOON_ASSERT(functionTypeId != nullptr);
     strTypeId      = findTypeId("str");      MOON_ASSERT(strTypeId      != nullptr);
     arrayTypeId    = findTypeId("array");    MOON_ASSERT(arrayTypeId    != nullptr);
+    tidTypeId      = findTypeId("tid");      MOON_ASSERT(tidTypeId      != nullptr);
 }
 
 const TypeId * TypeTable::addTypeId(ConstRcString * name, ObjectFactoryCB instCb,
@@ -1129,12 +1161,14 @@ const BuiltInTypeDesc * getBuiltInTypeNames()
         { ConstRcStrUPtr{ newConstRcString( "any"       ) }, nullptr, false },
         { ConstRcStrUPtr{ newConstRcString( "object"    ) }, nullptr, false },
         { ConstRcStrUPtr{ newConstRcString( "function"  ) }, nullptr, false },
+        { ConstRcStrUPtr{ newConstRcString( "tid"       ) }, nullptr, false },
         { ConstRcStrUPtr{ newConstRcString( "str"       ) }, &Str::newInstance,   false },
         { ConstRcStrUPtr{ newConstRcString( "array"     ) }, &Array::newInstance, false },
         // Internal types (not actual types usable in code):
         { ConstRcStrUPtr{ newConstRcString( "varargs"   ) }, nullptr, true },
         { ConstRcStrUPtr{ newConstRcString( "void"      ) }, nullptr, true },
         { ConstRcStrUPtr{ newConstRcString( "undefined" ) }, nullptr, true },
+        { ConstRcStrUPtr{ newConstRcString( "null"      ) }, nullptr, true },
         // Marks the end of the list:
         { nullptr, nullptr, true }
     };

@@ -39,48 +39,90 @@ namespace native
 // Miscellaneous printing and error reporting functions:
 // ========================================================
 
+[[noreturn]] static void scriptError(const Int64 lineNum,
+                                     const char * srcFileName,
+                                     const char * callerName,
+                                     const char * colorCode,
+                                     const char * baseMessage,
+                                     const std::string & userMessage) noexcept(false)
+{
+    std::string message;
+    message += colorCode;
+    message += baseMessage;
+    message += srcFileName;
+    message += "(" + toString(lineNum) + ") ";
+    message += "at ";
+    message += callerName;
+    message += color::restore();
+
+    if (!userMessage.empty())
+    {
+        message += " - ";
+        message += userMessage;
+    }
+
+    // Throws ScriptException.
+    moon::scriptError(message);
+}
+
 void assert(VM &, Stack::Slice args) // (varargs) -> void
 {
-    // First var must be the boolean result of the assert expression.
-    // Expression as string should follow, then source file/line info.
-    // Lastly, optional user-provided error message.
-    auto var = args.first();
-    if (var && var->toBool())
+    // First three arguments will always be the source location
+    // in filename, line num and caller function order.
+    const auto fileName = args.first();
+    const auto lineNum  = args.next();
+    const auto funcName = args.next();
+
+    // Fourth arg is the assert condition.
+    // If non-null/non-zero we pass the assertion.
+    const auto cond = args.next();
+    if (cond && cond->toBool())
     {
         return;
     }
 
-    std::string message;
-    message += color::yellow();
-    message += "script assert() failed: ";
-    message += color::restore();
+    // If it is a function name we will get a Function variant.
+    // If calling from the global scope, it is a string with "<global scope>"
+    const char * callerName = ((funcName->type == Variant::Type::Function) ?
+                                funcName->getAsFunction()->name->chars :
+                                funcName->getAsString()->c_str());
 
-    for (var = args.next(); var; var = args.next())
+    // Additional user-provided error message strings:
+    std::string userMessage;
+    for (auto var = args.next(); var != nullptr; var = args.next())
     {
-        message += toString(*var);
+        userMessage += toString(*var);
     }
 
-    scriptError(message);
+    scriptError(lineNum->getAsInteger(), fileName->getAsString()->c_str(),
+                callerName, color::yellow(), "script assert() failed: ", userMessage);
 }
 
 void panic(VM &, Stack::Slice args) // (varargs) -> void
 {
-    std::string message;
-    message += color::red();
-    message += "script panic(): ";
-    message += color::restore();
+    // Same layout of the above assert() function.
+    const auto fileName = args.first();
+    const auto lineNum  = args.next();
+    const auto funcName = args.next();
 
-    for (auto var = args.first(); var; var = args.next())
+    // Additional user-provided error message strings:
+    std::string userMessage;
+    for (auto var = args.next(); var != nullptr; var = args.next())
     {
-        message += toString(*var);
+        userMessage += toString(*var);
     }
 
-    scriptError(message);
+    const char * callerName = ((funcName->type == Variant::Type::Function) ?
+                                funcName->getAsFunction()->name->chars :
+                                funcName->getAsString()->c_str());
+
+    scriptError(lineNum->getAsInteger(), fileName->getAsString()->c_str(),
+                callerName, color::red(), "script panic(): ", userMessage);
 }
 
 void print(VM &, Stack::Slice args) // (varargs) -> void
 {
-    for (auto var = args.first(); var; var = args.next())
+    for (auto var = args.first(); var != nullptr; var = args.next())
     {
         logStream() << toString(*var);
     }
@@ -88,7 +130,7 @@ void print(VM &, Stack::Slice args) // (varargs) -> void
 
 void println(VM &, Stack::Slice args) // (varargs) -> void
 {
-    for (auto var = args.first(); var; var = args.next())
+    for (auto var = args.first(); var != nullptr; var = args.next())
     {
         logStream() << toString(*var);
     }
@@ -103,8 +145,8 @@ void to_string(VM & vm, Stack::Slice args) // (varargs) -> string
     }
 
     // Second argument is the optional formatting flag.
-    auto var = args.first();
-    auto fmt = args.next();
+    const auto var = args.first();
+    const auto fmt = args.next();
     std::string outputStr;
 
     if (fmt != nullptr)
@@ -216,6 +258,10 @@ void to_string(VM & vm, Stack::Slice args) // (varargs) -> string
     vm.setReturnValue(result);
 }
 
+// ========================================================
+// Miscellaneous built-ins:
+// ========================================================
+
 //TODO other nice things to have:
 //
 // - a small strings library (can be based on std::string)
@@ -225,6 +271,8 @@ void to_string(VM & vm, Stack::Slice args) // (varargs) -> string
 // - small rand gen library
 // - a library for bit manipulation within integers? We don't have the traditional bitshift ops...
 // - env library to get things like cmdline and env vars
+// - parse_int/parse_float functions (str=>int) conversion
+// - console input function
 
 } // namespace native {}
 

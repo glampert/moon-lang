@@ -79,7 +79,7 @@ void setStreams(std::ostream * outStr, std::ostream * errStr) noexcept;
 // ========================================================
 
 // Use this for non-fatal Lexer/Parser/Compiler warning messages.
-// Justs logs to the error output (stderr/std::cerr by default). Doesn't throw.
+// Justs logs to the error output (stderr/std::cerr by default). Doesn't explicitly throw.
 void warning(const std::string & warnMessage,
              const std::string & srcFile,
              const int srcLineNum,

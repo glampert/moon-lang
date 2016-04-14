@@ -73,6 +73,17 @@ public:
     // Debug printing for the generated intermediate code.
     void print(std::ostream & os) const;
 
+    //-------
+    // parseScript(std::ostream)
+    // avoids doing file IO. user has to provide an open file or whatever
+    //
+    // struct ImportHandler {
+    //     virtual std::ostream openScriptImport(const std::string & importFile) = 0;
+    // }
+    // so the user can handle include paths in whatever ways.
+    // we rely on the callback to open imports referenced by the scripts.
+    //
+
     //
     // Intermediate code generation:
     //

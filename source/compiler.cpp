@@ -78,6 +78,30 @@ struct CodeGen final
     //
 };
 
+const Symbol * symbolFromEval(const SymbolTable & symTable, const SyntaxTreeNode::Eval stEval)
+{
+    // These are built-ins always present in the symbol table. Check symbol_table.cpp.
+    switch (stEval)
+    {
+    case SyntaxTreeNode::Eval::Null    : return symTable.findSymbol("null");
+    case SyntaxTreeNode::Eval::Void    : return symTable.findSymbol("void");
+    case SyntaxTreeNode::Eval::VarArgs : return symTable.findSymbol("varargs");
+    case SyntaxTreeNode::Eval::Int     : return symTable.findSymbol("int");
+    case SyntaxTreeNode::Eval::Long    : return symTable.findSymbol("long");
+    case SyntaxTreeNode::Eval::Float   : return symTable.findSymbol("float");
+    case SyntaxTreeNode::Eval::Double  : return symTable.findSymbol("double");
+    case SyntaxTreeNode::Eval::Bool    : return symTable.findSymbol("bool");
+    case SyntaxTreeNode::Eval::Str     : return symTable.findSymbol("str");
+    case SyntaxTreeNode::Eval::Array   : return symTable.findSymbol("array");
+    case SyntaxTreeNode::Eval::Range   : return symTable.findSymbol("range");
+    case SyntaxTreeNode::Eval::Any     : return symTable.findSymbol("any");
+    case SyntaxTreeNode::Eval::Func    : return symTable.findSymbol("function");
+    case SyntaxTreeNode::Eval::Tid     : return symTable.findSymbol("tid");
+    case SyntaxTreeNode::Eval::UDT     : return symTable.findSymbol("object");
+    default : MOON_INTERNAL_EXCEPTION("can't convert STEval '" + toString(stEval) + "' to a symbol!");
+    } // switch (stEval)
+}
+
 static UInt32 getProgCodeIndex(const InstrMap & instrMapping, const IntermediateInstr * instr)
 {
     MOON_ASSERT(instr != nullptr);
@@ -605,7 +629,7 @@ static IntermediateInstr * makeLoadMemberOffsetInstr(Compiler & compiler,
     if (typeIdOut)       { *typeIdOut       = typeId;       }
     if (memberOffsetOut) { *memberOffsetOut = memberOffset; }
 
-    auto offsetLiteral = compiler.symTable.findOrDefineValue(memberOffset);
+    auto offsetLiteral = compiler.symTable.findOrDefineIntValue(memberOffset);
     return compiler.newInstruction(OpCode::LoadGlob, offsetLiteral);
 }
 
@@ -656,7 +680,7 @@ static IntermediateInstr * setUpMemberOffsetLoadChain(Compiler & compiler, const
                                         "' has no member '" + toString(memSymbol->name) + "'");
             }
 
-            auto offsetLiteral = compiler.symTable.findOrDefineValue(lastMemberOffset);
+            auto offsetLiteral = compiler.symTable.findOrDefineIntValue(lastMemberOffset);
             auto loadMemOffs = compiler.newInstruction(OpCode::LoadGlob, offsetLiteral);
             linkInstr(memOffsetInstr, loadMemOffs);
 
@@ -759,7 +783,7 @@ static IntermediateInstr * emitStore(Compiler & compiler, const SyntaxTreeNode *
 
     if (numMemberOffsets > 0)
     {
-        auto offsetCountLiteral = compiler.symTable.findOrDefineValue(numMemberOffsets);
+        auto offsetCountLiteral = compiler.symTable.findOrDefineIntValue(numMemberOffsets);
         auto offsCount = compiler.newInstruction(OpCode::LoadGlob, offsetCountLiteral);
 
         MOON_ASSERT(memOffsetInstr != nullptr);
@@ -812,7 +836,7 @@ static IntermediateInstr * emitMemberRef(Compiler & compiler, const SyntaxTreeNo
                                     "' has no member '" + toString(memSymbol->name) + "'");
         }
 
-        auto offsetLiteral = compiler.symTable.findOrDefineValue(memberOffset);
+        auto offsetLiteral = compiler.symTable.findOrDefineIntValue(memberOffset);
         loadMemOffs = compiler.newInstruction(OpCode::LoadGlob, offsetLiteral);
 
         const auto & member = compiler.lastMemberTypeId->templateObject->getMemberAt(memberOffset);
@@ -890,7 +914,7 @@ static IntermediateInstr * emitParamChain(Compiler & compiler, const SyntaxTreeN
     }
 
     // Argument count is appended as a literal integer:
-    auto argCountLiteral = compiler.symTable.findOrDefineValue(argumentCount);
+    auto argCountLiteral = compiler.symTable.findOrDefineIntValue(argumentCount);
     auto loadArgCountOp  = compiler.newInstruction(OpCode::LoadGlob, argCountLiteral);
 
     // Wrap it up!
@@ -1017,7 +1041,7 @@ static IntermediateInstr * emitNewVar(Compiler & compiler, const SyntaxTreeNode 
     // A load instruction is appended to indicate if we should pop one
     // value from the stack to initialize the new var or if it was left
     // uninitialized.
-    auto argCountLiteral = compiler.symTable.findOrDefineValue(argumentCount);
+    auto argCountLiteral = compiler.symTable.findOrDefineIntValue(argumentCount);
     auto loadArgCountOp  = compiler.newInstruction(OpCode::LoadGlob, argCountLiteral);
 
     if (argument != nullptr)
@@ -1087,6 +1111,21 @@ static IntermediateInstr * emitMatchDefault(Compiler & compiler, const SyntaxTre
     return compiler.newInstruction(OpCode::NoOp);
 }
 
+static IntermediateInstr * emitTypecast(Compiler & compiler, const SyntaxTreeNode * root)
+{
+    //TODO
+    return compiler.newInstruction(OpCode::NoOp);
+}
+
+static IntermediateInstr * emitTypeof(Compiler & compiler, const SyntaxTreeNode * root)
+{
+    //TODO
+    //eval the expression and emit a typeof instruction, which pops the top
+    //of the stack and pushes the var type. the node can also be a type identifier,
+    //in which case we then just load its TypeId directly, no need to emit the typeof instr.
+    return compiler.newInstruction(OpCode::NoOp);
+}
+
 // ----------------------------------------------------------------------------
 // emitInstrCallbacks[]:
 //
@@ -1097,6 +1136,7 @@ static IntermediateInstr * emitMatchDefault(Compiler & compiler, const SyntaxTre
 //TODO note: should avoid emitting those no-ops for type nodes and such...
 static const EmitInstrForNodeCB emitInstrCallbacks[]
 {
+    &emitNOOP,                                              // NoOp
     &emitProgStart,                                         // TranslationUnit
     &emitNOOP,                                              // ModuleDefinition
     &emitStatement,                                         // Statement
@@ -1126,6 +1166,8 @@ static const EmitInstrForNodeCB emitInstrCallbacks[]
     &emitNOOP,                                              // ExprTypeIdent
     &emitLoad,                                              // ExprLiteralConst
     &emitParamChain<OpCode::NewObj, Variant::Type::Tid>,    // ExprObjectConstructor
+    &emitTypecast,                                          // ExprTypecast
+    &emitTypeof,                                            // ExprTypeof
     &emitStore,                                             // ExprAssign
     &emitBinaryOp<OpCode::CmpNotEqual>,                     // ExprCmpNotEqual
     &emitBinaryOp<OpCode::CmpEqual>,                        // ExprCmpEqual

@@ -114,6 +114,14 @@ std::string escapeString(const char * unescaped)
 {
     MOON_ASSERT(unescaped != nullptr);
 
+    // Sine this function is used by the Lexer for string-literal
+    // scanning, we also strip leading and trailing double-quotes
+    // to match the format expected by the SymbolTable.
+    if (*unescaped == '"')
+    {
+        ++unescaped;
+    }
+
     std::string escaped;
     for (const char * ptr = unescaped; *ptr != '\0'; ++ptr)
     {
@@ -153,6 +161,11 @@ std::string escapeString(const char * unescaped)
         {
             escaped.push_back(c);
         }
+    }
+
+    if (!escaped.empty() && escaped.back() == '"')
+    {
+        escaped.pop_back();
     }
     return escaped;
 }
@@ -216,14 +229,28 @@ UInt32 hashCString(const char * cstr)
     h += (h <<  3);
     h ^= (h >> 11);
     h += (h << 15);
-
     return h;
 }
 
-const char * getEmptyCString() noexcept
+UInt32 hashCString(const char * cstr, const UInt32 count)
 {
-    static const char emptyStr[]{ '\0', '\0', '\0', '\0' };
-    return emptyStr;
+    // String not necessarily null-terminated.
+    MOON_ASSERT(cstr != nullptr);
+
+    // Simple and fast One-at-a-Time (OAT) hash algorithm:
+    //  http://en.wikipedia.org/wiki/Jenkins_hash_function
+    //
+    UInt32 h = 0;
+    for (UInt32 i = 0; i < count; ++i)
+    {
+        h += cstr[i];
+        h += (h << 10);
+        h ^= (h >>  6);
+    }
+    h += (h <<  3);
+    h ^= (h >> 11);
+    h += (h << 15);
+    return h;
 }
 
 std::string strPrintF(const char * format, ...)
@@ -312,7 +339,6 @@ void releaseRcString(ConstRcString * rstr)
 #if MOON_DEBUG
 namespace
 {
-
 struct CTHashCStrTest
 {
     CTHashCStrTest()
@@ -341,7 +367,6 @@ struct CTHashCStrTest
         logStream() << "Moon: Compile-time string hash test passed.\n";
     }
 } localCTHashCStrTest;
-
 } // namespace {}
 #endif // MOON_DEBUG
 

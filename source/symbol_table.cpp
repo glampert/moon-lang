@@ -24,43 +24,10 @@ bool Symbol::cmpEqual(const Type otherType, const Value otherValue) const noexce
         return false;
     }
 
-    // Strings might require a full character-wise compare:
+    // Strings compare differently.
     if (type == Type::StrLiteral)
     {
-        if (cmpRcStringsEqual(value.asString, otherValue.asString))
-        {
-            return true;
-        }
-
-        auto otherStr    = otherValue.asString->chars;
-        auto otherStrLen = otherValue.asString->length;
-
-        // Strings might still be a match, but the test string might be quoted.
-        // Try again ignoring leading/trailing double quotes.
-        if (otherStrLen > 1)
-        {
-            if (otherStr[otherStrLen - 1] == '"')
-            {
-                --otherStrLen;
-            }
-            if (otherStr[0] == '"')
-            {
-                --otherStrLen;
-                ++otherStr;
-            }
-        }
-
-        if (otherStrLen == 0) // Empty string?
-        {
-            return (value.asString->length == 0);
-        }
-        if (value.asString->length != otherStrLen) // Different lengths?
-        {
-            return false;
-        }
-
-        // General case:
-        return (std::strncmp(value.asString->chars, otherStr, value.asString->length) == 0);
+        return cmpRcStringsEqual(value.asString, otherValue.asString);
     }
 
     // Compare the widest integral values:
@@ -242,7 +209,7 @@ SymbolTable::SymbolTable()
     }
 }
 
-const Symbol * SymbolTable::findOrDefineValue(const Int64 value)
+const Symbol * SymbolTable::findOrDefineIntValue(const Int64 value)
 {
     auto key = toString(value);
     if (auto symbol = findSymbol(key.c_str()))
@@ -256,6 +223,15 @@ const Symbol * SymbolTable::findOrDefineValue(const Int64 value)
     return addSymbol(key.c_str(), Symbol::LineNumBuiltIn, Symbol::Type::IntLiteral, intVal);
 }
 
+const Symbol * SymbolTable::findOrDefineStrValue(const char * value)
+{
+    if (auto symbol = findSymbol(value))
+    {
+        return symbol;
+    }
+    return addStrLiteral(value, Symbol::LineNumBuiltIn);
+}
+
 const Symbol * SymbolTable::addSymbol(ConstRcString * name, const int declLineNum,
                                       const Symbol::Type type, const Symbol::Value value)
 {
@@ -266,20 +242,25 @@ const Symbol * SymbolTable::addSymbol(ConstRcString * name, const int declLineNu
 const Symbol * SymbolTable::addSymbol(const char * name, const int declLineNum,
                                       const Symbol::Type type, const Symbol::Value value)
 {
-    ConstRcStrUPtr key{ cloneCStringNoQuotes(name) };
+    ConstRcStrUPtr key{ newConstRcString(name) };
     return addSymbol(key.get(), declLineNum, type, value);
-}
-
-const Symbol * SymbolTable::addIdentifier(ConstRcString * value, const int declLineNum)
-{
-    auto symName = value;
-    return addSymbol(symName, declLineNum, Symbol::Type::Identifier, Symbol::valueFromRcStr(symName));
 }
 
 const Symbol * SymbolTable::addIdentifier(const char * value, const int declLineNum)
 {
-    auto symName = cloneCStringNoQuotes(value);
-    return addSymbol(symName, declLineNum, Symbol::Type::Identifier, Symbol::valueFromRcStr(symName));
+    ConstRcStrUPtr key{ newConstRcString(value) };
+    return addSymbol(key.get(), declLineNum, Symbol::Type::Identifier, Symbol::valueFromRcStr(key.get()));
+}
+
+const Symbol * SymbolTable::addStrLiteral(const char * value, const int declLineNum)
+{
+    ConstRcStrUPtr key{ newConstRcString(value) };
+    return addSymbol(key.get(), declLineNum, Symbol::Type::StrLiteral, Symbol::valueFromRcStr(key.get()));
+}
+
+const Symbol * SymbolTable::addIdentifier(ConstRcString * value, const int declLineNum)
+{
+    return addSymbol(value, declLineNum, Symbol::Type::Identifier, Symbol::valueFromRcStr(value));
 }
 
 const Symbol * SymbolTable::addIntLiteral(const char * value, const int declLineNum)
@@ -295,34 +276,6 @@ const Symbol * SymbolTable::addFloatLiteral(const char * value, const int declLi
 const Symbol * SymbolTable::addBoolLiteral(const char * value, const int declLineNum)
 {
     return addSymbol(value, declLineNum, Symbol::Type::BoolLiteral, Symbol::valueFromBoolStr(value));
-}
-
-const Symbol * SymbolTable::addStrLiteral(const char * value, const int declLineNum)
-{
-    ConstRcStrUPtr key{ cloneCStringNoQuotes(value) };
-    return addSymbol(key.get(), declLineNum, Symbol::Type::StrLiteral, Symbol::valueFromRcStr(key.get()));
-}
-
-ConstRcString * SymbolTable::cloneCStringNoQuotes(const char * sourcePtr)
-{
-    MOON_ASSERT(sourcePtr != nullptr);
-    auto sourceLen = static_cast<UInt32>(std::strlen(sourcePtr));
-
-    // Avoid possible leading and training double quotes:
-    if (sourceLen > 1)
-    {
-        if (sourcePtr[sourceLen - 1] == '"')
-        {
-            --sourceLen;
-        }
-        if (sourcePtr[0] == '"')
-        {
-            --sourceLen;
-            ++sourcePtr;
-        }
-    }
-
-    return newConstRcString(sourcePtr, sourceLen);
 }
 
 void SymbolTable::print(std::ostream & os) const

@@ -252,6 +252,8 @@ NEW_LINE      [\n\r]
 "array"          { LEX_LOG_TYPE( "array"    ); return moon::Parser::token::TID_ARRAY;        }
 "range"          { LEX_LOG_TYPE( "range"    ); return moon::Parser::token::TID_RANGE;        }
 "any"            { LEX_LOG_TYPE( "any"      ); return moon::Parser::token::TID_ANY;          }
+"tid"            { LEX_LOG_TYPE( "tid"      ); return moon::Parser::token::TID_TYPEID;       }
+"function"       { LEX_LOG_TYPE( "function" ); return moon::Parser::token::TID_FUNC;         }
 
     /* ---- Language keywords: ---- */
 "if"             { LEX_LOG_KEYW( "if"       ); return moon::Parser::token::KW_IF;            }
@@ -276,6 +278,9 @@ NEW_LINE      [\n\r]
 "type"           { LEX_LOG_KEYW( "type"     ); return moon::Parser::token::KW_TYPE;          }
 "enum"           { LEX_LOG_KEYW( "enum"     ); return moon::Parser::token::KW_ENUM;          }
 "struct"         { LEX_LOG_KEYW( "struct"   ); return moon::Parser::token::KW_STRUCT;        }
+"type_of"        { LEX_LOG_KEYW( "type_of"  ); return moon::Parser::token::KW_TYPEOF;        }
+"as"             { LEX_LOG_KEYW( "as"       ); return moon::Parser::token::KW_AS;            }
+"null"           { LEX_LOG_KEYW( "null"     ); return moon::Parser::token::KW_NULL;          }
 
     /* ---- Literal constants: ---- */
 {INT_LITERAL}    { LEX_LOG_LIT( "int-literal"     ); AS_MOON_LEXER(this).lexOnIntLiteral();   return moon::Parser::token::INT_LITERAL;  }

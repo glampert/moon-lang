@@ -178,9 +178,7 @@ constexpr UInt32 arrayLength(const T (&)[N]) noexcept { return N; }
 // Fast 32-bits hash of a null-terminated C string:
 constexpr UInt32 NullHash = 0;
 UInt32 hashCString(const char * cstr);
-
-// Get an empty C string ("\0").
-const char * getEmptyCString() noexcept;
+UInt32 hashCString(const char * cstr, UInt32 count);
 
 // Portable string compare ignoring character case.
 int compareCStringsNoCase(const char * s1, const char * s2, UInt32 count = ~0u);
@@ -192,6 +190,7 @@ std::string trimTrailingFloatZeros(std::string trimmed);
 std::string unescapeString(const char * escaped);
 
 // Replaces escape sequences by the equivalent character code (i.e. a "\n" by the '\n' character).
+// Also strips the first and last double-quotes, if any. The Lexer needs that for string literals.
 std::string escapeString(const char * unescaped);
 
 // Temporary formatting buffer used is fixed to 2048

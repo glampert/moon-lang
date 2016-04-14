@@ -231,16 +231,13 @@ public:
     {
     public:
         Slice() noexcept // Null/empty slice
-            : data { nullptr }
-            , size { 0 }
+            : data{ nullptr }
+            , size{ 0 }
         { }
-        Slice(Variant * d, const int s)
-            : data { d }
-            , size { s }
-        {
-            MOON_ASSERT(data != nullptr);
-            MOON_ASSERT(size > 0);
-        }
+        Slice(Variant * d, const int s) noexcept
+            : data{ d }
+            , size{ s }
+        { }
 
         const Variant & operator[](const int index) const
         {
@@ -259,13 +256,13 @@ public:
             return data[index];
         }
 
-        Variant * first()
+        Variant * first() noexcept
         {
             if (size == 0) { return nullptr; }
             --size;
             return data;
         }
-        Variant * next()
+        Variant * next() noexcept
         {
             if (size == 0) { return nullptr; }
             --size;
@@ -348,10 +345,12 @@ struct Function final
     // Validation of the stack slice Variants according to the
     // expected number and type of arguments for the function.
     void validateArguments(Stack::Slice args) const;
+    bool validateArguments(Stack::Slice args, std::string & errorMessageOut) const;
 
     // Check that the type of the passed variant matches the expected
     // for returnType. If not, it throws a runtime exception.
     void validateReturnValue(Variant retVal) const;
+    bool validateReturnValue(Variant::Type retValType, std::string & errorMessageOut) const;
 
     // Miscellaneous queries:
     bool isScript()      const noexcept { return jumpTarget != TargetNative; }
@@ -450,6 +449,7 @@ public:
     explicit TypeTable(VM & vm);
 
     // Cached ids for the common runtime types:
+    const TypeId * nullTypeId;
     const TypeId * intTypeId;
     const TypeId * longTypeId;
     const TypeId * floatTypeId;
@@ -461,6 +461,7 @@ public:
     const TypeId * functionTypeId;
     const TypeId * strTypeId;
     const TypeId * arrayTypeId;
+    const TypeId * tidTypeId;
 
     // Finds an already registered TypeId by name or returns null if nothing is found.
     const TypeId * findTypeId(ConstRcString * const name) const { return findInternal(name); }
@@ -728,6 +729,8 @@ private:
     // using the C++ string, and vice versa.
     ConstRcString * constString = nullptr;
     std::string     mutableString;
+    //TODO Use a custom SmallStr-like implementation like the Array
+    //so we can place more inline storage in the Str objects?
 };
 
 // ========================================================

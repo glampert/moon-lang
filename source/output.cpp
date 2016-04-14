@@ -140,4 +140,22 @@ void warning(const std::string & warnMessage,
     runtimeAssertionError("trying to run unreachable code! Fix this!", srcFile, lineNum);
 }
 
+// ========================================================
+
+#if MOON_DEBUG
+namespace
+{
+struct LogTest
+{
+    LogTest()
+    {
+        moon::logStream() << "Moon: This is a debug build.\n";
+        #if MOON_ENABLE_ASSERT
+        moon::logStream() << "Moon: Runtime asserts are enabled.\n";
+        #endif // MOON_ENABLE_ASSERT
+    }
+} localLogTest;
+} // namespace {}
+#endif // MOON_DEBUG
+
 } // namespace moon {}

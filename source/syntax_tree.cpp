@@ -21,6 +21,7 @@ std::string toString(const SyntaxTreeNode::Type nodeType)
 {
     static const std::string typeNames[]
     {
+        color::green()   + std::string("NOOP")                      + color::restore(),
         color::magenta() + std::string("TRANSLATION_UNIT")          + color::restore(),
         color::magenta() + std::string("MODULE_DEFINITION")         + color::restore(),
         color::green()   + std::string("STATEMENT")                 + color::restore(),
@@ -50,6 +51,8 @@ std::string toString(const SyntaxTreeNode::Type nodeType)
         color::cyan()    + std::string("EXPR_TYPE_IDENT")           + color::restore(),
         color::cyan()    + std::string("EXPR_LITERAL_CONST")        + color::restore(),
         color::cyan()    + std::string("EXPR_OBJ_CONSTRUCTOR")      + color::restore(),
+        color::magenta() + std::string("EXPR_TYPECAST")             + color::restore(),
+        color::magenta() + std::string("EXPR_TYPEOF")               + color::restore(),
         color::blue()    + std::string("EXPR_ASSIGN")               + color::restore(),
         color::blue()    + std::string("EXPR_CMP_NOT_EQUAL")        + color::restore(),
         color::blue()    + std::string("EXPR_CMP_EQUAL")            + color::restore(),
@@ -84,6 +87,7 @@ std::string toString(const SyntaxTreeNode::Eval evalType)
     static const std::string typeNames[]
     {
         color::red()    + std::string("EVAL_UNDEF")   + color::restore(),
+        color::yellow() + std::string("EVAL_NULL")    + color::restore(),
         color::yellow() + std::string("EVAL_VOID")    + color::restore(),
         color::yellow() + std::string("EVAL_VARARGS") + color::restore(),
         color::yellow() + std::string("EVAL_INT")     + color::restore(),
@@ -95,46 +99,14 @@ std::string toString(const SyntaxTreeNode::Eval evalType)
         color::yellow() + std::string("EVAL_ARRAY")   + color::restore(),
         color::yellow() + std::string("EVAL_RANGE")   + color::restore(),
         color::yellow() + std::string("EVAL_ANY")     + color::restore(),
+        color::yellow() + std::string("EVAL_FUNC")    + color::restore(),
+        color::yellow() + std::string("EVAL_TID")     + color::restore(),
         color::yellow() + std::string("EVAL_UDT")     + color::restore()
     };
     static_assert(arrayLength(typeNames) == UInt32(SyntaxTreeNode::Eval::Count),
                   "Keep this array in sync with the enum declaration!");
 
     return typeNames[UInt32(evalType)];
-}
-
-SyntaxTreeNode::Eval evalTypeFromSymbol(const Symbol & sym)
-{
-    switch (sym.type)
-    {
-    case Symbol::Type::IntLiteral   : return SyntaxTreeNode::Eval::Long;
-    case Symbol::Type::FloatLiteral : return SyntaxTreeNode::Eval::Double;
-    case Symbol::Type::BoolLiteral  : return SyntaxTreeNode::Eval::Bool;
-    case Symbol::Type::StrLiteral   : return SyntaxTreeNode::Eval::Str;
-    case Symbol::Type::Identifier   : return SyntaxTreeNode::Eval::UDT;
-    default                         : return SyntaxTreeNode::Eval::Undefined;
-    } // switch (sym.type)
-}
-
-const Symbol * symbolFromEval(const SymbolTable & symTable, const SyntaxTreeNode::Eval eval)
-{
-    // These are built-ins always present in the symbol table. Check symbol_table.cpp.
-    switch (eval)
-    {
-    case SyntaxTreeNode::Eval::Void    : return symTable.findSymbol("void");
-    case SyntaxTreeNode::Eval::VarArgs : return symTable.findSymbol("varargs");
-    case SyntaxTreeNode::Eval::Int     : return symTable.findSymbol("int");
-    case SyntaxTreeNode::Eval::Long    : return symTable.findSymbol("long");
-    case SyntaxTreeNode::Eval::Float   : return symTable.findSymbol("float");
-    case SyntaxTreeNode::Eval::Double  : return symTable.findSymbol("double");
-    case SyntaxTreeNode::Eval::Bool    : return symTable.findSymbol("bool");
-    case SyntaxTreeNode::Eval::Str     : return symTable.findSymbol("str");
-    case SyntaxTreeNode::Eval::Array   : return symTable.findSymbol("array");
-    case SyntaxTreeNode::Eval::Range   : return symTable.findSymbol("range");
-    case SyntaxTreeNode::Eval::Any     : return symTable.findSymbol("any");
-    case SyntaxTreeNode::Eval::UDT     : return symTable.findSymbol("object");
-    default                            : return symTable.findSymbol("undefined");
-    } // switch (eval)
 }
 
 // ========================================================
@@ -239,6 +211,53 @@ void SyntaxTree::print(std::ostream & os) const
         os << "(empty)\n";
     }
     os << color::white() << "[[ listed " << getSize() << " tree nodes ]]" << color::restore() << "\n";
+}
+
+void SyntaxTree::checkNodeRecursive(const SyntaxTreeNode * const node)
+{
+    if (node == nullptr)
+    {
+        return;
+    }
+
+    if (static_cast<UInt32>(node->nodeType) >= static_cast<UInt32>(SyntaxTreeNode::Type::Count))
+    {
+        MOON_INTERNAL_EXCEPTION("invalid node type detected!");
+    }
+
+    if (static_cast<UInt32>(node->evalType) >= static_cast<UInt32>(SyntaxTreeNode::Eval::Count))
+    {
+        MOON_INTERNAL_EXCEPTION("invalid node eval detected!");
+    }
+
+    if (node->evalType == SyntaxTreeNode::Eval::Undefined)
+    {
+        if (node->symbol != nullptr)
+        {
+            MOON_INTERNAL_EXCEPTION("eval of node '" + toString(node->nodeType) + "' ('" +
+                                    toString(node->symbol->name) + "') is undefined");
+        }
+        else
+        {
+            MOON_INTERNAL_EXCEPTION("eval of node '" + toString(node->nodeType) + "' is undefined");
+        }
+    }
+
+    // NOTE: We could also check if the expected number
+    // of children is correct for each node type, check
+    // that nodes requiring a symbol have one, etc. This
+    // adds to overhead, but gives a more thorough debug
+    // checking setup. I'll leave the idea as a to-do for now.
+
+    for (UInt32 i = 0; i < arrayLength(node->children); ++i)
+    {
+        checkNodeRecursive(node->getChild(i));
+    }
+}
+
+void SyntaxTree::validateNodes() const
+{
+    checkNodeRecursive(root);
 }
 
 } // namespace moon {}

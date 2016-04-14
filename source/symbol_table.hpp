@@ -92,12 +92,13 @@ public:
     const Symbol * findSymbol(const char * name) const          { return findInternal(name); }
 
     // Find equivalent constant in the table or define a new built-in literal value for it.
-    const Symbol * findOrDefineValue(Int64 value);
+    const Symbol * findOrDefineIntValue(Int64 value);        // IntLiteral
+    const Symbol * findOrDefineStrValue(const char * value); // StrLiteral
 
     // Add new symbol. Symbol must NOT be in the table. Fails with an assertion
     // if a symbol with the same NAME is already present. Returns the new symbol.
     // Note: The symbol table will add ref to the name string, so generally you'll
-    // want to pass this method a string acquired from cloneCStringNoQuotes() or newConstRcString().
+    // want to pass this method a string acquired from newConstRcString().
     const Symbol * addSymbol(ConstRcString * name, int declLineNum, Symbol::Type type, Symbol::Value value);
     const Symbol * addSymbol(const char * name, int declLineNum, Symbol::Type type, Symbol::Value value);
 
@@ -109,10 +110,6 @@ public:
     const Symbol * addStrLiteral(const char * value, int declLineNum);
     const Symbol * addIdentifier(const char * value, int declLineNum);
     const Symbol * addIdentifier(ConstRcString * value, int declLineNum);
-
-    // Clone string into new memory. If the string is enclosed in
-    // double-quotes, the first and last quotation characters are ignored.
-    ConstRcString * cloneCStringNoQuotes(const char * sourcePtr);
 
     // Print the whole table in table format (no pun intended).
     void print(std::ostream & os) const;

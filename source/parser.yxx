@@ -65,6 +65,8 @@ namespace moon
 using STNode = SyntaxTreeNode::Type;
 using STEval = SyntaxTreeNode::Eval;
 
+// ------------------------------------------------------------------
+
 [[noreturn]] static void parserError(ParseContext & ctx, const std::string & message) noexcept(false)
 {
     MOON_ASSERT(ctx.lexer != nullptr);
@@ -72,15 +74,27 @@ using STEval = SyntaxTreeNode::Eval;
     parserError(message, filename, ctx.lexer->lineno(), ctx.currText);
 }
 
-/*------------------------------------------------------------------*/
+static bool g_enableWarnings = true;
+
+static void parserWarn(ParseContext & ctx, const std::string & message)
+{
+    MOON_ASSERT(ctx.lexer != nullptr);
+    if (!g_enableWarnings) { return; }
+    const std::string filename = (ctx.srcFile != nullptr) ? *ctx.srcFile : "???";
+    warning(message, filename, ctx.lexer->lineno(), ctx.currText);
+}
+
+// ------------------------------------------------------------------
+
 //FIXME temp; testing this new stuff...
 //TODO remove the debug printfs!
 
-struct VarInfo
+struct VarInfo final
 {
-    const SyntaxTreeNode::Eval stEval;
-    const Variant::Type        varType;
     const TypeId * const       typeId;
+    const Variant::Type        varType;
+    const SyntaxTreeNode::Eval arrayEval; // Only applicable it varType=Array, otherwise Null.
+    const SyntaxTreeNode::Eval stEval;
 };
 
 // [var_symbol, var_info]
@@ -91,8 +105,38 @@ static VarInfoTable * g_localVars  = nullptr;
 static const Symbol * g_currentFunction = nullptr;
 static const Symbol * g_currentUDT = nullptr;
 
+static STEval g_expectedReturnType = STEval::Void;
+
+static const TypeId * g_lastRhsTypeId = nullptr;
+
+static bool g_debugMode = true; //TODO when true, calls to debug functions (like assert) get stripped!
+
 static bool isParsingFunction() noexcept { return g_currentFunction != nullptr; }
 static bool isParsingUDT()      noexcept { return g_currentUDT != nullptr; }
+
+static const VarInfo * findFunctionLocalVar(const Symbol * symbol)
+{
+    MOON_ASSERT(g_localVars != nullptr);
+
+    const auto & iter = g_localVars->find(symbol);
+    if (iter != g_localVars->end())
+    {
+        return &(iter->second);
+    }
+    return nullptr;
+}
+
+static const VarInfo * findGlobalVar(const Symbol * symbol)
+{
+    MOON_ASSERT(g_globalVars != nullptr);
+
+    const auto iter = g_globalVars->find(symbol);
+    if (iter != g_globalVars->end())
+    {
+        return &(iter->second);
+    }
+    return nullptr;
+}
 
 static void requireGlobalScope(ParseContext & ctx, const char * elementName)
 {
@@ -124,8 +168,9 @@ static void endFunc(ParseContext & ctx)
     (void)ctx;
     printf("END FUNC %s\n", g_currentFunction->name->chars);
 
-    g_localVars        = nullptr;
-    g_currentFunction  = nullptr;
+    g_localVars          = nullptr;
+    g_currentFunction    = nullptr;
+    g_expectedReturnType = STEval::Void;
 }
 
 static void beginUDT(ParseContext & ctx, const Symbol * typeNameSymbol, const char * elementName)
@@ -144,19 +189,44 @@ static void endUDT(ParseContext & ctx)
     g_currentUDT = nullptr;
 }
 
-/*------------------------------------------------------------------*/
+// ------------------------------------------------------------------
+
+//
+// Type conversion helpers:
+//
 
 static STEval varType2Eval(const Variant::Type varType)
 {
     switch (varType)
     {
-    case Variant::Type::Integer : return STEval::Long;
-    case Variant::Type::Float   : return STEval::Double;
-    case Variant::Type::Str     : return STEval::Str;
-    case Variant::Type::Array   : return STEval::Array;
-    case Variant::Type::Range   : return STEval::Range;
-    case Variant::Type::Any     : return STEval::Any;
-    case Variant::Type::Object  : return STEval::UDT;
+    case Variant::Type::Null     : return STEval::Null;
+    case Variant::Type::Integer  : return STEval::Long;
+    case Variant::Type::Float    : return STEval::Double;
+    case Variant::Type::Function : return STEval::Func;
+    case Variant::Type::Tid      : return STEval::Tid;
+    case Variant::Type::Str      : return STEval::Str;
+    case Variant::Type::Object   : return STEval::UDT;
+    case Variant::Type::Array    : return STEval::Array;
+    case Variant::Type::Range    : return STEval::Range;
+    case Variant::Type::Any      : return STEval::Any;
+    default : MOON_INTERNAL_EXCEPTION("can't convert Variant type '" + toString(varType) + "' to STEval!");
+    } // switch (varType)
+}
+
+static const TypeId * varType2TypeId(const TypeTable & typeTable, const Variant::Type varType)
+{
+    switch (varType)
+    {
+    case Variant::Type::Null     : return typeTable.nullTypeId;
+    case Variant::Type::Integer  : return typeTable.longTypeId;
+    case Variant::Type::Float    : return typeTable.doubleTypeId;
+    case Variant::Type::Function : return typeTable.functionTypeId;
+    case Variant::Type::Tid      : return typeTable.tidTypeId;
+    case Variant::Type::Str      : return typeTable.strTypeId;
+    case Variant::Type::Object   : return typeTable.objectTypeId;
+    case Variant::Type::Array    : return typeTable.arrayTypeId;
+    case Variant::Type::Range    : return typeTable.rangeTypeId;
+    case Variant::Type::Any      : return typeTable.anyTypeId;
     default : MOON_INTERNAL_EXCEPTION("can't convert Variant type '" + toString(varType) + "' to STEval!");
     } // switch (varType)
 }
@@ -165,15 +235,18 @@ static Variant::Type eval2VarType(const STEval stEval)
 {
     switch (stEval)
     {
+    case STEval::Null   : return Variant::Type::Null;
     case STEval::Int    : return Variant::Type::Integer;
     case STEval::Long   : return Variant::Type::Integer;
-    case STEval::Bool   : return Variant::Type::Integer;
     case STEval::Float  : return Variant::Type::Float;
     case STEval::Double : return Variant::Type::Float;
+    case STEval::Bool   : return Variant::Type::Integer;
     case STEval::Str    : return Variant::Type::Str;
     case STEval::Array  : return Variant::Type::Array;
     case STEval::Range  : return Variant::Type::Range;
     case STEval::Any    : return Variant::Type::Any;
+    case STEval::Func   : return Variant::Type::Function;
+    case STEval::Tid    : return Variant::Type::Tid;
     case STEval::UDT    : return Variant::Type::Object;
     default : MOON_INTERNAL_EXCEPTION("can't convert STEval '" + toString(stEval) + "' to Variant type!");
     } // switch (stEval)
@@ -183,21 +256,40 @@ static const TypeId * eval2TypeId(const TypeTable & typeTable, const STEval stEv
 {
     switch (stEval)
     {
+    case STEval::Null   : return typeTable.nullTypeId;
     case STEval::Int    : return typeTable.intTypeId;
     case STEval::Long   : return typeTable.longTypeId;
-    case STEval::Bool   : return typeTable.boolTypeId;
     case STEval::Float  : return typeTable.floatTypeId;
     case STEval::Double : return typeTable.doubleTypeId;
+    case STEval::Bool   : return typeTable.boolTypeId;
     case STEval::Str    : return typeTable.strTypeId;
     case STEval::Array  : return typeTable.arrayTypeId;
     case STEval::Range  : return typeTable.rangeTypeId;
     case STEval::Any    : return typeTable.anyTypeId;
+    case STEval::Func   : return typeTable.functionTypeId;
+    case STEval::Tid    : return typeTable.tidTypeId;
     case STEval::UDT    : return typeTable.objectTypeId;
     default : MOON_INTERNAL_EXCEPTION("can't convert STEval '" + toString(stEval) + "' to TypeId!");
     } // switch (stEval)
 }
 
-/*------------------------------------------------------------------*/
+static STEval symbol2Eval(const Symbol & symbol)
+{
+    switch (symbol.type)
+    {
+    case Symbol::Type::IntLiteral   : return SyntaxTreeNode::Eval::Long;
+    case Symbol::Type::FloatLiteral : return SyntaxTreeNode::Eval::Double;
+    case Symbol::Type::BoolLiteral  : return SyntaxTreeNode::Eval::Bool;
+    case Symbol::Type::StrLiteral   : return SyntaxTreeNode::Eval::Str;
+    case Symbol::Type::Identifier   : return SyntaxTreeNode::Eval::UDT;
+    default : MOON_INTERNAL_EXCEPTION("can't convert symbol '" + toString(symbol.type) + "' to STEval!");
+    } // switch (symbol.type)
+}
+
+// From compiler.cpp
+extern const Symbol * symbolFromEval(const SymbolTable & symTable, SyntaxTreeNode::Eval stEval);
+
+// ------------------------------------------------------------------
 
 static void registerVariable(ParseContext & ctx,
                              const Symbol * nameSymbol,
@@ -230,13 +322,17 @@ static void registerVariable(ParseContext & ctx,
         parserError(ctx, "cannot declare variable of undefined type '" + tname + "'");
     }
 
-    destTable.insert(std::make_pair(nameSymbol, VarInfo{ stEval, eval2VarType(stEval), typeId }));
+    const auto varType   = eval2VarType(stEval);
+    const auto arrayEval = ((varType == Variant::Type::Array && initNode != nullptr) ?
+                             initNode->getChild(2)->evalType : STEval::Null);
 
-    printf("ADDING VAR: %s, %s, %s, %s\n", nameSymbol->name->chars, toString(stEval).c_str(),
-           toString(typeId->name).c_str(), toString(eval2VarType(stEval)).c_str());
+    destTable.insert(std::make_pair(nameSymbol, VarInfo{ typeId, varType, arrayEval, stEval }));
+
+    printf("ADDING VAR: %s, %s, %s, %s (arrayT=%s)\n", nameSymbol->name->chars, toString(stEval).c_str(),
+           toString(typeId->name).c_str(), toString(eval2VarType(stEval)).c_str(), toString(arrayEval).c_str());
 }
 
-/*------------------------------------------------------------------*/
+// ------------------------------------------------------------------
 
 static STEval registerGlobalOrLocal(ParseContext & ctx, const Symbol * nameSymbol, SyntaxTreeNode * initNode,
                                     const SyntaxTreeNode * typeNode, STEval stEval)
@@ -318,7 +414,7 @@ static STEval registerGlobalOrLocal(ParseContext & ctx, const Symbol * nameSymbo
     return stEval;
 }
 
-/*------------------------------------------------------------------*/
+// ------------------------------------------------------------------
 
 static SyntaxTreeNode * newVarDeclNode(ParseContext & ctx, const Symbol * nameSymbol, SyntaxTreeNode * initNode,
                                        const SyntaxTreeNode * typeNode, STEval stEval)
@@ -333,14 +429,18 @@ static SyntaxTreeNode * newVarDeclNode(ParseContext & ctx, const Symbol * nameSy
                                            nullptr, stEval);
 }
 
-/*------------------------------------------------------------------*/
+// ------------------------------------------------------------------
 
 static SyntaxTreeNode * newLiteralNode(ParseContext & ctx, const STEval stEval, const Symbol * symbol)
 {
+    if (symbol == nullptr)
+    {
+        symbol = ctx.symTable->findOrDefineStrValue("null");
+    }
     return ctx.syntTree->newNodeWithEval(STNode::ExprLiteralConst, symbol, stEval);
 }
 
-/*------------------------------------------------------------------*/
+// ------------------------------------------------------------------
 
 static SyntaxTreeNode * newTypeIdNode(ParseContext & ctx, const STEval stEval,
                                       const Symbol * symbol = nullptr)
@@ -352,7 +452,7 @@ static SyntaxTreeNode * newTypeIdNode(ParseContext & ctx, const STEval stEval,
     return ctx.syntTree->newNodeWithEval(STNode::ExprTypeIdent, symbol, stEval);
 }
 
-/*------------------------------------------------------------------*/
+// ------------------------------------------------------------------
 
 static SyntaxTreeNode * newCompareNode(ParseContext & ctx, const STNode type,
                                        const SyntaxTreeNode * child0,
@@ -363,7 +463,7 @@ static SyntaxTreeNode * newCompareNode(ParseContext & ctx, const STNode type,
     if (child0->nodeType == STNode::ExprNameIdent)
     {
         // Turn it into a compare against zero/null/false expression:
-        auto zeroNode = newLiteralNode(ctx, STEval::Long, ctx.symTable->findOrDefineValue(0));
+        auto zeroNode = newLiteralNode(ctx, STEval::Long, ctx.symTable->findOrDefineIntValue(0));
         auto compNode = ctx.syntTree->newNode(STNode::ExprCmpNotEqual, child0, zeroNode);
         return ctx.syntTree->newNode(type, compNode, child1, child2);
     }
@@ -371,38 +471,229 @@ static SyntaxTreeNode * newCompareNode(ParseContext & ctx, const STNode type,
     return ctx.syntTree->newNode(type, child0, child1, child2);
 }
 
-/*------------------------------------------------------------------*/
+// ------------------------------------------------------------------
 
 static SyntaxTreeNode * newBinaryOpNode(ParseContext & ctx, const STNode type,
+                                        SyntaxTreeNode * lhs, SyntaxTreeNode * rhs)
+{
+    OpCode  binOp;
+    Variant result;
+
+    switch (type)
+    {
+    case STNode::ExprAddAssign       : binOp = OpCode::Add;             break;
+    case STNode::ExprSubAssign       : binOp = OpCode::Sub;             break;
+    case STNode::ExprDivAssign       : binOp = OpCode::Div;             break;
+    case STNode::ExprModAssign       : binOp = OpCode::Mod;             break;
+    case STNode::ExprMulAssign       : binOp = OpCode::Mul;             break;
+    case STNode::ExprAdd             : binOp = OpCode::Add;             break;
+    case STNode::ExprSubtract        : binOp = OpCode::Sub;             break;
+    case STNode::ExprDivide          : binOp = OpCode::Div;             break;
+    case STNode::ExprModulo          : binOp = OpCode::Mod;             break;
+    case STNode::ExprMultiply        : binOp = OpCode::Mul;             break;
+    case STNode::ExprLogicOr         : binOp = OpCode::LogicOr;         break;
+    case STNode::ExprLogicAnd        : binOp = OpCode::LogicAnd;        break;
+    case STNode::ExprCmpNotEqual     : binOp = OpCode::CmpNotEqual;     break;
+    case STNode::ExprCmpEqual        : binOp = OpCode::CmpEqual;        break;
+    case STNode::ExprCmpGreaterEqual : binOp = OpCode::CmpGreaterEqual; break;
+    case STNode::ExprCmpGreaterThan  : binOp = OpCode::CmpGreater;      break;
+    case STNode::ExprCmpLessEqual    : binOp = OpCode::CmpLessEqual;    break;
+    case STNode::ExprCmpLessThan     : binOp = OpCode::CmpLess;         break;
+    case STNode::ExprAssign          : binOp = OpCode::StoreGlob;       break;
+    case STNode::ExprMemberRef       : binOp = OpCode::MemberRef;       break;
+    default : MOON_INTERNAL_EXCEPTION("unhandled STNode type " + toString(type) + " in binary op!");
+    } // switch (type)
+
+    if (binOp == OpCode::MemberRef) // Validate the object and member types
+    {
+        const TypeId * lhsTypeId = nullptr;
+        if (lhs->nodeType != STNode::ExprMemberRef)
+        {
+            MOON_ASSERT(lhs->symbol != nullptr);
+            const VarInfo * vi = isParsingFunction() ? findFunctionLocalVar(lhs->symbol) : findGlobalVar(lhs->symbol);
+            if (vi == nullptr)
+            {
+                std::string oname = color::white() + toString(lhs->symbol->name) + color::restore();
+                parserError(ctx, "reference to member of undefined object '" + oname + "'");
+            }
+            lhsTypeId = vi->typeId;
+        }
+        else // Going down a recursive MemberRef chain
+        {
+            lhsTypeId = g_lastRhsTypeId;
+            MOON_ASSERT(lhsTypeId != nullptr);
+        }
+
+        // With the type of the left-hand-side object we can figure
+        // out the type of the right-hand-side member reference:
+        MOON_ASSERT(rhs->symbol != nullptr);
+        const auto memberName = rhs->symbol->name;
+        const Variant member  = ((lhsTypeId->templateObject != nullptr) ?
+                                  lhsTypeId->templateObject->findMemberVar(memberName) :
+                                  Variant{});
+
+        if (member.isNull())
+        {
+            std::string tname = color::white() + toString(lhsTypeId->name) + color::restore();
+            std::string mname = color::white() + toString(memberName) + color::restore();
+            parserError(ctx, "Type " + tname + " has no member named '" + mname + "'");
+        }
+
+        // Fix the member node eval if needed:
+        if (rhs->evalType == STEval::Undefined)
+        {
+            rhs->evalType = varType2Eval(member.type);
+        }
+
+        if (member.type == Variant::Type::Object)
+        {
+            MOON_ASSERT(member.getAsObject() != nullptr);
+            g_lastRhsTypeId = member.getAsObject()->getTypeId();
+        }
+        else
+        {
+            g_lastRhsTypeId = varType2TypeId(ctx.vm->types, member.type);
+        }
+
+        result.type = member.type;
+    }
+    else
+    {
+        const Variant::Type lhsVarType = eval2VarType(lhs->evalType);
+        const Variant::Type rhsVarType = eval2VarType(rhs->evalType);
+
+        if (binOp == OpCode::StoreGlob) // Generic assignment tag
+        {
+            if (!isAssignmentValid(lhsVarType, rhsVarType))
+            {
+                parserError(ctx, "cannot assign " + toString(rhsVarType) + " to " + toString(lhsVarType));
+            }
+            // Assignments cannot change the left-hand-side type.
+            result.type = lhsVarType;
+        }
+        else // Comparison, sum, division, etc...
+        {
+            if (!isBinaryOpValid(binOp, lhsVarType, rhsVarType))
+            {
+                parserError(ctx, "cannot apply operator " + binaryOpToString(binOp) + " on " +
+                            toString(lhsVarType) + " and " + toString(rhsVarType));
+            }
+            // Perform the op on default initialized dummy vars to get the correct resulting type:
+            result = performBinaryOp(binOp, Variant{ lhsVarType }, Variant{ rhsVarType });
+        }
+    }
+
+    return ctx.syntTree->newNode(type, lhs, rhs, nullptr, varType2Eval(result.type));
+}
+
+// ------------------------------------------------------------------
+
+static SyntaxTreeNode * newUnaryOpNode(ParseContext & ctx, const STNode type,
+                                       const OpCode unaryOp, const SyntaxTreeNode * operand)
+{
+    const Variant::Type varType = eval2VarType(operand->evalType);
+    if (!isUnaryOpValid(unaryOp, varType))
+    {
+        parserError(ctx, "cannot apply unary operator " + unaryOpToString(unaryOp) + " on type " + toString(varType));
+    }
+
+    // Perform the op on a default initialized var to get the correct resulting type:
+    const Variant result = performUnaryOp(unaryOp, Variant{ varType });
+    return ctx.syntTree->newNode(type, operand, nullptr, nullptr, varType2Eval(result.type));
+}
+
+// ------------------------------------------------------------------
+
+static SyntaxTreeNode * newTypecastNode(ParseContext & ctx,
                                         const SyntaxTreeNode * lhs,
                                         const SyntaxTreeNode * rhs)
 {
-    //if (!compatibleTypes(lhs, rhs)
-    //{
-    // *** TODO ERROR, cannot perform operation 'XYZ' on typeA and typeB ***
-    //}
-    return ctx.syntTree->newNode(type, lhs, rhs, nullptr, rhs->evalType);
+    // It is a syntax error to pass anything else, so an assert suffices.
+    MOON_ASSERT(rhs->nodeType == STNode::ExprTypeIdent);
+
+    // Left-hand-side validation:
+    if (lhs->evalType == STEval::Undefined)
+    {
+        std::string name = color::white() + toString(lhs->symbol->name) + color::restore();
+        parserError(ctx, "referencing undefined identifier '" + name + "' in cast expression");
+    }
+    else if (lhs->nodeType != STNode::ExprFuncCall &&
+             ctx.vm->functions.findFunction(lhs->symbol->name))
+    {
+        parserError(ctx, "referencing function name on left-hand side of cast "
+                         "expression. Did you mean to call it instead?");
+    }
+    else if (ctx.vm->types.findTypeId(lhs->symbol->name))
+    {
+        parserError(ctx, "referencing type name in the wrong side of a cast expression");
+    }
+
+    // See if the typecast is possible:
+    // We can pretend this is an assignment, so no need to define a new typecast operator for now.
+    // Right-hand-side type is the target of our fake assignment.
+    if (!isAssignmentValid(eval2VarType(rhs->evalType), eval2VarType(lhs->evalType)))
+    {
+        std::string srcType = color::white() + toString(eval2TypeId(ctx.vm->types, lhs->evalType)->name) + color::restore();
+        std::string dstType = color::white() + toString(eval2TypeId(ctx.vm->types, rhs->evalType)->name) + color::restore();
+        parserError(ctx, "cannot cast from " + srcType + " to " + dstType);
+    }
+
+    // Optional superfluous cast warning:
+    if (lhs->evalType == rhs->evalType)
+    {
+        std::string tname = color::white() + toString(eval2TypeId(ctx.vm->types, lhs->evalType)->name) + color::restore();
+        parserWarn(ctx, "unnecessary typecast from " + tname + " to " + tname);
+    }
+
+    return ctx.syntTree->newNode(STNode::ExprTypecast, lhs, rhs, nullptr, rhs->evalType);
 }
 
-/*------------------------------------------------------------------*/
+// ------------------------------------------------------------------
 
-static SyntaxTreeNode * newUnaryOpNode(ParseContext & ctx, const STNode type, const SyntaxTreeNode * operand)
+static SyntaxTreeNode * newTypeofNode(ParseContext & ctx, SyntaxTreeNode * exprOrTypeNode)
 {
-    return ctx.syntTree->newNode(type, operand, nullptr, nullptr, operand->evalType);
+    STEval stEval = exprOrTypeNode->evalType;
+    if (stEval == STEval::Undefined)
+    {
+        // Could be a function name of a UDT name.
+        MOON_ASSERT(exprOrTypeNode->symbol != nullptr);
+        const auto name = exprOrTypeNode->symbol->name;
+
+        if (ctx.vm->functions.findFunction(name))
+        {
+            stEval = STEval::Func;
+        }
+        else if (ctx.vm->types.findTypeId(name))
+        {
+            stEval = STEval::UDT;
+        }
+        else
+        {
+            parserError(ctx, "undefined type or expression as type_of() argument");
+        }
+        exprOrTypeNode->evalType = stEval; // Fix the node.
+    }
+
+    return ctx.syntTree->newNode(STNode::ExprTypeof, exprOrTypeNode, nullptr, nullptr, stEval);
 }
 
-/*------------------------------------------------------------------*/
+// ------------------------------------------------------------------
 
-static void collectFunctionArgTypes(const SyntaxTreeNode * root, Variant::Type * argTypesOut,
-                                    UInt32 & argCountOut, UInt32 & extraFlagsOut)
+static void collectFunctionArgTypes(ParseContext & ctx, const SyntaxTreeNode * root,
+                                    Variant::Type * argTypesOut, UInt32 & argCountOut,
+                                    UInt32 & extraFlagsOut)
 {
     if (root == nullptr)
     {
         return;
     }
+    if (argCountOut == Function::MaxArguments)
+    {
+        parserError(ctx, "max function argument count (" + toString(Function::MaxArguments) + ") exceeded!");
+    }
 
-    auto argNode = root->getChild(1);
-    auto stEval  = argNode->evalType;
+    const auto argNode = root->getChild(1);
+    const auto stEval  = argNode->evalType;
 
     if (stEval == STEval::VarArgs)
     {
@@ -411,10 +702,34 @@ static void collectFunctionArgTypes(const SyntaxTreeNode * root, Variant::Type *
     }
 
     argTypesOut[argCountOut++] = eval2VarType(stEval);
-    collectFunctionArgTypes(root->getChild(0), argTypesOut, argCountOut, extraFlagsOut);
+    collectFunctionArgTypes(ctx, root->getChild(0), argTypesOut, argCountOut, extraFlagsOut);
 }
 
-/*------------------------------------------------------------------*/
+// ------------------------------------------------------------------
+
+static void collectFunctionCallArgs(ParseContext & ctx, const SyntaxTreeNode * root,
+                                    Variant * argVarsOut, UInt32 & argCountOut)
+{
+    if (root == nullptr)
+    {
+        return;
+    }
+    if (argCountOut == Function::MaxArguments)
+    {
+        parserError(ctx, "max function argument count (" + toString(Function::MaxArguments) + ") exceeded!");
+    }
+
+    const auto stEval = root->evalType;
+    if (stEval == STEval::Undefined)
+    {
+        parserError(ctx, "passing undefined variable as argument " + toString(argCountOut + 1) + " of function call");
+    }
+
+    argVarsOut[argCountOut++] = Variant{ eval2VarType(stEval) };
+    collectFunctionCallArgs(ctx, root->getChild(0), argVarsOut, argCountOut);
+}
+
+// ------------------------------------------------------------------
 
 static void collectObjMembers(ParseContext & ctx, const SyntaxTreeNode * root, Object * objOut)
 {
@@ -456,9 +771,76 @@ static void collectObjMembers(ParseContext & ctx, const SyntaxTreeNode * root, O
     collectObjMembers(ctx, root->getChild(0), objOut);
 }
 
-/*------------------------------------------------------------------*/
+// ------------------------------------------------------------------
 
-static void initEnumMembers(ParseContext & ctx, const SyntaxTreeNode * root, Object * objOut, Int64 & nextEnumIntVal)
+static SyntaxTreeNode * newFunctionCallNode(ParseContext & ctx,
+                                            const Symbol * funcNameSymbol,
+                                            SyntaxTreeNode * argListNode)
+{
+    MOON_ASSERT(funcNameSymbol != nullptr);
+
+    const auto funcName = funcNameSymbol->name;
+    const auto func = ctx.vm->functions.findFunction(funcName);
+
+    if (func == nullptr)
+    {
+        std::string fname = color::white() + toString(funcName) + color::restore();
+        parserError(ctx, "attempting to call undefined function '" + fname + "'");
+    }
+
+    // Use the return type of the function for this node's eval type.
+    const STEval stEval = func->hasReturnVal() ? varType2Eval(*func->returnType) : STEval::Void;
+
+    // Gather the args passed in (we only care about the types now):
+    UInt32 argCount = 0;
+    Variant argVars[Function::MaxArguments];
+    collectFunctionCallArgs(ctx, argListNode, argVars, argCount);
+
+    // Check them against the expected. We reuse the runtime stack code for that.
+    std::string errorMessage;
+    const Stack::Slice args{ argVars, static_cast<int>(argCount) };
+    if (!func->validateArguments(args, errorMessage))
+    {
+        parserError(ctx, errorMessage);
+    }
+
+    // Check if function call should be stripped on debug builds (becomes a no-op).
+    if (!g_debugMode && func->isDebugOnly())
+    {
+        return ctx.syntTree->newNode(STNode::NoOp, nullptr, nullptr, nullptr, STEval::Void);
+    }
+
+    // Functions like assert() and panic() prepend source location to the call.
+    if (func->hasCallerInfo())
+    {
+        const char * srcFileName = (ctx.srcFile       != nullptr) ? ctx.srcFile->c_str()           : "<unknown file>";
+        const char * callerName  = (g_currentFunction != nullptr) ? g_currentFunction->name->chars : "<global scope>";
+
+        auto fileNode = ctx.syntTree->newNodeWithSymbol(STNode::ExprLiteralConst, ctx.symTable->findOrDefineStrValue(srcFileName));
+        auto lineNode = ctx.syntTree->newNodeWithSymbol(STNode::ExprLiteralConst, ctx.symTable->findOrDefineIntValue(ctx.lexer->lineno()));
+        auto funcNode = ctx.syntTree->newNodeWithSymbol(STNode::ExprLiteralConst, ctx.symTable->findOrDefineStrValue(callerName));
+
+        fileNode->evalType = STEval::Str;
+        lineNode->evalType = STEval::Long;
+        funcNode->evalType = STEval::Str;
+
+        fileNode->setChild(0, lineNode);
+        lineNode->setChild(0, funcNode);
+        funcNode->setChild(0, argListNode);
+
+        // file, line and function will precede the argument list.
+        argListNode = fileNode;
+    }
+
+    // First (0) child is reserved for chaining the call itself to another parameter_list.
+    // Second (1) child is the parameter_list chain.
+    return ctx.syntTree->newNodeWithSymbol(STNode::ExprFuncCall, funcNameSymbol, nullptr, argListNode, nullptr, stEval);
+}
+
+// ------------------------------------------------------------------
+
+static void initEnumMembers(ParseContext & ctx, const SyntaxTreeNode * root,
+                            Object * objOut, Int64 & nextEnumIntVal)
 {
     if (root == nullptr)
     {
@@ -537,7 +919,7 @@ static void initEnumMembers(ParseContext & ctx, const SyntaxTreeNode * root, Obj
     initEnumMembers(ctx, root->getChild(0), objOut, nextEnumIntVal);
 }
 
-/*------------------------------------------------------------------*/
+// ------------------------------------------------------------------
 
 static STEval enumMemberConstantReference(ParseContext & ctx, SyntaxTreeNode * eTypeNode, SyntaxTreeNode * eConstNode)
 {
@@ -570,7 +952,7 @@ static STEval enumMemberConstantReference(ParseContext & ctx, SyntaxTreeNode * e
     return stEvalConst;
 }
 
-/*------------------------------------------------------------------*/
+// ------------------------------------------------------------------
 
 static void checkEnumInitializers(ParseContext & ctx, const SyntaxTreeNode * root,
                                   const SyntaxTreeNode * iterNode, int & numOfNonIntegralConstants)
@@ -628,7 +1010,98 @@ static void checkEnumInitializers(ParseContext & ctx, const SyntaxTreeNode * roo
     checkEnumInitializers(ctx, root, iterNode->getChild(0), numOfNonIntegralConstants);
 }
 
-/*------------------------------------------------------------------*/
+// ------------------------------------------------------------------
+
+static SyntaxTreeNode * newArrayTypeNode(ParseContext & ctx, const SyntaxTreeNode * arrayInitializers)
+{
+    // We can't allow empty [] array initializers because our arrays are not polymorphic.
+    // We need at least one initializer to dictate the underlaying type.
+    if (arrayInitializers == nullptr)
+    {
+        parserError(ctx, "empty array literals are not allowed");
+    }
+
+    const STEval firstType = arrayInitializers->evalType;
+
+    // All following array elements must match the first type.
+    for (auto node = arrayInitializers->getChild(0); node != nullptr; node = node->getChild(0))
+    {
+        if (node->evalType != firstType)
+        {
+            parserError(ctx, "array initializers must all be of the same type");
+        }
+    }
+
+    const auto typeSymbol = ctx.symTable->findSymbol(eval2TypeId(ctx.vm->types, firstType)->name);
+    return ctx.syntTree->newNodeWithEval(STNode::ExprTypeIdent, typeSymbol, firstType);
+}
+
+// ------------------------------------------------------------------
+
+static SyntaxTreeNode * newArraySubscriptNode(ParseContext & ctx,
+                                              const SyntaxTreeNode * arrayExpr,
+                                              const SyntaxTreeNode * indexExpr)
+{
+    // Multi-dimensional array subscripting or reference to member array
+    if (arrayExpr->nodeType == STNode::ExprArraySubscript ||
+        arrayExpr->nodeType == STNode::ExprMemberRef)
+    {
+        // NOTE that we hardcode eval to 'Any'. See the comment below
+        // on the ExprFuncCall case for the explanation. This is a current
+        // limitation of our implementation and should be improved in the future.
+        return ctx.syntTree->newNode(STNode::ExprArraySubscript, nullptr, arrayExpr, indexExpr, STEval::Any);
+    }
+
+    // 1D array subscripting, possibly from the return value of a function:
+    MOON_ASSERT(arrayExpr->symbol != nullptr);
+    if (arrayExpr->evalType != STEval::Array)
+    {
+        const std::string name = color::white() + toString(arrayExpr->symbol->name) + color::restore();
+        if (arrayExpr->nodeType == STNode::ExprFuncCall)
+        {
+            parserError(ctx, "function '" + name + "' does not return an array");
+        }
+        else
+        {
+            parserError(ctx, "'" + name + "' is not an array ");
+        }
+    }
+
+    if (indexExpr->evalType != STEval::Int &&
+        indexExpr->evalType != STEval::Long)
+    {
+        parserError(ctx, "array subscript index must be an integer type");
+    }
+
+    STEval subscriptEval;
+    if (arrayExpr->nodeType == STNode::ExprFuncCall) // Function that returns Array?
+    {
+        // NOTE:
+        // No simple way of figuring out the underlaying type of the
+        // array returned by a function/member-ref/multi-dim-array, so
+        // in this case we pretend the array type is 'Any' and delegate
+        // type-checking to runtime. If there's a type mismatch, it won't
+        // show up during compilation, but it will trigger a runtime error.
+        // This should be fixed in a future, more robust, implementation.
+        subscriptEval = STEval::Any;
+    }
+    else
+    {
+        const VarInfo * vi = isParsingFunction() ? findFunctionLocalVar(arrayExpr->symbol) : findGlobalVar(arrayExpr->symbol);
+        if (vi == nullptr)
+        {
+            std::string name = color::white() + toString(arrayExpr->symbol->name) + color::restore();
+            parserError(ctx, "reference to undefined variable '" + name + "'");
+        }
+        MOON_ASSERT(vi->arrayEval != STEval::Undefined);
+        MOON_ASSERT(vi->varType == Variant::Type::Array);
+        subscriptEval = vi->arrayEval;
+    }
+
+    return ctx.syntTree->newNode(STNode::ExprArraySubscript, nullptr, arrayExpr, indexExpr, subscriptEval);
+}
+
+// ------------------------------------------------------------------
 
 int yylex(SemanticVal * yylval, ParseContext & ctx)
 {
@@ -691,6 +1164,8 @@ void Parser::error(const std::string & message)
 %token TID_ARRAY                  "array"
 %token TID_RANGE                  "range"
 %token TID_ANY                    "any"
+%token TID_TYPEID                 "tid"
+%token TID_FUNC                   "function"
 
 /* Language keywords: */
 %token KW_IF                      "if"
@@ -715,6 +1190,9 @@ void Parser::error(const std::string & message)
 %token KW_TYPE                    "type"
 %token KW_ENUM                    "enum"
 %token KW_STRUCT                  "struct"
+%token KW_TYPEOF                  "type_of"
+%token KW_AS                      "as"
+%token KW_NULL                    "null"
 
 /* Literal constants: */
 %token <asSymbol> INT_LITERAL     "literal integer constant"
@@ -770,14 +1248,12 @@ void Parser::error(const std::string & message)
 %left  OP_DIVIDE
 %left  OP_MULTIPLY
 %right OP_LOGIC_NOT
-
-/* Context depended fix for unary +,-. See:
- * https://www.gnu.org/software/bison/manual/html_node/Contextual-Precedence.html */
-%right UNARY_MINUS
-%right UNARY_PLUS
-
-/* Member dereference with the dot operator */
-%left  MEMBER_REF
+%right UNARY_MINUS /* Context depended fix for unary +,- */
+%right UNARY_PLUS  /* See: https://www.gnu.org/software/bison/manual/html_node/Contextual-Precedence.html */
+%left  KW_AS       /* Typecast operator (foo as bar) */
+%left  OPEN_BRAC   /* Precedence added for the array subscript expression (foo[N]) */
+%left  CLOSE_BRAC  /* Array subscript/access precedence */
+%left  MEMBER_REF  /* Member access with the dot operator (foo.bar) */
 
 /*
  * Types referenced inside the rules by the '$' signs.
@@ -797,7 +1273,8 @@ void Parser::error(const std::string & message)
 %type <asSTNode> match_statement match_case match_default match_case_list match_param match_case_param
 %type <asSTNode> range_expression range_param range_or_array_or_ident_or_call
 %type <asSTNode> let_var_declaration typed_var_declaration
-%type <asSTNode> type_alias_declaration
+%type <asSTNode> type_alias_declaration expression_or_type_identifier
+%type <asSTNode> typeof_expression typecast_expression member_ref_expression
 
 /*
  * Rule the parser starts from. If not explicitly stated,
@@ -900,31 +1377,70 @@ end_statement
     ;
 
 literal_const_expression
-    : INT_LITERAL  { $$ = newLiteralNode(ctx, STEval::Long,   $1); }
-    | FLT_LITERAL  { $$ = newLiteralNode(ctx, STEval::Double, $1); }
-    | BOOL_LITERAL { $$ = newLiteralNode(ctx, STEval::Bool,   $1); }
-    | STR_LITERAL  { $$ = newLiteralNode(ctx, STEval::Str,    $1); }
+    : INT_LITERAL  { $$ = newLiteralNode(ctx, STEval::Long,   $1);    }
+    | FLT_LITERAL  { $$ = newLiteralNode(ctx, STEval::Double, $1);    }
+    | BOOL_LITERAL { $$ = newLiteralNode(ctx, STEval::Bool,   $1);    }
+    | STR_LITERAL  { $$ = newLiteralNode(ctx, STEval::Str,    $1);    }
+    | KW_NULL      { $$ = newLiteralNode(ctx, STEval::Null, nullptr); }
     ;
 
 builtin_type
-    : TID_INT   { $$ = newTypeIdNode(ctx, STEval::Int);    }
-    | TID_LONG  { $$ = newTypeIdNode(ctx, STEval::Long);   }
-    | TID_FLT   { $$ = newTypeIdNode(ctx, STEval::Float);  }
-    | TID_DBL   { $$ = newTypeIdNode(ctx, STEval::Double); }
-    | TID_BOOL  { $$ = newTypeIdNode(ctx, STEval::Bool);   }
-    | TID_STR   { $$ = newTypeIdNode(ctx, STEval::Str);    }
-    | TID_ARRAY { $$ = newTypeIdNode(ctx, STEval::Array);  }
-    | TID_RANGE { $$ = newTypeIdNode(ctx, STEval::Range);  }
-    | TID_ANY   { $$ = newTypeIdNode(ctx, STEval::Any);    }
+    : TID_INT    { $$ = newTypeIdNode(ctx, STEval::Int);    }
+    | TID_LONG   { $$ = newTypeIdNode(ctx, STEval::Long);   }
+    | TID_FLT    { $$ = newTypeIdNode(ctx, STEval::Float);  }
+    | TID_DBL    { $$ = newTypeIdNode(ctx, STEval::Double); }
+    | TID_BOOL   { $$ = newTypeIdNode(ctx, STEval::Bool);   }
+    | TID_STR    { $$ = newTypeIdNode(ctx, STEval::Str);    }
+    | TID_ARRAY  { $$ = newTypeIdNode(ctx, STEval::Array);  }
+    | TID_RANGE  { $$ = newTypeIdNode(ctx, STEval::Range);  }
+    | TID_ANY    { $$ = newTypeIdNode(ctx, STEval::Any);    }
+    | TID_TYPEID { $$ = newTypeIdNode(ctx, STEval::Tid);    }
+    | TID_FUNC   { $$ = newTypeIdNode(ctx, STEval::Func);   }
     ;
 
 type_identifier
     : builtin_type
-    | IDENTIFIER { $$ = newTypeIdNode(ctx, STEval::UDT, $1); }
+    | IDENTIFIER
+        {
+            if (!ctx.vm->types.findTypeId($1->name))
+            {
+                const std::string tname = color::white() + toString($1->name) + color::restore();
+                if (ctx.vm->functions.findFunction($1->name))
+                {
+                    parserError(ctx, "expected type identifier, not function '" + tname + "'");
+                }
+                else
+                {
+                    parserError(ctx, "referencing undefined type identifier '" + tname + "'");
+                }
+            }
+            $$ = newTypeIdNode(ctx, STEval::UDT, $1);
+        }
     ;
 
 identifier_expression
-    : IDENTIFIER { $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprNameIdent, $1); }
+    : IDENTIFIER
+        {
+            auto identNode = ctx.syntTree->newNodeWithSymbol(STNode::ExprNameIdent, $1);
+            if (!isParsingUDT())
+            {
+                // Try figuring out the type of this identifier reference
+                const VarInfo * vi = isParsingFunction() ? findFunctionLocalVar($1) : findGlobalVar($1);
+                if (vi != nullptr)
+                {
+                    identNode->evalType = vi->stEval;
+                }
+                else // Could be a function (in a 'var = function' kind of expression)
+                {
+                    if (ctx.vm->functions.findFunction($1->name))
+                    {
+                        identNode->evalType = STEval::Func;
+                    }
+                }
+                // Leave undefined. Will trigger an error later.
+            }
+            $$ = identNode;
+        }
     ;
 
 /*------------------------.
@@ -964,17 +1480,45 @@ expression
     | expression[L] "%"   expression[R] { $$ = newBinaryOpNode(ctx, STNode::ExprModulo,          $L, $R); }
     | expression[L] "/"   expression[R] { $$ = newBinaryOpNode(ctx, STNode::ExprDivide,          $L, $R); }
     | expression[L] "*"   expression[R] { $$ = newBinaryOpNode(ctx, STNode::ExprMultiply,        $L, $R); }
-    | "not" expression[R] { $$ = newUnaryOpNode(ctx, STNode::ExprLogicNot, $R); }
-    | "-" expression[R] %prec UNARY_MINUS { $$ = newUnaryOpNode(ctx, STNode::ExprUnaryMinus, $R); }
-    | "+" expression[R] %prec UNARY_PLUS  { $$ = newUnaryOpNode(ctx, STNode::ExprUnaryPlus, $R);  }
-    | expression[L] "." expression[R] { $$ = newBinaryOpNode(ctx, STNode::ExprMemberRef, $L, $R); }
+    | "not" expression[R]                   { $$ = newUnaryOpNode(ctx, STNode::ExprLogicNot,   OpCode::LogicNot, $R); }
+    | "-"   expression[R] %prec UNARY_MINUS { $$ = newUnaryOpNode(ctx, STNode::ExprUnaryMinus, OpCode::Negate,   $R); }
+    | "+"   expression[R] %prec UNARY_PLUS  { $$ = newUnaryOpNode(ctx, STNode::ExprUnaryPlus,  OpCode::Plus,     $R); }
+    | typecast_expression
+    | typeof_expression
     | array_subscript_expression
     | func_call_expression
+    | member_ref_expression
     | "(" expression ")"
         {
             // Wrapping an expr in ( ) gives it the highest precedence.
-            // Just reapply the rule with the new precedence.
+            // So just reapply the rule with the new precedence.
             $$ = $2;
+        }
+    ;
+
+expression_or_type_identifier
+    : expression   /* expression already incorporates identifier_expression */
+    | builtin_type /* so all we need to add are the built-in types */
+    ;
+
+typeof_expression
+    : KW_TYPEOF "(" expression_or_type_identifier ")"
+        {
+            $$ = newTypeofNode(ctx, $3);
+        }
+    ;
+
+typecast_expression
+    : expression[L] "as" type_identifier[R]
+        {
+            $$ = newTypecastNode(ctx, $L, $R);
+        }
+    ;
+
+member_ref_expression
+    : expression[L] "." expression[R]
+        {
+            $$ = newBinaryOpNode(ctx, STNode::ExprMemberRef, $L, $R);
         }
     ;
 
@@ -1020,22 +1564,21 @@ func_parameter_list_declaration
 func_call_expression
     : IDENTIFIER "(" parameter_list ")"
         {
-            // Second child is the parameter_list chain.
-            // First is reserved for chaining the call itself to another parameter_list
-            $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprFuncCall, $1, nullptr, $3);
+            $$ = newFunctionCallNode(ctx, $1, $3);
         }
     ;
 
 func_declaration
-    : "func" IDENTIFIER { beginFunc(ctx, $2); } "(" func_parameter_list_declaration ")" optional_return_type optional_statement_list end_statement
+    : "func" IDENTIFIER { beginFunc(ctx, $2); } "(" func_parameter_list_declaration ")" optional_return_type
+    { g_expectedReturnType = $7->evalType; } optional_statement_list end_statement
         {
             // child[0] = parameter list
             // child[1] = function body
             // child[2] = return type
-            $$ = ctx.syntTree->newNodeWithSymbol(STNode::FuncDeclStatement, $2, $5, $8, $7, $7->evalType);
+            $$ = ctx.syntTree->newNodeWithSymbol(STNode::FuncDeclStatement, $2, $5, $9, $7, $7->evalType);
 
             // Redefinition not allowed. We also don't currently support function overloads.
-            auto funcName = $2->name;
+            const auto funcName = $2->name;
             if (ctx.vm->functions.findFunction(funcName))
             {
                 std::string fname = color::white() + toString(funcName) + color::restore();
@@ -1056,7 +1599,7 @@ func_declaration
                 pRetType = &retTypeTemp;
             }
 
-            collectFunctionArgTypes($5, argTypes, argCount, extraFlags);
+            collectFunctionArgTypes(ctx, $5, argTypes, argCount, extraFlags);
             if (extraFlags & Function::VarArgs)
             {
                 argCount = 0;
@@ -1089,20 +1632,15 @@ array_expression
     : "[" parameter_list "]"
         {
             // First child reserved for parameter_list chains
-            $$ = ctx.syntTree->newNode(STNode::ExprArrayLiteral, nullptr, $2, nullptr, STEval::Array);
+            // Third child has the type of the array storage
+            $$ = ctx.syntTree->newNode(STNode::ExprArrayLiteral, nullptr, $2, newArrayTypeNode(ctx, $2), STEval::Array);
         }
     ;
 
 array_subscript_expression
-    : identifier_expression "[" expression "]"
+    : expression "[" expression "]"
         {
-            // First child reserved for parameter_list chains
-            $$ = ctx.syntTree->newNode(STNode::ExprArraySubscript, nullptr, $1, $3);
-        }
-    | func_call_expression "[" expression "]"
-        {
-            // Only makes sense when the function returns an array type
-            $$ = ctx.syntTree->newNode(STNode::ExprArraySubscript, nullptr, $1, $3);
+            $$ = newArraySubscriptNode(ctx, $1, $3);
         }
     ;
 
@@ -1115,7 +1653,7 @@ object_constructor_expression
         {
             // First child reserved for parameter_list chains
             $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprObjectConstructor, $1->symbol,
-                                                           nullptr, $3, $1, $1->evalType);
+                                                            nullptr, $3, $1, $1->evalType);
         }
     ;
 
@@ -1190,11 +1728,47 @@ elseif_or_else_or_end
 return_statement
     : "return" ";"
         {
-            $$ = ctx.syntTree->newNode(STNode::ReturnStatement);
+            if (!isParsingFunction())
+            {
+                parserError(ctx, "return statement found outside of a function");
+            }
+            else if (g_expectedReturnType != STEval::Void)
+            {
+                parserError(ctx, "function '" + toString(g_currentFunction->name) +
+                                 "' was expected to return " + toString(eval2VarType(g_expectedReturnType)));
+            }
+            else
+            {
+                $$ = ctx.syntTree->newNode(STNode::ReturnStatement, nullptr, nullptr, nullptr, STEval::Void);
+            }
         }
     | "return" expression ";"
         {
-            $$ = ctx.syntTree->newNode(STNode::ReturnStatement, $2, nullptr, nullptr, $2->evalType);
+            const auto exprNode = $2;
+            if (!isParsingFunction())
+            {
+                parserError(ctx, "return statement found outside of a function");
+            }
+            else if ((exprNode->symbol   != nullptr) &&
+                     (exprNode->nodeType != STNode::ExprFuncCall) &&
+                     (exprNode->nodeType != STNode::ExprLiteralConst) &&
+                     !findFunctionLocalVar(exprNode->symbol) && !findGlobalVar(exprNode->symbol))
+            {
+                parserError(ctx, "undefined return expression '" + toString(exprNode->symbol->name) + "'");
+            }
+            else if (g_expectedReturnType == STEval::Void)
+            {
+                parserError(ctx, "void function '" + toString(g_currentFunction->name) + "' is not supposed to return a value");
+            }
+            else if (!isAssignmentValid(eval2VarType(g_expectedReturnType), eval2VarType(exprNode->evalType)))
+            {
+                parserError(ctx, "function '" + toString(g_currentFunction->name) +
+                                 "' was expected to return " + toString(eval2VarType(g_expectedReturnType)));
+            }
+            else
+            {
+                $$ = ctx.syntTree->newNode(STNode::ReturnStatement, exprNode, nullptr, nullptr, exprNode->evalType);
+            }
         }
     ;
 
@@ -1320,7 +1894,7 @@ range_param
     | INT_LITERAL
         {
             $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprLiteralConst, $1,
-                          nullptr, nullptr, nullptr, evalTypeFromSymbol(*$1));
+                                 nullptr, nullptr, nullptr, symbol2Eval(*$1));
         }
     | STR_LITERAL
         {
@@ -1330,7 +1904,7 @@ range_param
                 parserError(ctx, "only single character literals are allowed in range expressions");
             }
             $$ = ctx.syntTree->newNodeWithSymbol(STNode::ExprLiteralConst, symbol,
-                          nullptr, nullptr, nullptr, evalTypeFromSymbol(*symbol));
+                                 nullptr, nullptr, nullptr, symbol2Eval(*symbol));
         }
     ;
 

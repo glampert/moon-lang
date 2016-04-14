@@ -369,6 +369,9 @@ bool isBinaryOpValid(const OpCode op, const Variant::Type typeA, const Variant::
     MOON_ASSERT(idxOp < NumOps);
     MOON_ASSERT(idxA < Cols && idxB < Rows);
 
+    //TODO finish filling in the table!!!
+    MOON_ASSERT(opsTable[idxA][idxB] != nullptr);
+
     // Constant-time table lookup.
     return opsTable[idxA][idxB]->ops[idxOp];
 }
@@ -437,13 +440,19 @@ bool isUnaryOpValid(const OpCode op, const Variant::Type type) noexcept
 {
     if (op == OpCode::LogicNot)
     {
-        return type == Variant::Type::Null    ||
-               type == Variant::Type::Integer ||
-               type == Variant::Type::Float   ||
-               type == Variant::Type::Function;
+        // Things that can be null/zero:
+        return type == Variant::Type::Null     ||
+               type == Variant::Type::Integer  ||
+               type == Variant::Type::Float    ||
+               type == Variant::Type::Function ||
+               type == Variant::Type::Tid      ||
+               type == Variant::Type::Str      ||
+               type == Variant::Type::Object   ||
+               type == Variant::Type::Array    ||
+               type == Variant::Type::Any;
     }
 
-    // +, -
+    // unary +, - only for numbers.
     return type == Variant::Type::Integer || type == Variant::Type::Float;
 }
 
@@ -526,6 +535,11 @@ bool isAssignmentValid(const Variant::Type destType, const Variant::Type srcType
     {
         return srcType == Variant::Type::Integer || srcType == Variant::Type::Float;
     }
+    // 'Any' type can receive all the other types.
+    else if (destType == Variant::Type::Any)
+    {
+        return true;
+    }
     else // Types must match exactly.
     {
         return destType == srcType;
@@ -603,7 +617,6 @@ void performAssignmentWithConversion(Variant & dest, const Variant source)
 #if MOON_DEBUG
 namespace
 {
-
 struct OpsTableTest
 {
     OpsTableTest()
@@ -684,7 +697,6 @@ struct BinOpsTest
         logStream() << "Moon: Binary ops test passed.\n";
     }
 } localBinOpsTest;
-
 } // namespace {}
 #endif // MOON_DEBUG
 
