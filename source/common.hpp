@@ -172,8 +172,16 @@ struct Range final
     Int32 end;
 };
 
+inline int rangeLength(const Range r) noexcept
+{
+    return std::abs(r.end - r.begin);
+}
+
 template<typename T, UInt32 N>
-constexpr UInt32 arrayLength(const T (&)[N]) noexcept { return N; }
+constexpr UInt32 arrayLength(const T (&)[N]) noexcept
+{
+    return N;
+}
 
 // Fast 32-bits hash of a null-terminated C string:
 constexpr UInt32 NullHash = 0;

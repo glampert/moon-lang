@@ -62,6 +62,10 @@
 namespace moon
 {
 
+//TODO maybe place all this semantic checking code into a separate file?
+//Make the rules below very small, just forwarding to a function call, perhaps?
+//leave the as little code in this file as possible, to avoid mixing languages...
+
 using STNode = SyntaxTreeNode::Type;
 using STEval = SyntaxTreeNode::Eval;
 
@@ -82,111 +86,6 @@ static void parserWarn(ParseContext & ctx, const std::string & message)
     if (!g_enableWarnings) { return; }
     const std::string filename = (ctx.srcFile != nullptr) ? *ctx.srcFile : "???";
     warning(message, filename, ctx.lexer->lineno(), ctx.currText);
-}
-
-// ------------------------------------------------------------------
-
-//FIXME temp; testing this new stuff...
-//TODO remove the debug printfs!
-
-struct VarInfo final
-{
-    const TypeId * const       typeId;
-    const Variant::Type        varType;
-    const SyntaxTreeNode::Eval arrayEval; // Only applicable it varType=Array, otherwise Null.
-    const SyntaxTreeNode::Eval stEval;
-};
-
-// [var_symbol, var_info]
-using VarInfoTable = HashTable<const Symbol *, VarInfo>;
-static VarInfoTable * g_globalVars = new VarInfoTable{};
-static VarInfoTable * g_localVars  = nullptr;
-
-static const Symbol * g_currentFunction = nullptr;
-static const Symbol * g_currentUDT = nullptr;
-
-static STEval g_expectedReturnType = STEval::Void;
-
-static const TypeId * g_lastRhsTypeId = nullptr;
-
-static bool g_debugMode = true; //TODO when true, calls to debug functions (like assert) get stripped!
-
-static bool isParsingFunction() noexcept { return g_currentFunction != nullptr; }
-static bool isParsingUDT()      noexcept { return g_currentUDT != nullptr; }
-
-static const VarInfo * findFunctionLocalVar(const Symbol * symbol)
-{
-    MOON_ASSERT(g_localVars != nullptr);
-
-    const auto & iter = g_localVars->find(symbol);
-    if (iter != g_localVars->end())
-    {
-        return &(iter->second);
-    }
-    return nullptr;
-}
-
-static const VarInfo * findGlobalVar(const Symbol * symbol)
-{
-    MOON_ASSERT(g_globalVars != nullptr);
-
-    const auto iter = g_globalVars->find(symbol);
-    if (iter != g_globalVars->end())
-    {
-        return &(iter->second);
-    }
-    return nullptr;
-}
-
-static void requireGlobalScope(ParseContext & ctx, const char * elementName)
-{
-    if (isParsingFunction() || isParsingUDT())
-    {
-        parserError(ctx, toString(elementName) + " can only be declared at the global scope");
-    }
-}
-
-static void beginFunc(ParseContext & ctx, const Symbol * funcNameSymbol)
-{
-    if (isParsingFunction())
-    {
-        parserError(ctx, "nested functions are currently unsupported");
-    }
-    if (isParsingUDT())
-    {
-        parserError(ctx, "member functions are currently unsupported");
-    }
-
-    g_localVars        = new VarInfoTable{};
-    g_currentFunction  = funcNameSymbol;
-
-    printf("BEGIN FUNC %s\n", g_currentFunction->name->chars);
-}
-
-static void endFunc(ParseContext & ctx)
-{
-    (void)ctx;
-    printf("END FUNC %s\n", g_currentFunction->name->chars);
-
-    g_localVars          = nullptr;
-    g_currentFunction    = nullptr;
-    g_expectedReturnType = STEval::Void;
-}
-
-static void beginUDT(ParseContext & ctx, const Symbol * typeNameSymbol, const char * elementName)
-{
-    requireGlobalScope(ctx, elementName);
-    g_currentUDT = typeNameSymbol;
-
-    printf("BEGIN UDT %s\n", g_currentUDT->name->chars);
-}
-
-static void endUDT(ParseContext & ctx)
-{
-    (void)ctx;
-    printf("END UDT %s\n", g_currentUDT->name->chars);
-
-    g_currentUDT = nullptr;
 }
 
 // ------------------------------------------------------------------
@@ -291,6 +190,116 @@ extern const Symbol * symbolFromEval(const SymbolTable & symTable, SyntaxTreeNod
 
 // ------------------------------------------------------------------
 
+//FIXME temp; testing this new stuff...
+//TODO remove the debug printfs!
+
+struct VarInfo final
+{
+    const TypeId * const       typeId;    // Runtime TypeId for UDTs and native types alike.
+    const Variant::Type        varType;   // Final Variant type. Matches stEval.
+    const SyntaxTreeNode::Eval arrayEval; // Only relevant if varType=Array.
+    const SyntaxTreeNode::Eval stEval;    // Matches varType; Cached conversion for frequent use.
+};
+
+// [var_symbol, var_info]
+using VarInfoTable = HashTable<const Symbol *, VarInfo>;
+static VarInfoTable * g_globalVars = new VarInfoTable{};
+static VarInfoTable * g_localVars  = nullptr;
+
+static const Symbol * g_currentFunction = nullptr;
+static const Symbol * g_currentUDT = nullptr;
+
+static STEval g_expectedReturnType = STEval::Void;
+
+static const TypeId * g_lastRhsTypeId = nullptr;
+
+static bool g_debugMode = true; //TODO when true, calls to debug functions (like assert) get stripped!
+
+static bool isParsingFunction() noexcept { return g_currentFunction != nullptr; }
+static bool isParsingUDT()      noexcept { return g_currentUDT != nullptr; }
+
+static const VarInfo * findFunctionLocalVar(const Symbol * symbol)
+{
+    MOON_ASSERT(g_localVars != nullptr);
+
+    const auto & iter = g_localVars->find(symbol);
+    if (iter != g_localVars->end())
+    {
+        return &(iter->second);
+    }
+    return nullptr;
+}
+
+static const VarInfo * findGlobalVar(const Symbol * symbol)
+{
+    MOON_ASSERT(g_globalVars != nullptr);
+
+    const auto iter = g_globalVars->find(symbol);
+    if (iter != g_globalVars->end())
+    {
+        return &(iter->second);
+    }
+    return nullptr;
+}
+
+static const VarInfo * findVar(const Symbol * symbol)
+{
+    return isParsingFunction() ? findFunctionLocalVar(symbol) : findGlobalVar(symbol);
+}
+
+static void requireGlobalScope(ParseContext & ctx, const char * elementName)
+{
+    if (isParsingFunction() || isParsingUDT())
+    {
+        parserError(ctx, toString(elementName) + " can only be declared at the global scope");
+    }
+}
+
+static void beginFunc(ParseContext & ctx, const Symbol * funcNameSymbol)
+{
+    if (isParsingFunction())
+    {
+        parserError(ctx, "nested functions are currently unsupported");
+    }
+    if (isParsingUDT())
+    {
+        parserError(ctx, "member functions are currently unsupported");
+    }
+
+    g_localVars        = new VarInfoTable{};
+    g_currentFunction  = funcNameSymbol;
+
+    printf("BEGIN FUNC %s\n", g_currentFunction->name->chars);
+}
+
+static void endFunc(ParseContext & ctx)
+{
+    (void)ctx;
+    printf("END FUNC %s\n", g_currentFunction->name->chars);
+
+    g_localVars          = nullptr;
+    g_currentFunction    = nullptr;
+    g_expectedReturnType = STEval::Void;
+}
+
+static void beginUDT(ParseContext & ctx, const Symbol * typeNameSymbol, const char * elementName)
+{
+    requireGlobalScope(ctx, elementName);
+    g_currentUDT = typeNameSymbol;
+
+    printf("BEGIN UDT %s\n", g_currentUDT->name->chars);
+}
+
+static void endUDT(ParseContext & ctx)
+{
+    (void)ctx;
+    printf("END UDT %s\n", g_currentUDT->name->chars);
+
+    g_currentUDT = nullptr;
+}
+
+// ------------------------------------------------------------------
+
 static void registerVariable(ParseContext & ctx,
                              const Symbol * nameSymbol,
                              const SyntaxTreeNode * initNode,
@@ -312,9 +321,9 @@ static void registerVariable(ParseContext & ctx,
         parserError(ctx, "variable declaration requires an initializer");
     }
 
-    const auto typeId = (stEval == STEval::UDT) ?
+    const auto typeId = ((stEval == STEval::UDT) ?
         ctx.vm->types.findTypeId(tidNode->symbol->name) :
-        eval2TypeId(ctx.vm->types, stEval);
+        eval2TypeId(ctx.vm->types, stEval));
 
     if (typeId == nullptr)
     {
@@ -328,7 +337,7 @@ static void registerVariable(ParseContext & ctx,
 
     destTable.insert(std::make_pair(nameSymbol, VarInfo{ typeId, varType, arrayEval, stEval }));
 
-    printf("ADDING VAR: %s, %s, %s, %s (arrayT=%s)\n", nameSymbol->name->chars, toString(stEval).c_str(),
+    printf("ADDING VAR: %s, %s, %s, %s (arrayEval=%s)\n", nameSymbol->name->chars, toString(stEval).c_str(),
            toString(typeId->name).c_str(), toString(eval2VarType(stEval)).c_str(), toString(arrayEval).c_str());
 }
 
@@ -473,11 +482,66 @@ static SyntaxTreeNode * newCompareNode(ParseContext & ctx, const STNode type,
 
 // ------------------------------------------------------------------
 
+static Variant::Type binaryOpResultType(const OpCode op, const Variant::Type typeA, const Variant::Type typeB)
+{
+    // If one term is Float or Any, we have an implicit conversion.
+    auto typeConv = [](const Variant::Type lhs, const Variant::Type rhs) -> Variant::Type
+    {
+        if (lhs == Variant::Type::Float ||
+            rhs == Variant::Type::Float)
+        {
+            return Variant::Type::Float;
+        }
+        if (lhs == Variant::Type::Any ||
+            rhs == Variant::Type::Any)
+        {
+            return Variant::Type::Any;
+        }
+        MOON_ASSERT(lhs == rhs);
+        return lhs;
+    };
+
+    switch (op)
+    {
+    // Boolean (integral) result:
+    case OpCode::CmpNotEqual     : return Variant::Type::Integer;
+    case OpCode::CmpEqual        : return Variant::Type::Integer;
+    case OpCode::CmpGreaterEqual : return Variant::Type::Integer;
+    case OpCode::CmpGreater      : return Variant::Type::Integer;
+    case OpCode::CmpLessEqual    : return Variant::Type::Integer;
+    case OpCode::CmpLess         : return Variant::Type::Integer;
+    case OpCode::LogicOr         : return Variant::Type::Integer;
+    case OpCode::LogicAnd        : return Variant::Type::Integer;
+    // Preserves one of the input types:
+    case OpCode::Sub             : return typeConv(typeA, typeB);
+    case OpCode::Add             : return typeConv(typeA, typeB);
+    case OpCode::Mod             : return typeConv(typeA, typeB);
+    case OpCode::Div             : return typeConv(typeA, typeB);
+    case OpCode::Mul             : return typeConv(typeA, typeB);
+    default : MOON_UNREACHABLE();
+    } // switch (op)
+}
+
+// ------------------------------------------------------------------
+
+static Variant::Type unaryOpResultType(const OpCode op, const Variant::Type type)
+{
+    switch (op)
+    {
+    case OpCode::Plus     : return type;
+    case OpCode::Negate   : return type;
+    case OpCode::LogicNot : return Variant::Type::Integer; // boolean result
+    default : MOON_UNREACHABLE();
+    } // switch (op)
+}
+
+// ------------------------------------------------------------------
+
 static SyntaxTreeNode * newBinaryOpNode(ParseContext & ctx, const STNode type,
                                         SyntaxTreeNode * lhs, SyntaxTreeNode * rhs)
 {
-    OpCode  binOp;
-    Variant result;
+    OpCode binOp;
+    Variant::Type resultType;
 
     switch (type)
     {
@@ -510,7 +574,7 @@ static SyntaxTreeNode * newBinaryOpNode(ParseContext & ctx, const STNode type,
         if (lhs->nodeType != STNode::ExprMemberRef)
         {
             MOON_ASSERT(lhs->symbol != nullptr);
-            const VarInfo * vi = isParsingFunction() ? findFunctionLocalVar(lhs->symbol) : findGlobalVar(lhs->symbol);
+            const VarInfo * vi = findVar(lhs->symbol);
             if (vi == nullptr)
             {
                 std::string oname = color::white() + toString(lhs->symbol->name) + color::restore();
@@ -555,7 +619,7 @@ static SyntaxTreeNode * newBinaryOpNode(ParseContext & ctx, const STNode type,
             g_lastRhsTypeId = varType2TypeId(ctx.vm->types, member.type);
         }
 
-        result.type = member.type;
+        resultType = member.type;
     }
     else
     {
@@ -568,8 +632,7 @@ static SyntaxTreeNode * newBinaryOpNode(ParseContext & ctx, const STNode type,
             {
                 parserError(ctx, "cannot assign " + toString(rhsVarType) + " to " + toString(lhsVarType));
             }
-            // Assignments cannot change the left-hand-side type.
-            result.type = lhsVarType;
+            resultType = lhsVarType; // Assignment doesn't change the left-hand-side type.
         }
         else // Comparison, sum, division, etc...
         {
@@ -578,12 +641,11 @@ static SyntaxTreeNode * newBinaryOpNode(ParseContext & ctx, const STNode type,
                 parserError(ctx, "cannot apply operator " + binaryOpToString(binOp) + " on " +
                             toString(lhsVarType) + " and " + toString(rhsVarType));
             }
-            // Perform the op on default initialized dummy vars to get the correct resulting type:
-            result = performBinaryOp(binOp, Variant{ lhsVarType }, Variant{ rhsVarType });
+            resultType = binaryOpResultType(binOp, lhsVarType, rhsVarType);
         }
     }
 
-    return ctx.syntTree->newNode(type, lhs, rhs, nullptr, varType2Eval(result.type));
+    return ctx.syntTree->newNode(type, lhs, rhs, nullptr, varType2Eval(resultType));
 }
 
 // ------------------------------------------------------------------
@@ -594,12 +656,12 @@ static SyntaxTreeNode * newUnaryOpNode(ParseContext & ctx, const STNode type,
     const Variant::Type varType = eval2VarType(operand->evalType);
     if (!isUnaryOpValid(unaryOp, varType))
     {
-        parserError(ctx, "cannot apply unary operator " + unaryOpToString(unaryOp) + " on type " + toString(varType));
+        parserError(ctx, "cannot apply unary operator " + unaryOpToString(unaryOp) +
+                         " on type " + toString(varType));
     }
 
-    // Perform the op on a default initialized var to get the correct resulting type:
-    const Variant result = performUnaryOp(unaryOp, Variant{ varType });
-    return ctx.syntTree->newNode(type, operand, nullptr, nullptr, varType2Eval(result.type));
+    const Variant::Type resultType = unaryOpResultType(unaryOp, varType);
+    return ctx.syntTree->newNode(type, operand, nullptr, nullptr, varType2Eval(resultType));
 }
 
 // ------------------------------------------------------------------
@@ -674,7 +736,7 @@ static SyntaxTreeNode * newTypeofNode(ParseContext & ctx, SyntaxTreeNode * exprO
         exprOrTypeNode->evalType = stEval; // Fix the node.
     }
 
-    return ctx.syntTree->newNode(STNode::ExprTypeof, exprOrTypeNode, nullptr, nullptr, stEval);
+    return ctx.syntTree->newNode(STNode::ExprTypeof, exprOrTypeNode, nullptr, nullptr, STEval::Tid);
 }
 
 // ------------------------------------------------------------------
@@ -1087,7 +1149,7 @@ static SyntaxTreeNode * newArraySubscriptNode(ParseContext & ctx,
     }
     else
     {
-        const VarInfo * vi = isParsingFunction() ? findFunctionLocalVar(arrayExpr->symbol) : findGlobalVar(arrayExpr->symbol);
+        const VarInfo * vi = findVar(arrayExpr->symbol);
         if (vi == nullptr)
         {
             std::string name = color::white() + toString(arrayExpr->symbol->name) + color::restore();
@@ -1425,7 +1487,7 @@ identifier_expression
             if (!isParsingUDT())
             {
                 // Try figuring out the type of this identifier reference
-                const VarInfo * vi = isParsingFunction() ? findFunctionLocalVar($1) : findGlobalVar($1);
+                const VarInfo * vi = findVar($1);
                 if (vi != nullptr)
                 {
                     identNode->evalType = vi->stEval;
@@ -1752,7 +1814,7 @@ return_statement
             else if ((exprNode->symbol   != nullptr) &&
                      (exprNode->nodeType != STNode::ExprFuncCall) &&
                      (exprNode->nodeType != STNode::ExprLiteralConst) &&
-                     !findFunctionLocalVar(exprNode->symbol) && !findGlobalVar(exprNode->symbol))
+                     !findVar(exprNode->symbol))
             {
                 parserError(ctx, "undefined return expression '" + toString(exprNode->symbol->name) + "'");
             }

@@ -120,6 +120,8 @@ struct RtObjMemoryBlobImpl final
     alignas(LargestAlign) UInt8 blob[LargestSize];
 };
 
+// Actually, might want to separate Str and Array from the rest.
+// Str and Array are ~128Bytes, we can probably fit the rest in under 64
 using RtObjMemoryBlob =
     RtObjMemoryBlobImpl
     <
@@ -337,34 +339,7 @@ int main(int argc, const char * argv[])
         constexpr std::size_t minConstStrLen = sizeof(std::string) - (sizeof(std::size_t) * 2);
         logStream() << "sizeof(minConstStrLen)    = " << sizeof(minConstStrLen) << std::endl;
         logStream() << "sizeof(std::string)       = " << sizeof(std::string) << std::endl;
-
-        auto rstr1 = newConstRcString("\'testing, 1234\'");
-
-        logStream() << "s: " << rstr1->chars << std::endl;
-        logStream() << "l: " << rstr1->length << std::endl;
-        logStream() << "h: " << rstr1->hashVal << std::endl;
-        logStream() << "r: " << rstr1->refCount << std::endl;
-        logStream() << std::endl;
-
-        HashTableConstRcStr<int> ht1;
-        ht1.emplace(rstr1, 1);
-        releaseRcString(rstr1);
-
-        ///////////////
-        Variant v0;
-        Variant v1;
-
-        v0.type = Variant::Type::Integer;
-        v1.type = Variant::Type::Integer;
-
-        v0.value.asInteger = 3;
-        v1.value.asInteger = 3;
-
-        auto res = performBinaryOp(OpCode::Mod, v0, v1);
-        logStream() << std::endl;
-        logStream() << toString(res.type) << std::endl;
-        logStream() << toString(res) << std::endl;
-        logStream() << std::endl;
+        logStream() << "\n";
     }
 
     try
@@ -406,7 +381,7 @@ int main(int argc, const char * argv[])
             logStream() << std::endl;
         }
         */
-        //return 0;
+        return 0;
 
         compiler.compile(vm);
         logStream() << compiler << "\n";

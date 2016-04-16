@@ -170,12 +170,9 @@ class SyntaxTree final
 public:
 
     SyntaxTree() = default;
-
-    // Not copyable.
     SyntaxTree(const SyntaxTree &) = delete;
     SyntaxTree & operator = (const SyntaxTree &) = delete;
 
-    // Miscellaneous queries:
     bool isEmpty() const noexcept { return nodePool.getObjectsAlive() == 0; }
     int  getSize() const noexcept { return nodePool.getObjectsAlive();      }
 

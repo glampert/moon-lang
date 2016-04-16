@@ -127,8 +127,8 @@ std::string toString(const Variant var)
         }
     case Variant::Type::Any :
         {
-            const auto anyType = toString(var.type);//FIXME actually need a second type for the Any type...
-            return strPrintF("any(tid=%s)", anyType.c_str());
+            const auto anyTypeId = toString(var.anyType);
+            return strPrintF("any(tid=%s)", anyTypeId.c_str());
         }
     default :
         return "null";
@@ -793,6 +793,11 @@ Str * Str::newFromStrings(VM & vm, const Str & strA, const Str & strB, const boo
     return newFromString(vm, temp, length, makeConst);
 }
 
+Str * Str::newNullString(VM & vm)
+{
+    return Str::newFromString(vm, "(null)", std::strlen("(null)"), false);
+}
+
 Variant Str::unaryOp(const OpCode op, const Str & str)
 {
     if (op != OpCode::LogicNot)
@@ -808,7 +813,7 @@ Variant Str::unaryOp(const OpCode op, const Str & str)
     // end
     //
     Variant result{ Variant::Type::Integer };
-    result.value.asInteger = str.isEmptyString();
+    result.value.asInteger = !str.isEmptyString();
     return result;
 }
 
@@ -1104,6 +1109,9 @@ void Array::appendInternal(const void * data, const int lengthInItems)
     MOON_ASSERT(UInt32(itemSize) <= sizeof(Variant::Value));
     MOON_ASSERT((getArrayCapacity() - arrayLen) >= lengthInItems);
 
+    //FIXME should not use these memcpys here.
+    //I think they will break for int<=>float float<=>double conversions.
+    //better to define a typed copy helper.
     if (lengthInItems > 0)
     {
         std::memcpy(getDataPtr() + (arrayLen * itemSize), data, lengthInItems * itemSize);

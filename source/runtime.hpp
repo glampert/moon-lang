@@ -68,18 +68,31 @@ struct Variant final
         Value() noexcept { asInteger = 0; }
     };
 
-    Value value;
-    Type  type;
+    Value value;   // Value must be interpreted according to the following tags.
+    Type  type;    // Type of the underlaying data or 'Any'.
+    Type  anyType; // If type == Any, then this holds the type of the underlaying data.
 
     // Construct a null variant:
     Variant() noexcept
-        : type{ Type::Null }
+        : type    { Type::Null }
+        , anyType { Type::Null }
     { }
 
     // Construct a typed variant but with null/zero contents:
-    explicit Variant(const Type t) noexcept
-        : type{ t }
+    explicit Variant(const Type varType) noexcept
+        : type    { varType    }
+        , anyType { Type::Null }
     { }
+
+    // Make a new Variant from the any type.
+    Variant unwrapAny() const
+    {
+        MOON_ASSERT(type    == Variant::Type::Any);
+        MOON_ASSERT(anyType != Variant::Type::Any);
+        Variant var{ anyType };
+        var.value = value;
+        return var;
+    }
 
     //
     // Miscellaneous helpers:
@@ -131,9 +144,10 @@ struct Variant final
         return value.asRange;
     }
 
+    bool toBool() const noexcept { return !!value.asInteger;    }
     bool isZero() const noexcept { return value.asInteger == 0; }
     bool isNull() const noexcept { return type == Type::Null;   }
-    bool toBool() const noexcept { return !!value.asInteger;    }
+    bool isAny()  const noexcept { return type == Type::Any;    }
 };
 
 // ========================================================
@@ -151,15 +165,15 @@ Variant variantFromSymbol(VM & vm, const Symbol & sym);
 Variant::Type variantTypeFromTypeId(const TypeId * tid);
 
 // Binary operator on Variant (*, %, ==, !=, etc):
-bool isBinaryOpValid(OpCode op, Variant::Type typeA, Variant::Type typeB) noexcept;
-Variant performBinaryOp(OpCode op, Variant varA, Variant varB);
+bool isBinaryOpValid(OpCode op, Variant::Type typeA, Variant::Type typeB);
+Variant performBinaryOp(OpCode op, Variant varA, Variant varB, VM * pVM); // VM instance only required for string concat (op +)
 
 // Unary operator on Variant (not, -, +):
-bool isUnaryOpValid(OpCode op, Variant::Type type) noexcept;
+bool isUnaryOpValid(OpCode op, Variant::Type type);
 Variant performUnaryOp(OpCode op, Variant var);
 
 // Assigns with integer<=>float implicit conversions.
-bool isAssignmentValid(Variant::Type destType, Variant::Type srcType) noexcept;
+bool isAssignmentValid(Variant::Type destType, Variant::Type srcType);
 void performAssignmentWithConversion(Variant & dest, Variant source);
 
 // Will print just the Variant's value according to type tag.
@@ -231,12 +245,12 @@ public:
     {
     public:
         Slice() noexcept // Null/empty slice
-            : data{ nullptr }
-            , size{ 0 }
+            : data { nullptr }
+            , size { 0 }
         { }
         Slice(Variant * d, const int s) noexcept
-            : data{ d }
-            , size{ s }
+            : data { d }
+            , size { s }
         { }
 
         const Variant & operator[](const int index) const
@@ -674,6 +688,7 @@ public:
     static Str * newFromString(VM & vm, const std::string & str, bool makeConst);
     static Str * newFromString(VM & vm, const char * cstr, UInt32 length, bool makeConst);
     static Str * newFromStrings(VM & vm, const Str & strA, const Str & strB, bool makeConst);
+    static Str * newNullString(VM & vm);
 
     static Variant unaryOp(OpCode op, const Str & str);
     static Variant binaryOp(OpCode op, const Str & strA, const Str & strB);

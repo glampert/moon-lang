@@ -248,7 +248,7 @@ static void opBinary(VM & vm, UInt32)
 {
     const Variant operandB = vm.stack.pop();
     const Variant operandA = vm.stack.pop();
-    vm.stack.push(performBinaryOp(OP, operandA, operandB));
+    vm.stack.push(performBinaryOp(OP, operandA, operandB, &vm));
 }
 
 // ----------------------------------------------------------------------------

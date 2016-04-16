@@ -7,111 +7,159 @@
 // Brief: Validation and execution of unary/binary operators on different type categories.
 // ================================================================================================
 
-#include "runtime.hpp"
+#include "vm.hpp"
 #include <cmath> // std::fmod
 
 namespace moon
 {
 
-//TODO missing operators for Object, Tid, Array Range and Any Variant::Types!
-//String operators must also be reviewed to include logic not/or/and
+// ========================================================
+// Validation tables for the binary operators:
+// ========================================================
 
-// ------------------------------------------------------------------
-// BINARY OPERATOR TABLES:
-//
-// Sub (op -)
-// Add (op +)
-// Mul (op *)
-// Div (op /)
-// Mod (op %)
-// +---------------+---------+-------+--------+--------------+
-// | ARITHMETICAL  | Integer | Float | String | Objects/Null |
-// +---------------+---------+-------+--------+--------------+
-// | Integer:      | Y       | Y†    | N      | N            |
-// | Result Type:  | Integer | Float | *      | *            |
-// +---------------+---------+-------+--------+--------------+
-// | Float:        | Y†      | Y†    | N      | N            |
-// | Result Type:  | Float   | Float | *      | *            |
-// +---------------+---------+-------+--------+--------------+
-// | String:       | N       | N     | Y•     | N            |
-// | Result Type:  | *       | *     | String | *            |
-// +---------------+---------+-------+--------+--------------+
-// | Objects/Null: | N       | N     | N      | N            |
-// | Result Type:  | *       | *     | *      | *            |
-// +---------------+---------+-------+--------+--------------+
-// NOTES:
-// • - Operator + is defined for strings to perform concatenation.
-// † - % with float-float or float-integer requires special handling
-//
-// ------------------------------------------------------------------
-//
-// CmpNotEqual     (op !=  )
-// CmpEqual        (op ==  )
-// CmpGreaterEqual (op >=  )
-// CmpGreater      (op >   )
-// CmpLessEqual    (op <=  )
-// CmpLess         (op <   )
-// LogicOr         (op or  )
-// LogicAnd        (op and )
-// NOTE: Result Type is always a boolean.
-// +---------------+---------+-------+--------+--------------+
-// | LOGICAL       | Integer | Float | String | Objects/Null |
-// +---------------+---------+-------+--------+--------------+
-// | Integer:      | Y       | Y     | N      | N            |
-// +---------------+---------+-------+--------+--------------+
-// | Float:        | Y       | Y     | N      | N            |
-// +---------------+---------+-------+--------+--------------+
-// | String:       | N       | N     | Y•     | N            |
-// +---------------+---------+-------+--------+--------------+
-// | Objects/Null: | N       | N     | N      | Y            |
-// +---------------+---------+-------+--------+--------------+
-// NOTES:
-// • - Defined except for 'or' and 'and'
-//
-// ------------------------------------------------------------------
-
-using OpApplyCB = Variant (*)(Variant varA, Variant varB);
 static constexpr UInt32 FirstOp = static_cast<UInt32>(OpCode::CmpNotEqual);
 static constexpr UInt32 LastOp  = static_cast<UInt32>(OpCode::Mul);
 static constexpr UInt32 NumOps  = (LastOp - FirstOp) + 1;
 
-std::string binaryOpToString(const OpCode op)
+// CmpNotEqual  CmpEqual  CmpGreaterEqual  CmpGreater  CmpLessEqual  CmpLess
+//
+// LogicOr  LogicAnd
+//
+// Sub  Add  Mod  Div  Mul
+struct OpDefs
 {
-    static const std::string op2string[NumOps]
-    {
-        "!=",  // CmpNotEqual
-        "==",  // CmpEqual
-        ">=",  // CmpGreaterEqual
-        ">",   // CmpGreater
-        "<=",  // CmpLessEqual
-        "<",   // CmpLess
-        "or",  // LogicOr
-        "and", // LogicAnd
-        "-",   // Sub
-        "+",   // Add
-        "%",   // Mod
-        "/",   // Div
-        "*"    // Mul
-    };
+    // 1 if the binary operator is defined, 0 if not.
+    Int8 ops[NumOps];
+};
 
-    const auto idxOp = static_cast<UInt32>(op);
-    if (idxOp < FirstOp || idxOp > LastOp)
-    {
-        return toString(op);
-    }
-    return color::magenta() + op2string[idxOp - FirstOp] + color::restore();
-}
+//                                   !=   ==   >=   >    <=   <      or   and    -    +    %    /    *
+static const OpDefs null_null   = {{ 1,   1,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs null_int    = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs null_float  = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs null_func   = {{ 1,   1,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs null_tid    = {{ 1,   1,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs null_str    = {{ 1,   1,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs null_obj    = {{ 1,   1,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs null_arr    = {{ 1,   1,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs null_range  = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
+static const OpDefs null_any    = {{ 1,   1,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+//                                   !=   ==   >=   >    <=   <      or   and    -    +    %    /    *
+static const OpDefs int_null    = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs int_int     = {{ 1,   1,   1,   1,   1,   1,     1,   1,     1,   1,   1,   1,   1 }};
+static const OpDefs int_float   = {{ 1,   1,   1,   1,   1,   1,     1,   1,     1,   1,   1,   1,   1 }};
+static const OpDefs int_func    = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs int_tid     = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs int_str     = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs int_obj     = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs int_arr     = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs int_range   = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
+static const OpDefs int_any     = {{ 1,   1,   1,   1,   1,   1,     1,   1,     1,   1,   1,   1,   1 }};
+//                                   !=   ==   >=   >    <=   <      or   and    -    +    %    /    *
+static const OpDefs float_null  = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs float_int   = {{ 1,   1,   1,   1,   1,   1,     1,   1,     1,   1,   1,   1,   1 }};
+static const OpDefs float_float = {{ 1,   1,   1,   1,   1,   1,     1,   1,     1,   1,   1,   1,   1 }};
+static const OpDefs float_func  = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs float_tid   = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs float_str   = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs float_obj   = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs float_arr   = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs float_range = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
+static const OpDefs float_any   = {{ 1,   1,   1,   1,   1,   1,     1,   1,     1,   1,   1,   1,   1 }};
+//                                   !=   ==   >=   >    <=   <      or   and    -    +    %    /    *
+static const OpDefs func_null   = {{ 1,   1,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs func_int    = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs func_float  = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs func_func   = {{ 1,   1,   1,   1,   1,   1,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs func_tid    = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs func_str    = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs func_obj    = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs func_arr    = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs func_range  = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
+static const OpDefs func_any    = {{ 1,   1,   1,   1,   1,   1,     1,   1,     0,   0,   0,   0,   0 }};
+//                                   !=   ==   >=   >    <=   <      or   and    -    +    %    /    *
+static const OpDefs tid_null    = {{ 1,   1,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs tid_int     = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs tid_float   = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs tid_func    = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs tid_tid     = {{ 1,   1,   1,   1,   1,   1,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs tid_str     = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs tid_obj     = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs tid_arr     = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs tid_range   = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
+static const OpDefs tid_any     = {{ 1,   1,   1,   1,   1,   1,     1,   1,     0,   0,   0,   0,   0 }};
+//                                   !=   ==   >=   >    <=   <      or   and    -    +    %    /    *
+static const OpDefs str_null    = {{ 1,   1,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs str_int     = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs str_float   = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs str_func    = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs str_tid     = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs str_str     = {{ 1,   1,   1,   1,   1,   1,     1,   1,     0,   1,   0,   0,   0 }};
+static const OpDefs str_obj     = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs str_arr     = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs str_range   = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
+static const OpDefs str_any     = {{ 1,   1,   1,   1,   1,   1,     1,   1,     0,   1,   0,   0,   0 }};
+//                                   !=   ==   >=   >    <=   <      or   and    -    +    %    /    *
+static const OpDefs obj_null    = {{ 1,   1,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs obj_int     = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs obj_float   = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs obj_func    = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs obj_tid     = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs obj_str     = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs obj_obj     = {{ 1,   1,   1,   1,   1,   1,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs obj_arr     = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs obj_range   = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
+static const OpDefs obj_any     = {{ 1,   1,   1,   1,   1,   1,     1,   1,     0,   0,   0,   0,   0 }};
+//                                   !=   ==   >=   >    <=   <      or   and    -    +    %    /    *
+static const OpDefs arr_null    = {{ 1,   1,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs arr_int     = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs arr_float   = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs arr_func    = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs arr_tid     = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs arr_str     = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs arr_obj     = {{ 0,   0,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs arr_arr     = {{ 1,   1,   1,   1,   1,   1,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs arr_range   = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
+static const OpDefs arr_any     = {{ 1,   1,   1,   1,   1,   1,     1,   1,     0,   0,   0,   0,   0 }};
+//                                   !=   ==   >=   >    <=   <      or   and    -    +    %    /    *
+static const OpDefs range_null  = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
+static const OpDefs range_int   = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
+static const OpDefs range_float = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
+static const OpDefs range_func  = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
+static const OpDefs range_tid   = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
+static const OpDefs range_str   = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
+static const OpDefs range_obj   = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
+static const OpDefs range_arr   = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
+static const OpDefs range_range = {{ 1,   1,   1,   1,   1,   1,     0,   0,     0,   0,   0,   0,   0 }};
+static const OpDefs range_any   = {{ 1,   1,   1,   1,   1,   1,     0,   0,     0,   0,   0,   0,   0 }};
+//                                   !=   ==   >=   >    <=   <      or   and    -    +    %    /    *
+static const OpDefs any_null    = {{ 1,   1,   0,   0,   0,   0,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs any_int     = {{ 1,   1,   1,   1,   1,   1,     1,   1,     1,   1,   1,   1,   1 }};
+static const OpDefs any_float   = {{ 1,   1,   1,   1,   1,   1,     1,   1,     1,   1,   1,   1,   1 }};
+static const OpDefs any_func    = {{ 1,   1,   1,   1,   1,   1,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs any_tid     = {{ 1,   1,   1,   1,   1,   1,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs any_str     = {{ 1,   1,   1,   1,   1,   1,     1,   1,     0,   1,   0,   0,   0 }};
+static const OpDefs any_obj     = {{ 1,   1,   1,   1,   1,   1,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs any_arr     = {{ 1,   1,   1,   1,   1,   1,     1,   1,     0,   0,   0,   0,   0 }};
+static const OpDefs any_range   = {{ 1,   1,   1,   1,   1,   1,     0,   0,     0,   0,   0,   0,   0 }};
+static const OpDefs any_any     = {{ 1,   1,   1,   1,   1,   1,     1,   1,     1,   1,   1,   1,   1 }};
 
-std::string unaryOpToString(const OpCode op)
+// We need one row and column for each type in the Variant enum.
+static constexpr UInt32 Cols = static_cast<UInt32>(Variant::Type::Count);
+static constexpr UInt32 Rows = static_cast<UInt32>(Variant::Type::Count);
+static const OpDefs * opsTable[Cols][Rows]
 {
-    switch (op)
-    {
-    case OpCode::LogicNot : return color::magenta() + toString("not") + color::restore();
-    case OpCode::Negate   : return color::magenta() + toString("-")   + color::restore();
-    case OpCode::Plus     : return color::magenta() + toString("+")   + color::restore();
-    default               : return toString(op);
-    } // switch (op)
-}
+/*                 Null        Integer       Float       Function       Tid         Str       Object       Array        Range        Any     */
+/* Null     */ { &null_null,  &null_int,  &null_float,  &null_func,  &null_tid,  &null_str,  &null_obj,  &null_arr,  &null_range,  &null_any  },
+/* Integer  */ { &int_null,   &int_int,   &int_float,   &int_func,   &int_tid,   &int_str,   &int_obj,   &int_arr,   &int_range,   &int_any   },
+/* Float    */ { &float_null, &float_int, &float_float, &float_func, &float_tid, &float_str, &float_obj, &float_arr, &float_range, &float_any },
+/* Function */ { &func_null,  &func_int,  &func_float,  &func_func,  &func_tid,  &func_str,  &func_obj,  &func_arr,  &func_range,  &func_any  },
+/* Tid      */ { &tid_null,   &tid_int,   &tid_float,   &tid_func,   &tid_tid,   &tid_str,   &tid_obj,   &tid_arr,   &tid_range,   &tid_any   },
+/* Str      */ { &str_null,   &str_int,   &str_float,   &str_func,   &str_tid,   &str_str,   &str_obj,   &str_arr,   &str_range,   &str_any   },
+/* Object   */ { &obj_null,   &obj_int,   &obj_float,   &obj_func,   &obj_tid,   &obj_str,   &obj_obj,   &obj_arr,   &obj_range,   &obj_any   },
+/* Array    */ { &arr_null,   &arr_int,   &arr_float,   &arr_func,   &arr_tid,   &arr_str,   &arr_obj,   &arr_arr,   &arr_range,   &arr_any   },
+/* Range    */ { &range_null, &range_int, &range_float, &range_func, &range_tid, &range_str, &range_obj, &range_arr, &range_range, &range_any },
+/* Any      */ { &any_null,   &any_int,   &any_float,   &any_func,   &any_tid,   &any_str,   &any_obj,   &any_arr,   &any_range,   &any_any   }
+};
 
 // ========================================================
 // Handlers for the numerical binary ops and conversions:
@@ -154,8 +202,9 @@ OP_HANDLER_INT_FLOAT_ARITHMETICAL( Mul, * )
 //
 static Variant moduloOpCommon(const Variant varA, const Variant varB)
 {
-    // Integers just perform standard %
-    if (varA.type == Variant::Type::Integer && varB.type == Variant::Type::Integer)
+    // Integers just perform standard % modulo
+    if (varA.type == Variant::Type::Integer &&
+        varB.type == Variant::Type::Integer)
     {
         Variant result{ Variant::Type::Integer };
         result.value.asInteger = varA.value.asInteger % varB.value.asInteger;
@@ -206,6 +255,7 @@ OP_HANDLER_COMMON( Div_IntFloat,   Variant::Type::Float, asFloat, asInteger, /, 
     { opName ## _IntInt, opName ## _FloatFloat, opName ## _IntFloat, opName ## _FloatInt }
 
 static const struct {
+    using OpApplyCB = Variant (*)(Variant varA, Variant varB);
     OpApplyCB IntInt;
     OpApplyCB FloatFloat;
     OpApplyCB IntFloat;
@@ -232,126 +282,116 @@ static const struct {
 #undef OP_HANDLER_INT_FLOAT_ARITHMETICAL
 
 // ========================================================
-// Validation tables for the binary operators:
+// Miscellaneous helper functions:
 // ========================================================
 
-// CmpNotEqual  CmpEqual  CmpGreaterEqual  CmpGreater  CmpLessEqual  CmpLess
-//
-// LogicOr  LogicAnd
-//
-// Sub  Add  Mod  Div  Mul
-struct OpDefs
+std::string binaryOpToString(const OpCode op)
 {
-    // 1 if the binary operator is defined, 0 if not.
-    Int8 ops[NumOps];
-};
+    static const std::string op2string[]
+    {
+        "!=",  // CmpNotEqual
+        "==",  // CmpEqual
+        ">=",  // CmpGreaterEqual
+        ">",   // CmpGreater
+        "<=",  // CmpLessEqual
+        "<",   // CmpLess
+        "or",  // LogicOr
+        "and", // LogicAnd
+        "-",   // Sub
+        "+",   // Add
+        "%",   // Mod
+        "/",   // Div
+        "*"    // Mul
+    };
+    static_assert(arrayLength(op2string) == NumOps, "Size mismatch!");
 
-//                                   !=   ==   >=   >    <=   <      or   and    -    +    %    /    *
-static const OpDefs null_null   = {{ 1,   1,   1,   1,   1,   1,     1,   1,     0,   0,   0,   0,   0 }};
-static const OpDefs null_int    = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
-static const OpDefs null_float  = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
-static const OpDefs null_str    = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
-static const OpDefs null_func   = {{ 1,   1,   1,   1,   1,   1,     1,   1,     0,   0,   0,   0,   0 }};
-//                                   !=   ==   >=   >    <=   <      or   and    -    +    %    /    *
-static const OpDefs int_null    = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
-static const OpDefs int_int     = {{ 1,   1,   1,   1,   1,   1,     1,   1,     1,   1,   1,   1,   1 }};
-static const OpDefs int_float   = {{ 1,   1,   1,   1,   1,   1,     1,   1,     1,   1,   1,   1,   1 }};
-static const OpDefs int_str     = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
-static const OpDefs int_func    = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
-//                                   !=   ==   >=   >    <=   <      or   and    -    +    %    /    *
-static const OpDefs float_null  = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
-static const OpDefs float_int   = {{ 1,   1,   1,   1,   1,   1,     1,   1,     1,   1,   1,   1,   1 }};
-static const OpDefs float_float = {{ 1,   1,   1,   1,   1,   1,     1,   1,     1,   1,   1,   1,   1 }};
-static const OpDefs float_str   = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
-static const OpDefs float_func  = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
-//                                   !=   ==   >=   >    <=   <      or   and    -    +    %    /    *
-static const OpDefs str_null    = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
-static const OpDefs str_int     = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
-static const OpDefs str_float   = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
-static const OpDefs str_str     = {{ 1,   1,   1,   1,   1,   1,     1,   1,     0,   1,   0,   0,   0 }};
-static const OpDefs str_func    = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
-//                                   !=   ==   >=   >    <=   <      or   and    -    +    %    /    *
-static const OpDefs func_null   = {{ 1,   1,   1,   1,   1,   1,     1,   1,     0,   0,   0,   0,   0 }};
-static const OpDefs func_int    = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
-static const OpDefs func_float  = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
-static const OpDefs func_str    = {{ 0,   0,   0,   0,   0,   0,     0,   0,     0,   0,   0,   0,   0 }};
-static const OpDefs func_func   = {{ 1,   1,   1,   1,   1,   1,     1,   1,     0,   0,   0,   0,   0 }};
+    const auto idxOp = static_cast<UInt32>(op);
+    if (idxOp < FirstOp || idxOp > LastOp)
+    {
+        return toString(op);
+    }
+    return color::magenta() + op2string[idxOp - FirstOp] + color::restore();
+}
 
-//TODO finish up this table!
-static constexpr UInt32 Cols = static_cast<UInt32>(Variant::Type::Count);
-static constexpr UInt32 Rows = static_cast<UInt32>(Variant::Type::Count);
-static const OpDefs * opsTable[Cols][Rows]
+std::string unaryOpToString(const OpCode op)
 {
-/*                 Null       Integer       Float        Function      Tid       Str        Object    Array    Range    Any */
-/* Null     */ { &null_null,  &null_int,  &null_float,  &null_func,  nullptr,   &null_str,  nullptr,  nullptr, nullptr, nullptr },
-/* Integer  */ { &int_null,   &int_int,   &int_float,   &int_func,   nullptr,   &int_str,   nullptr,  nullptr, nullptr, nullptr },
-/* Float    */ { &float_null, &float_int, &float_float, &float_func, nullptr,   &float_str, nullptr,  nullptr, nullptr, nullptr },
-/* Function */ { &func_null,  &func_int,  &func_float,  &func_func,  nullptr,   &func_str,  nullptr,  nullptr, nullptr, nullptr },
-/* Tid      */ { nullptr,     nullptr,    nullptr,      nullptr,     nullptr,   nullptr,    nullptr,  nullptr, nullptr, nullptr },
-/* Str      */ { &str_null,   &str_int,   &str_float,   &str_func,   nullptr,   &str_str,   nullptr,  nullptr, nullptr, nullptr },
-/* Object   */ { nullptr,     nullptr,    nullptr,      nullptr,     nullptr,   nullptr,    nullptr,  nullptr, nullptr, nullptr },
-/* Array    */ { nullptr,     nullptr,    nullptr,      nullptr,     nullptr,   nullptr,    nullptr,  nullptr, nullptr, nullptr },
-/* Range    */ { nullptr,     nullptr,    nullptr,      nullptr,     nullptr,   nullptr,    nullptr,  nullptr, nullptr, nullptr },
-/* Any      */ { nullptr,     nullptr,    nullptr,      nullptr,     nullptr,   nullptr,    nullptr,  nullptr, nullptr, nullptr }
-};
+    switch (op)
+    {
+    case OpCode::LogicNot : return color::magenta() + toString("not") + color::restore();
+    case OpCode::Negate   : return color::magenta() + toString("-")   + color::restore();
+    case OpCode::Plus     : return color::magenta() + toString("+")   + color::restore();
+    default               : return toString(op);
+    } // switch (op)
+}
 
-// ========================================================
-// Local helper functions:
-// ========================================================
-
-static Variant binaryOpOnStrings(const OpCode op, const Variant varA, const Variant varB)
+static Variant binaryOpOnPointers(const OpCode op, const Variant varA, const Variant varB)
 {
-    //TODO
-    (void)op; (void)varA; (void)varB;
-    MOON_UNREACHABLE();
-#if 0
+    Variant result{ Variant::Type::Integer }; // Boolean result.
+    switch (op)
+    {
+    case OpCode::CmpNotEqual     : result.value.asInteger = (varA.value.asVoidPtr !=  varB.value.asVoidPtr); break;
+    case OpCode::CmpEqual        : result.value.asInteger = (varA.value.asVoidPtr ==  varB.value.asVoidPtr); break;
+    case OpCode::CmpGreaterEqual : result.value.asInteger = (varA.value.asVoidPtr >=  varB.value.asVoidPtr); break;
+    case OpCode::CmpGreater      : result.value.asInteger = (varA.value.asVoidPtr >   varB.value.asVoidPtr); break;
+    case OpCode::CmpLessEqual    : result.value.asInteger = (varA.value.asVoidPtr <=  varB.value.asVoidPtr); break;
+    case OpCode::CmpLess         : result.value.asInteger = (varA.value.asVoidPtr <   varB.value.asVoidPtr); break;
+    case OpCode::LogicOr         : result.value.asInteger = (varA.value.asVoidPtr or  varB.value.asVoidPtr); break;
+    case OpCode::LogicAnd        : result.value.asInteger = (varA.value.asVoidPtr and varB.value.asVoidPtr); break;
+    default                      : MOON_UNREACHABLE();
+    } // switch (op)
+    return result;
+}
+
+static Variant binaryOpOnStrings(const OpCode op, const Variant varA, const Variant varB, VM * pVM)
+{
+    const Str * strA = varA.getAsString();
+    const Str * strB = varB.getAsString();
+
     // Concatenate strings with operator +
     if (op == OpCode::Add)
     {
-        const auto aLen = std::strlen(varA.value.asString);
-        const auto bLen = std::strlen(varB.value.asString);
+        MOON_ASSERT(pVM != nullptr);
+        Variant newString{ Variant::Type::Str };
 
-        //FIXME temp: str is never freed for now...
-        auto newStr = new char[aLen + bLen + 1];
-        std::strcpy(newStr, varA.value.asString);
-        std::strcat(newStr, varB.value.asString);
-
-        Variant result{ Variant::Type::Str };
-        result.value.asString = newStr;
-        return result;
+        // null str + null str = "(null)"
+        if (strA == nullptr && strB == nullptr)
+        {
+            newString.value.asString = Str::newNullString(*pVM);
+        }
+        else
+        {
+            if (strA == nullptr) { strA = Str::newNullString(*pVM); }
+            if (strB == nullptr) { strB = Str::newNullString(*pVM); }
+            newString.value.asString = Str::newFromStrings(*pVM, *strA, *strB, false);
+        }
+        return newString;
     }
 
-    // Lexicographical comparison:
-    Variant result{ Variant::Type::Integer };
-    const auto cmpResult = std::strcmp(varA.value.asString, varB.value.asString);
-    switch (op)
+    // If either is null, fall-back to pointer test:
+    if (strA == nullptr || strB == nullptr)
     {
-    case OpCode::CmpNotEqual     : { result.value.asInteger = (cmpResult != 0); break; }
-    case OpCode::CmpEqual        : { result.value.asInteger = (cmpResult == 0); break; }
-    case OpCode::CmpGreaterEqual : { result.value.asInteger = (cmpResult >= 0); break; }
-    case OpCode::CmpGreater      : { result.value.asInteger = (cmpResult >  0); break; }
-    case OpCode::CmpLessEqual    : { result.value.asInteger = (cmpResult <= 0); break; }
-    case OpCode::CmpLess         : { result.value.asInteger = (cmpResult <  0); break; }
-    default                      : { MOON_UNREACHABLE(); }
-    } // switch (op)
-    return result;
-#endif//0
+        return binaryOpOnPointers(op, varA, varB);
+    }
+
+    // Lexicographical string comparison:
+    return Str::binaryOp(op, *strA, *strB);
 }
 
-static Variant binaryOpOnObjects(const OpCode op, const Variant varA, const Variant varB)
+static Variant binaryOpOnRanges(const OpCode op, const Variant varA, const Variant varB)
 {
-    Variant result{ Variant::Type::Integer };
+    const auto rangeA = varA.getAsRange();
+    const auto rangeB = varB.getAsRange();
+
+    Variant result{ Variant::Type::Integer }; // Boolean result.
     switch (op)
     {
-    case OpCode::CmpNotEqual     : { result.value.asInteger = (varA.value.asVoidPtr !=  varB.value.asVoidPtr); break; }
-    case OpCode::CmpEqual        : { result.value.asInteger = (varA.value.asVoidPtr ==  varB.value.asVoidPtr); break; }
-    case OpCode::CmpGreaterEqual : { result.value.asInteger = (varA.value.asVoidPtr >=  varB.value.asVoidPtr); break; }
-    case OpCode::CmpGreater      : { result.value.asInteger = (varA.value.asVoidPtr >   varB.value.asVoidPtr); break; }
-    case OpCode::CmpLessEqual    : { result.value.asInteger = (varA.value.asVoidPtr <=  varB.value.asVoidPtr); break; }
-    case OpCode::CmpLess         : { result.value.asInteger = (varA.value.asVoidPtr <   varB.value.asVoidPtr); break; }
-    case OpCode::LogicOr         : { result.value.asInteger = (varA.value.asVoidPtr or  varB.value.asVoidPtr); break; }
-    case OpCode::LogicAnd        : { result.value.asInteger = (varA.value.asVoidPtr and varB.value.asVoidPtr); break; }
-    default                      : { MOON_UNREACHABLE(); }
+    case OpCode::CmpNotEqual     : result.value.asInteger = (rangeA.begin != rangeB.begin || rangeA.end != rangeB.end); break;
+    case OpCode::CmpEqual        : result.value.asInteger = (rangeA.begin == rangeB.begin && rangeA.end == rangeB.end); break;
+    case OpCode::CmpGreaterEqual : result.value.asInteger = (rangeLength(rangeA) >= rangeLength(rangeB)); break;
+    case OpCode::CmpGreater      : result.value.asInteger = (rangeLength(rangeA) >  rangeLength(rangeB)); break;
+    case OpCode::CmpLessEqual    : result.value.asInteger = (rangeLength(rangeA) <= rangeLength(rangeB)); break;
+    case OpCode::CmpLess         : result.value.asInteger = (rangeLength(rangeA) <  rangeLength(rangeB)); break;
+    default                      : MOON_UNREACHABLE();
     } // switch (op)
     return result;
 }
@@ -360,7 +400,7 @@ static Variant binaryOpOnObjects(const OpCode op, const Variant varA, const Vari
 // isBinaryOpValid():
 // ========================================================
 
-bool isBinaryOpValid(const OpCode op, const Variant::Type typeA, const Variant::Type typeB) noexcept
+bool isBinaryOpValid(const OpCode op, const Variant::Type typeA, const Variant::Type typeB)
 {
     const auto idxA  = static_cast<UInt32>(typeA);
     const auto idxB  = static_cast<UInt32>(typeB);
@@ -368,11 +408,9 @@ bool isBinaryOpValid(const OpCode op, const Variant::Type typeA, const Variant::
 
     MOON_ASSERT(idxOp < NumOps);
     MOON_ASSERT(idxA < Cols && idxB < Rows);
-
-    //TODO finish filling in the table!!!
     MOON_ASSERT(opsTable[idxA][idxB] != nullptr);
 
-    // Constant-time table lookup.
+    // Cheap constant-time table lookup.
     return opsTable[idxA][idxB]->ops[idxOp];
 }
 
@@ -380,8 +418,17 @@ bool isBinaryOpValid(const OpCode op, const Variant::Type typeA, const Variant::
 // performBinaryOp():
 // ========================================================
 
-Variant performBinaryOp(const OpCode op, const Variant varA, const Variant varB)
+Variant performBinaryOp(const OpCode op, const Variant varA, const Variant varB, VM * pVM)
 {
+    if (varA.isAny())
+    {
+        return performBinaryOp(op, varA.unwrapAny(), varB, pVM);
+    }
+    if (varB.isAny())
+    {
+        return performBinaryOp(op, varA, varB.unwrapAny(), pVM);
+    }
+
     if (!isBinaryOpValid(op, varA.type, varB.type))
     {
         MOON_RUNTIME_EXCEPTION("cannot perform binary op " + binaryOpToString(op) + " with " +
@@ -397,36 +444,46 @@ Variant performBinaryOp(const OpCode op, const Variant varA, const Variant varB)
         {
             switch (varB.type)
             {
-            case Variant::Type::Integer :
-                return numericalOpsCallbacks[idxOp].IntInt(varA, varB);
-            case Variant::Type::Float :
-                return numericalOpsCallbacks[idxOp].IntFloat(varA, varB);
-            default :
-                MOON_UNREACHABLE();
+            case Variant::Type::Integer : return numericalOpsCallbacks[idxOp].IntInt(varA, varB);
+            case Variant::Type::Float   : return numericalOpsCallbacks[idxOp].IntFloat(varA, varB);
+            default : MOON_UNREACHABLE();
             } // switch (varB.type)
         }
     case Variant::Type::Float :
         {
             switch (varB.type)
             {
-            case Variant::Type::Integer :
-                return numericalOpsCallbacks[idxOp].FloatInt(varA, varB);
-            case Variant::Type::Float :
-                return numericalOpsCallbacks[idxOp].FloatFloat(varA, varB);
-            default :
-                MOON_UNREACHABLE();
+            case Variant::Type::Integer : return numericalOpsCallbacks[idxOp].FloatInt(varA, varB);
+            case Variant::Type::Float   : return numericalOpsCallbacks[idxOp].FloatFloat(varA, varB);
+            default : MOON_UNREACHABLE();
             } // switch (varB.type)
         }
-
-    // Strings only work with other strings:
+    // Strings operate with other strings, but can also compare with pointers:
     case Variant::Type::Str :
-        return binaryOpOnStrings(op, varA, varB);
-
-    // Generic objects only allows basic comparisons:
+        {
+            if (varB.type == Variant::Type::Str) // Both strings?
+            {
+                return binaryOpOnStrings(op, varA, varB, pVM);
+            }
+            else // Otherwise treat as raw pointer comparison.
+            {
+                return binaryOpOnPointers(op, varA, varB);
+            }
+        }
+    // Generic objects only allows basic pointer comparisons:
+    case Variant::Type::Tid :
     case Variant::Type::Null :
+    case Variant::Type::Array :
+    case Variant::Type::Object :
     case Variant::Type::Function :
-        return binaryOpOnObjects(op, varA, varB);
-
+        {
+            return binaryOpOnPointers(op, varA, varB);
+        }
+    // Other special cases:
+    case Variant::Type::Range :
+        {
+            return binaryOpOnRanges(op, varA, varB);
+        }
     default :
         MOON_UNREACHABLE();
     } // switch (varA.type)
@@ -436,7 +493,7 @@ Variant performBinaryOp(const OpCode op, const Variant varA, const Variant varB)
 // isUnaryOpValid():
 // ========================================================
 
-bool isUnaryOpValid(const OpCode op, const Variant::Type type) noexcept
+bool isUnaryOpValid(const OpCode op, const Variant::Type type)
 {
     if (op == OpCode::LogicNot)
     {
@@ -452,8 +509,10 @@ bool isUnaryOpValid(const OpCode op, const Variant::Type type) noexcept
                type == Variant::Type::Any;
     }
 
-    // unary +, - only for numbers.
-    return type == Variant::Type::Integer || type == Variant::Type::Float;
+    // unary -, + only for numbers.
+    MOON_ASSERT(op == OpCode::Negate || op == OpCode::Plus);
+    return (type == Variant::Type::Integer ||
+            type == Variant::Type::Float);
 }
 
 // ========================================================
@@ -462,78 +521,93 @@ bool isUnaryOpValid(const OpCode op, const Variant::Type type) noexcept
 
 Variant performUnaryOp(const OpCode op, const Variant var)
 {
+    if (var.isAny())
+    {
+        return performUnaryOp(op, var.unwrapAny());
+    }
+
     if (!isUnaryOpValid(op, var.type))
     {
         MOON_RUNTIME_EXCEPTION("cannot apply unary op " + unaryOpToString(op) +
                                " on " + toString(var.type));
     }
 
-    // Produces a boolean result
-    #define CASE_1(opType, unaryOp)                                   \
-        case OpCode::opType :                                         \
-        {                                                             \
-            switch (var.type)                                         \
-            {                                                         \
-            case Variant::Type::Integer :                             \
-                result.value.asInteger = unaryOp var.value.asInteger; \
-                result.type = Variant::Type::Integer;                 \
-                break;                                                \
-            case Variant::Type::Float :                               \
-                result.value.asInteger = unaryOp var.value.asFloat;   \
-                result.type = Variant::Type::Integer;                 \
-                break;                                                \
-            default :                                                 \
-                result.value.asInteger = unaryOp var.value.asVoidPtr; \
-                result.type = Variant::Type::Integer;                 \
-                break;                                                \
-            }                                                         \
-            break;                                                    \
+    // Produces a boolean result (returned as integer)
+    #define CASE_BOOL_OUTPUT(opType, unOp)                                \
+        case OpCode::opType:                                              \
+        {                                                                 \
+            switch (var.type)                                             \
+            {                                                             \
+            case Variant::Type::Integer :                                 \
+                result.value.asInteger = unOp var.value.asInteger;        \
+                result.type = Variant::Type::Integer;                     \
+                break;                                                    \
+            case Variant::Type::Float :                                   \
+                result.value.asInteger = unOp var.value.asFloat;          \
+                result.type = Variant::Type::Integer;                     \
+                break;                                                    \
+            default :                                                     \
+                if (var.type == Variant::Type::Str &&                     \
+                    var.value.asString != nullptr)                        \
+                {                                                         \
+                    result = Str::unaryOp(op, *(var.value.asString));     \
+                }                                                         \
+                else                                                      \
+                {                                                         \
+                    result.value.asInteger = unOp var.value.asVoidPtr;    \
+                    result.type = Variant::Type::Integer;                 \
+                }                                                         \
+                break;                                                    \
+            }                                                             \
+            break;                                                        \
         }
 
-        // Preserves the type of the input
-    #define CASE_2(opType, unaryOp)                                   \
-        case OpCode::opType :                                         \
-        {                                                             \
-            switch (var.type)                                         \
-            {                                                         \
-            case Variant::Type::Integer :                             \
-                result.value.asInteger = unaryOp var.value.asInteger; \
-                result.type = Variant::Type::Integer;                 \
-                break;                                                \
-            case Variant::Type::Float :                               \
-                result.value.asFloat = unaryOp var.value.asFloat;     \
-                result.type = Variant::Type::Float;                   \
-                break;                                                \
-            default :                                                 \
-                MOON_UNREACHABLE();                                   \
-            }                                                         \
-            break;                                                    \
+    // Preserves the type of the input (only used for number types)
+    #define CASE_NUM_OUTPUT(opType, unOp)                                 \
+        case OpCode::opType :                                             \
+        {                                                                 \
+            switch (var.type)                                             \
+            {                                                             \
+            case Variant::Type::Integer :                                 \
+                result.value.asInteger = unOp var.value.asInteger;        \
+                result.type = Variant::Type::Integer;                     \
+                break;                                                    \
+            case Variant::Type::Float :                                   \
+                result.value.asFloat = unOp var.value.asFloat;            \
+                result.type = Variant::Type::Float;                       \
+                break;                                                    \
+            default :                                                     \
+                MOON_UNREACHABLE();                                       \
+            }                                                             \
+            break;                                                        \
         }
 
     Variant result;
     switch (op)
     {
-    CASE_1( LogicNot, not );
-    CASE_2( Negate,   -   );
-    CASE_2( Plus,     +   );
+    CASE_BOOL_OUTPUT( LogicNot, not );
+    CASE_NUM_OUTPUT(  Negate,   -   );
+    CASE_NUM_OUTPUT(  Plus,     +   );
     default : MOON_UNREACHABLE();
     } // switch (op)
     return result;
 
-    #undef CASE_1
-    #undef CASE_2
+    #undef CASE_BOOL_OUTPUT
+    #undef CASE_NUM_OUTPUT
 }
 
 // ========================================================
 // isAssignmentValid():
 // ========================================================
 
-bool isAssignmentValid(const Variant::Type destType, const Variant::Type srcType) noexcept
+bool isAssignmentValid(const Variant::Type destType, const Variant::Type srcType)
 {
     // Integers and floats convert implicitly.
-    if (destType == Variant::Type::Integer || destType == Variant::Type::Float)
+    if (destType == Variant::Type::Integer ||
+        destType == Variant::Type::Float)
     {
-        return srcType == Variant::Type::Integer || srcType == Variant::Type::Float;
+        return (srcType == Variant::Type::Integer ||
+                srcType == Variant::Type::Float);
     }
     // 'Any' type can receive all the other types.
     else if (destType == Variant::Type::Any)
@@ -554,12 +628,11 @@ void performAssignmentWithConversion(Variant & dest, const Variant source)
 {
     if (!isAssignmentValid(dest.type, source.type))
     {
-        MOON_RUNTIME_EXCEPTION("cannot assign " + toString(source.type) + " to " + toString(dest.type));
+        MOON_RUNTIME_EXCEPTION("cannot assign " + toString(source.type) +
+                               " to " + toString(dest.type));
     }
 
-    // CASE_1 and CASE_2, such naming, much clear, wow!
-
-    #define CASE_1(destType, destVal)                        \
+    #define CASE_NUMBER_TYPE(destType, destVal)              \
         case destType :                                      \
         {                                                    \
             switch (source.type)                             \
@@ -576,7 +649,7 @@ void performAssignmentWithConversion(Variant & dest, const Variant source)
             break;                                           \
         }
 
-    #define CASE_2(destType, destVal)                        \
+    #define CASE_COMMON_TYPE(destType, destVal)              \
         case destType :                                      \
         {                                                    \
             if (source.type == destType)                     \
@@ -592,18 +665,34 @@ void performAssignmentWithConversion(Variant & dest, const Variant source)
 
     switch (dest.type)
     {
-    CASE_1( Variant::Type::Integer,  asInteger  );
-    CASE_1( Variant::Type::Float,    asFloat    );
-    CASE_2( Variant::Type::Str,      asString   );
-    CASE_2( Variant::Type::Function, asFunction );
-    CASE_2( Variant::Type::Tid,      asTypeId   );
-    CASE_2( Variant::Type::Object,   asObject   );
-    CASE_2( Variant::Type::Null,     asVoidPtr  );
-    default : MOON_UNREACHABLE();
+    // Numbers with implicit conversion:
+    CASE_NUMBER_TYPE( Variant::Type::Integer,  asInteger  );
+    CASE_NUMBER_TYPE( Variant::Type::Float,    asFloat    );
+
+    // Common type that require exact type matching:
+    CASE_COMMON_TYPE( Variant::Type::Function, asFunction );
+    CASE_COMMON_TYPE( Variant::Type::Tid,      asTypeId   );
+    CASE_COMMON_TYPE( Variant::Type::Str,      asString   );
+    CASE_COMMON_TYPE( Variant::Type::Object,   asObject   );
+    CASE_COMMON_TYPE( Variant::Type::Array,    asArray    );
+    CASE_COMMON_TYPE( Variant::Type::Range,    asRange    );
+    CASE_COMMON_TYPE( Variant::Type::Null,     asVoidPtr  );
+
+    // The special 'Any' type:
+    case Variant::Type::Any :
+        {
+            // Copy value as raw:
+            dest.value = source.value;
+            // Preserve the tag to reconstruct the original type later:
+            dest.anyType = (source.isAny() ? source.anyType : source.type);
+            break;
+        }
+    default :
+        MOON_UNREACHABLE();
     } // switch (dest.type)
 
-    #undef CASE_1
-    #undef CASE_2
+    #undef CASE_NUMBER_TYPE
+    #undef CASE_COMMON_TYPE
 }
 
 // ========================================================
@@ -654,22 +743,23 @@ struct BinOpsTest
 {
     BinOpsTest()
     {
+        Variant varA;
+        Variant varB;
         Variant result;
-        Variant varA, varB;
 
         // Logical:
         varA.type = Variant::Type::Integer;
         varA.value.asInteger = 1;
         varB.type = Variant::Type::Float;
         varB.value.asFloat = 1;
-        result = performBinaryOp(OpCode::CmpEqual, varA, varB);
+        result = performBinaryOp(OpCode::CmpEqual, varA, varB, nullptr);
         MOON_ASSERT(result.type == Variant::Type::Integer && result.toBool() == true);
 
         varA.type = Variant::Type::Null;
         varA.value.asVoidPtr = nullptr;
         varB.type = Variant::Type::Function;
         varB.value.asFunction = nullptr;
-        result = performBinaryOp(OpCode::LogicOr, varA, varB);
+        result = performBinaryOp(OpCode::LogicOr, varA, varB, nullptr);
         MOON_ASSERT(result.type == Variant::Type::Integer && result.toBool() == false);
 
         // Arithmetical:
@@ -677,21 +767,21 @@ struct BinOpsTest
         varA.value.asInteger = 2;
         varB.type = Variant::Type::Float;
         varB.value.asFloat = 2;
-        result = performBinaryOp(OpCode::Mul, varA, varB);
+        result = performBinaryOp(OpCode::Mul, varA, varB, nullptr);
         MOON_ASSERT(result.type == Variant::Type::Float && result.value.asFloat == 4);
 
         varA.type = Variant::Type::Float;
         varA.value.asFloat = 3;
         varB.type = Variant::Type::Float;
         varB.value.asFloat = 2;
-        result = performBinaryOp(OpCode::Mod, varA, varB);
+        result = performBinaryOp(OpCode::Mod, varA, varB, nullptr);
         MOON_ASSERT(result.type == Variant::Type::Float && result.value.asFloat == 1);
 
         varA.type = Variant::Type::Integer;
         varA.value.asInteger = 3;
         varB.type = Variant::Type::Integer;
         varB.value.asInteger = 2;
-        result = performBinaryOp(OpCode::Mod, varA, varB);
+        result = performBinaryOp(OpCode::Mod, varA, varB, nullptr);
         MOON_ASSERT(result.type == Variant::Type::Integer && result.value.asInteger == 1);
 
         logStream() << "Moon: Binary ops test passed.\n";
