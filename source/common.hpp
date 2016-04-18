@@ -36,16 +36,13 @@ namespace moon
 // ========================================================
 
 struct Symbol;
-class SymbolTable;
-
 struct SyntaxTreeNode;
-class SyntaxTree;
-
-struct ParseContext;
-class Parser;
-
-class Compiler;
-class VM;
+class  SymbolTable;
+class  SyntaxTree;
+class  VarInfoTable;
+class  Parser;
+class  Lexer;
+class  VM;
 
 // ========================================================
 // Shorthand type aliases:
@@ -75,6 +72,42 @@ static_assert(sizeof(Float64) == 8, "Expected 64-bits float!");
 
 // ========================================================
 // Parser/Lexer aux types:
+// ========================================================
+
+// The type used by Bison to pass data around.
+union SemanticVal
+{
+    const Symbol   * asSymbol;
+    SyntaxTreeNode * asSTNode;
+};
+
+// Bison needs this #define.
+#define YYSTYPE SemanticVal
+
+// Just a bunch of state the Parser and Lexer share.
+// Also a convenient way of adding our own user-supplied
+// data to the Bison-generated Parser class without
+// resorting to globals.
+struct ParseContext final
+{
+    // Internal parse states:
+    SemanticVal       * yylval   = nullptr;
+    Lexer             * lexer    = nullptr;
+    Parser            * parser   = nullptr;
+    SymbolTable       * symTable = nullptr;
+    SyntaxTree        * syntTree = nullptr;
+    VarInfoTable      * varInfo  = nullptr;
+    VM                * vm       = nullptr;
+    std::string       * currText = nullptr; // [optional]
+    const std::string * srcFile  = nullptr; // [optional]
+
+    // Parser/build flags:
+    bool debugMode      = true;
+    bool enableWarnings = true;
+};
+
+// ========================================================
+// The Flex Lexer front-end:
 // ========================================================
 
 // We inherit from yyFlexLexer to be able to declare the
@@ -109,28 +142,7 @@ public:
     void lexOnBoolLiteral();
 };
 
-union SemanticVal
-{
-    const Symbol   * asSymbol;
-    SyntaxTreeNode * asSTNode;
-};
-
-struct ParseContext final
-{
-    SemanticVal       * yylval   = nullptr;
-    Lexer             * lexer    = nullptr;
-    Parser            * parser   = nullptr;
-    SymbolTable       * symTable = nullptr;
-    SyntaxTree        * syntTree = nullptr;
-    VM                * vm       = nullptr;
-    std::string       * currText = nullptr; // [optional]
-    const std::string * srcFile  = nullptr; // [optional]
-};
-
-// Bison needs this #define.
-#define YYSTYPE SemanticVal
-
-// This is the function called by the Parser to get a token from the Lexer.
+// This is the function called by the Bison Parser to get a token from the Lexer.
 // Bison requires it to be named yylex(), but we can control which parameters it takes.
 int yylex(SemanticVal * yylval, ParseContext & ctx);
 

@@ -8,7 +8,8 @@
 // ================================================================================================
 
 #include "vm.hpp"
-#include <iomanip> // For std::setw & friends
+#include "semantic_check.hpp" // For some type conversion helpers
+#include <iomanip>            // For std::setw & friends
 
 namespace moon
 {
@@ -141,11 +142,11 @@ static void opCall(VM & vm, const UInt32 operandIndex)
     }
     if (funcVar.value.asFunction == nullptr)
     {
-        MOON_RUNTIME_EXCEPTION("attempting to call a null function object!");
+        MOON_RUNTIME_EXCEPTION("opCall: attempting to call a null function object!");
     }
     if (argcVar.type != Variant::Type::Integer)
     {
-        MOON_RUNTIME_EXCEPTION("function arg count sentry should be an integer!");
+        MOON_RUNTIME_EXCEPTION("opCall: function arg count sentry should be an integer!");
     }
 
     const auto argc = argcVar.value.asInteger;
@@ -187,7 +188,16 @@ static void opFuncEnd(VM & vm, const UInt32 operandIndex)
 static void opNewVar(VM & vm, const UInt32 operandIndex)
 {
     const Variant tid = vm.data[operandIndex];
-    Variant initVal{ variantTypeFromTypeId(tid.getAsTypeId()) };
+    Variant initVal;
+
+    if (tid.type == Variant::Type::Null)
+    {
+        initVal.type = Variant::Type::Null;
+    }
+    else
+    {
+        initVal.type = typeId2VarType(tid.getAsTypeId());
+    }
 
     const Variant hasInitializer = vm.stack.pop();
     if (hasInitializer.toBool())
@@ -237,6 +247,40 @@ static void opMemberRef(VM & vm, UInt32)
     vm.stack.push(member.data);
 }
 
+static void opNewArray(VM & vm, UInt32)
+{
+    const auto elementCount = vm.stack.pop().getAsInteger();
+    const auto arrayInitializers = vm.stack.slice(vm.stack.getCurrSize() - elementCount, elementCount);
+    vm.stack.popN(elementCount);
+
+    const Variant::Type underlayingType = arrayInitializers[0].type; // Type of first item dictates the storage type
+    const TypeId * dataTypeId = varType2TypeId(vm.types, underlayingType);
+
+    auto newArrayObj = Array::newFromArgs(vm, dataTypeId, arrayInitializers);
+
+    Variant result{ Variant::Type::Array };
+    result.value.asArray = newArrayObj;
+    vm.stack.push(result);
+}
+
+static void opArraySubscript(VM & vm, UInt32)
+{
+    const int index = vm.stack.pop().getAsInteger();
+    const Array * array = vm.stack.pop().getAsArray();
+    vm.stack.push(array->getIndex(index));
+}
+
+static void opNewRange(VM & vm, UInt32)
+{
+    Range newRange;
+    newRange.end   = vm.stack.pop().getAsInteger();
+    newRange.begin = vm.stack.pop().getAsInteger();
+
+    Variant result{ Variant::Type::Range };
+    result.value.asRange = newRange;
+    vm.stack.push(result);
+}
+
 template<OpCode OP>
 static void opUnary(VM & vm, UInt32)
 {
@@ -249,6 +293,27 @@ static void opBinary(VM & vm, UInt32)
     const Variant operandB = vm.stack.pop();
     const Variant operandA = vm.stack.pop();
     vm.stack.push(performBinaryOp(OP, operandA, operandB, &vm));
+}
+
+static void opTypeof(VM & vm, UInt32)
+{
+    // type_of() simply converts its operand Variant to a TypeId.
+    // Note that for the 'Any' type we actually want to get the underlaying type, not "any".
+    const Variant operand = vm.stack.pop();
+    Variant tidVar{ Variant::Type::Tid };
+    tidVar.value.asTypeId = varType2TypeId(vm.types, (operand.isAny() ? operand.anyType : operand.type));
+    vm.stack.push(tidVar);
+}
+
+static void opTypecast(VM & vm, UInt32)
+{
+    const Variant targetTid = vm.stack.pop();
+    const Variant operand   = vm.stack.pop();
+    const Variant::Type targetVarType = typeId2VarType(targetTid.getAsTypeId());
+
+    Variant destVar{ targetVarType };
+    performAssignmentWithConversion(destVar, operand);
+    vm.stack.push(destVar);
 }
 
 // ----------------------------------------------------------------------------
@@ -267,10 +332,12 @@ static const OpCodeHandlerCB opHandlerCallbacks[]
     &opJumpIfTrue,                      // JmpIfTrue
     &opJumpIfFalse,                     // JmpIfFalse
     &opJump,                            // JmpReturn
+    &opTypeof,                          // Typeof
+    &opTypecast,                        // Typecast
     &opCall,                            // Call
     &opNewVar,                          // NewVar
-    &opNOOP,                            // NewRange
-    &opNOOP,                            // NewArray
+    &opNewRange,                        // NewRange
+    &opNewArray,                        // NewArray
     &opNewObj,                          // NewObj
     &opFuncStart,                       // FuncStart
     &opFuncEnd,                         // FuncEnd
@@ -279,7 +346,7 @@ static const OpCodeHandlerCB opHandlerCallbacks[]
     &opNOOP,                            // ForLoopStep
     &opNOOP,                            // MatchPrep
     &opNOOP,                            // MatchTest
-    &opNOOP,                            // ArraySubscript
+    &opArraySubscript,                  // ArraySubscript
     &opMemberRef,                       // MemberRef
     &opLoadRVR,                         // LoadRVR
     &opStoreRVR,                        // StoreRVR
@@ -464,6 +531,8 @@ std::string toString(const OpCode op)
         "JMP_IF_TRUE",
         "JMP_IF_FALSE",
         "JMP_RETURN",
+        "TYPEOF",
+        "TYPECAST",
         "CALL",
         "NEW_VAR",
         "NEW_RANGE",

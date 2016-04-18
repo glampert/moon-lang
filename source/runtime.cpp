@@ -16,65 +16,8 @@ namespace moon
 {
 
 // ========================================================
-// Variant:
+// Variant printing helpers:
 // ========================================================
-
-Variant variantFromSymbol(VM & vm, const Symbol & sym)
-{
-    Variant var;
-
-    switch (sym.type)
-    {
-    case Symbol::Type::IntLiteral :
-        var.type = Variant::Type::Integer;
-        var.value.asInteger = sym.value.asInteger;
-        break;
-
-    case Symbol::Type::FloatLiteral :
-        var.type = Variant::Type::Float;
-        var.value.asFloat = sym.value.asFloat;
-        break;
-
-    case Symbol::Type::BoolLiteral :
-        var.type = Variant::Type::Integer;
-        var.value.asInteger = sym.value.asBoolean;
-        break;
-
-    case Symbol::Type::StrLiteral :
-        var.type = Variant::Type::Str;
-        var.value.asString = Str::newFromString(vm, sym.value.asString);
-        break;
-
-    default :
-        MOON_RUNTIME_EXCEPTION("symbol doesn't map directly to a variant!");
-    } // switch (sym.type)
-
-    return var;
-}
-
-Variant::Type variantTypeFromTypeId(const TypeId * tid)
-{
-    MOON_ASSERT(tid != nullptr && isRcStringValid(tid->name));
-
-    using VT = Variant::Type;
-    const auto hashId = tid->name->hashVal;
-
-    if (ct::hashCString( "int"      ) == hashId) { return VT::Integer;  }
-    if (ct::hashCString( "long"     ) == hashId) { return VT::Integer;  }
-    if (ct::hashCString( "float"    ) == hashId) { return VT::Float;    }
-    if (ct::hashCString( "double"   ) == hashId) { return VT::Float;    }
-    if (ct::hashCString( "bool"     ) == hashId) { return VT::Integer;  }
-    if (ct::hashCString( "range"    ) == hashId) { return VT::Range;    }
-    if (ct::hashCString( "any"      ) == hashId) { return VT::Any;      }
-    if (ct::hashCString( "object"   ) == hashId) { return VT::Object;   }
-    if (ct::hashCString( "function" ) == hashId) { return VT::Function; }
-    if (ct::hashCString( "str"      ) == hashId) { return VT::Str;      }
-    if (ct::hashCString( "array"    ) == hashId) { return VT::Array;    }
-    if (ct::hashCString( "tid"      ) == hashId) { return VT::Tid;      }
-
-    MOON_RUNTIME_EXCEPTION("bad variable type id '" + toString(tid->name) +
-                           "' (" + strPrintF("0x%08X", hashId) + ")");
-}
 
 std::string toString(const Variant var)
 {
@@ -115,10 +58,13 @@ std::string toString(const Variant var)
         {
             const auto arr = var.value.asArray;
             if (arr == nullptr) { return "null"; }
-            return strPrintF("array(%s;%i) %s",
-                   arr->getDataTypeString().c_str(),
-                   arr->getArrayLength(),
-                   arr->getAddressString().c_str());
+            std::string dataTypeId = arr->getDataTypeString();
+            if (color::colorPrintEnabled()) // Don't want color coding for this print.
+            {
+                dataTypeId = dataTypeId.substr(7, dataTypeId.length() - 6 - 7);
+            }
+            return strPrintF("array(%s;%i) %s", dataTypeId.c_str(),
+                             arr->getArrayLength(), arr->getAddressString().c_str());
         }
     case Variant::Type::Range :
         {
@@ -127,7 +73,11 @@ std::string toString(const Variant var)
         }
     case Variant::Type::Any :
         {
-            const auto anyTypeId = toString(var.anyType);
+            std::string anyTypeId = toString(var.anyType);
+            if (color::colorPrintEnabled()) // Don't want color coding for this print.
+            {
+                anyTypeId = anyTypeId.substr(7, anyTypeId.length() - 6 - 7);
+            }
             return strPrintF("any(tid=%s)", anyTypeId.c_str());
         }
     default :
@@ -160,7 +110,7 @@ std::string toString(const Variant::Type type)
 // Function:
 // ========================================================
 
-void Function::invoke(VM & vm, Stack::Slice args) const
+void Function::invoke(VM & vm, const Stack::Slice args) const
 {
     // Extra validation for safety, but the compiler should
     // have already checked that the provided argCount
@@ -689,7 +639,7 @@ int Object::findMemberIndex(const char * name) const
 // Runtime Object allocator:
 // ========================================================
 
-Object * newRuntimeObject(VM & vm, const TypeId * tid, Stack::Slice constructorArgs)
+Object * newRuntimeObject(VM & vm, const TypeId * tid, const Stack::Slice constructorArgs)
 {
     MOON_ASSERT(tid != nullptr);
     if (tid->newInstance == nullptr)
@@ -937,7 +887,7 @@ Array * Array::newEmpty(VM & vm, const TypeId * dataType, const int capacityHint
     return newArray;
 }
 
-Array * Array::newFromArgs(VM & vm, const TypeId * dataType, Stack::Slice args)
+Array * Array::newFromArgs(VM & vm, const TypeId * dataType, const Stack::Slice args)
 {
     auto newArray = static_cast<Array *>(Array::newInstance(vm, vm.types.arrayTypeId));
 
@@ -1112,6 +1062,7 @@ void Array::appendInternal(const void * data, const int lengthInItems)
     //FIXME should not use these memcpys here.
     //I think they will break for int<=>float float<=>double conversions.
     //better to define a typed copy helper.
+    //performAssignmentWithConversion() or a variation thereof should be more adequate
     if (lengthInItems > 0)
     {
         std::memcpy(getDataPtr() + (arrayLen * itemSize), data, lengthInItems * itemSize);

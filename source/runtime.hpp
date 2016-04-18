@@ -26,6 +26,7 @@ namespace moon
 // Forward declarations for the Variant union below.
 struct Function;
 struct TypeId;
+class  TypeTable;
 class  Object;
 class  Array;
 class  Str;
@@ -159,10 +160,6 @@ std::string toString(Variant v);          // Prints just the value.
 std::string toString(Variant::Type type); // Prints the Variant's type tag.
 std::string binaryOpToString(OpCode op);  // Prints the symbol if available, e.g.: '+' instead of 'ADD'.
 std::string unaryOpToString(OpCode op);   // Prints the symbol or falls back to toString(OpCode).
-
-// Conversion helpers:
-Variant variantFromSymbol(VM & vm, const Symbol & sym);
-Variant::Type variantTypeFromTypeId(const TypeId * tid);
 
 // Binary operator on Variant (*, %, ==, !=, etc):
 bool isBinaryOpValid(OpCode op, Variant::Type typeA, Variant::Type typeB);

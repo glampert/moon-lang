@@ -17,7 +17,7 @@ namespace moon
 // Symbol struct and helpers:
 // ========================================================
 
-bool Symbol::cmpEqual(const Type otherType, const Value otherValue) const noexcept
+bool Symbol::cmpEqual(const Type otherType, const Value otherValue) const
 {
     if (type != otherType)
     {
@@ -34,7 +34,13 @@ bool Symbol::cmpEqual(const Type otherType, const Value otherValue) const noexce
     return value.asInteger == otherValue.asInteger;
 }
 
-bool Symbol::isBuiltInTypeId() const noexcept
+bool Symbol::cmpEqual(const char * otherName) const
+{
+    MOON_ASSERT(otherName != nullptr);
+    return std::strcmp(name->chars, otherName) == 0;
+}
+
+bool Symbol::isBuiltInTypeId() const
 {
     auto builtIns = getBuiltInTypeNames();
     for (int i = 0; builtIns[i].name != nullptr; ++i)
@@ -153,17 +159,17 @@ Symbol::Value Symbol::valueFromRcStr(ConstRcString * rstr)
     return valOut;
 }
 
-std::string toString(const Symbol & sym)
+std::string toString(const Symbol & symbol)
 {
-    switch (sym.type)
+    switch (symbol.type)
     {
-    case Symbol::Type::IntLiteral   : return toString(sym.value.asInteger);
-    case Symbol::Type::FloatLiteral : return toString(sym.value.asFloat);
-    case Symbol::Type::BoolLiteral  : return toString(sym.value.asBoolean);
-    case Symbol::Type::StrLiteral   : return toString(sym.value.asString);
-    case Symbol::Type::Identifier   : return toString(sym.value.asString);
+    case Symbol::Type::IntLiteral   : return toString(symbol.value.asInteger);
+    case Symbol::Type::FloatLiteral : return toString(symbol.value.asFloat);
+    case Symbol::Type::BoolLiteral  : return toString(symbol.value.asBoolean);
+    case Symbol::Type::StrLiteral   : return toString(symbol.value.asString);
+    case Symbol::Type::Identifier   : return toString(symbol.value.asString);
     default                         : return "???";
-    } // switch (sym.type)
+    } // switch (symbol.type)
 }
 
 std::string toString(const Symbol::Type type)

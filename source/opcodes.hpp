@@ -44,6 +44,9 @@ enum class OpCode : UInt8
     // Jumps to the end of a function taking with it the return value, if any.
     JmpReturn,
 
+    Typeof, // pops 1, pushes a tid
+    Typecast, // pops 2, pushes the result
+
     // Call a script function.
     Call,
 

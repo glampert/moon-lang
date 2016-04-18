@@ -8,6 +8,7 @@
 // ================================================================================================
 
 #include "compiler.hpp"
+#include "semantic_check.hpp"
 #include <algorithm>
 #include <iomanip> // For std::setw & friends
 
@@ -58,6 +59,7 @@ namespace moon
 
 #else // !MOON_ENABLE_ASSERT
 
+// Extra error checking is disabled.
 #define EXPECT_CHILD_AT_INDEX(node, childIndex)
 #define EXPECT_NUM_CHILDREN(node, expected)
 #define EXPECT_SYMBOL(node)
@@ -78,30 +80,6 @@ struct CodeGen final
     //
 };
 
-const Symbol * symbolFromEval(const SymbolTable & symTable, const SyntaxTreeNode::Eval stEval)
-{
-    // These are built-ins always present in the symbol table. Check symbol_table.cpp.
-    switch (stEval)
-    {
-    case SyntaxTreeNode::Eval::Null    : return symTable.findSymbol("null");
-    case SyntaxTreeNode::Eval::Void    : return symTable.findSymbol("void");
-    case SyntaxTreeNode::Eval::VarArgs : return symTable.findSymbol("varargs");
-    case SyntaxTreeNode::Eval::Int     : return symTable.findSymbol("int");
-    case SyntaxTreeNode::Eval::Long    : return symTable.findSymbol("long");
-    case SyntaxTreeNode::Eval::Float   : return symTable.findSymbol("float");
-    case SyntaxTreeNode::Eval::Double  : return symTable.findSymbol("double");
-    case SyntaxTreeNode::Eval::Bool    : return symTable.findSymbol("bool");
-    case SyntaxTreeNode::Eval::Str     : return symTable.findSymbol("str");
-    case SyntaxTreeNode::Eval::Array   : return symTable.findSymbol("array");
-    case SyntaxTreeNode::Eval::Range   : return symTable.findSymbol("range");
-    case SyntaxTreeNode::Eval::Any     : return symTable.findSymbol("any");
-    case SyntaxTreeNode::Eval::Func    : return symTable.findSymbol("function");
-    case SyntaxTreeNode::Eval::Tid     : return symTable.findSymbol("tid");
-    case SyntaxTreeNode::Eval::UDT     : return symTable.findSymbol("object");
-    default : MOON_INTERNAL_EXCEPTION("can't convert STEval '" + toString(stEval) + "' to a symbol!");
-    } // switch (stEval)
-}
-
 static UInt32 getProgCodeIndex(const InstrMap & instrMapping, const IntermediateInstr * instr)
 {
     MOON_ASSERT(instr != nullptr);
@@ -114,74 +92,69 @@ static UInt32 getProgCodeIndex(const InstrMap & instrMapping, const Intermediate
     return entry->second;
 }
 
-static UInt32 getProgDataIndex(const DataMap & dataMapping, const Symbol * sym)
+static UInt32 getProgDataIndex(const DataMap & dataMapping, const Symbol * symbol)
 {
-    MOON_ASSERT(sym != nullptr);
+    MOON_ASSERT(symbol != nullptr);
 
-    auto && entry = dataMapping.find(sym);
+    auto && entry = dataMapping.find(symbol);
     if (entry == std::end(dataMapping))
     {
-        MOON_INTERNAL_EXCEPTION("symbol " + toString(*sym) + " not found in DataMap");
+        MOON_INTERNAL_EXCEPTION("symbol " + toString(*symbol) + " not found in DataMap");
     }
     return entry->second;
 }
 
 static Variant::Type varTypeForNodeEval(const Compiler & compiler, const SyntaxTreeNode * node)
 {
-    const auto stEval = node->evalType;
-    switch (stEval)
+    const SyntaxTreeNode::Eval stEval = node->evalType;
+    if (stEval == SyntaxTreeNode::Eval::UDT)
     {
-    case SyntaxTreeNode::Eval::Int    : return Variant::Type::Integer;
-    case SyntaxTreeNode::Eval::Long   : return Variant::Type::Integer;
-    case SyntaxTreeNode::Eval::Float  : return Variant::Type::Float;
-    case SyntaxTreeNode::Eval::Double : return Variant::Type::Float;
-    case SyntaxTreeNode::Eval::Bool   : return Variant::Type::Integer;
-    case SyntaxTreeNode::Eval::Str    : return Variant::Type::Str;
-    case SyntaxTreeNode::Eval::UDT    :
+        const Symbol * symbol = node->symbol;
+        if (symbol == nullptr)
         {
-            const Symbol * symbol = node->symbol;
-            if (symbol == nullptr)
-            {
-                symbol = node->getChildSymbol(1);
-            }
-            return compiler.symbolToTypeId(symbol) ? Variant::Type::Tid : Variant::Type::Object;
+            symbol = node->getChildSymbol(1);
         }
-    default :
-        MOON_INTERNAL_EXCEPTION("can't convert STEval '" + toString(stEval) + "' to Variant type!");
-    } // switch (stEval)
+        return compiler.symbolToTypeId(symbol) ? Variant::Type::Tid : Variant::Type::Object;
+    }
+    return eval2VarType(stEval);
 }
 
-static UInt32 addSymbolToProgData(VM & vm, const Symbol & sym, const Variant::Type type)
+static UInt32 addSymbolToProgData(VM & vm, const Symbol & symbol, const Variant::Type type)
 {
     Variant var{}; // Default initialized to null.
 
     // Identifies might be variables, function or user defined types.
-    if (sym.type == Symbol::Type::Identifier)
+    if (symbol.type == Symbol::Type::Identifier)
     {
         var.type = type;
 
         // Some of the types require special handing:
         if (type == Variant::Type::Function)
         {
-            var.value.asFunction = vm.functions.findFunction(sym.name);
+            var.value.asFunction = vm.functions.findFunction(symbol.name);
             if (var.value.asFunction == nullptr)
             {
                 // We should not hit this error. The parser should have already validated undefined func calls.
-                MOON_INTERNAL_EXCEPTION("referencing undefined function '" + toString(sym.name) + "'");
+                //MOON_INTERNAL_EXCEPTION("referencing undefined function '" + toString(symbol.name) + "'");
+                //
+                //TODO the above causes problems with functions assigned to vars, but would
+                //still be nice to check for null in here... the VM also checks against null Func pointers though...
             }
         }
         else if (type == Variant::Type::Tid)
         {
-            var.value.asTypeId = vm.types.findTypeId(sym.name);
+            var.value.asTypeId = vm.types.findTypeId(symbol.name);
             if (var.value.asTypeId == nullptr)
             {
-                MOON_INTERNAL_EXCEPTION("referencing undefined type '" + toString(sym.name) + "'");
+                //MOON_INTERNAL_EXCEPTION("referencing undefined type '" + toString(symbol.name) + "'");
+                //
+                //TODO similar issue to the above. breaks when assigning tid to a var
             }
         }
     }
     else // Literal constants/strings:
     {
-        var = variantFromSymbol(vm, sym);
+        var = symbol2Variant(vm, symbol);
     }
 
     vm.data.push_back(var);
@@ -519,49 +492,69 @@ static IntermediateInstr * emitContinue(Compiler & compiler, const SyntaxTreeNod
     return compiler.newInstruction(OpCode::Jmp, compiler.lastLoopStartAnchor);
 }
 
+static IntermediateInstr * paramListChain(Compiler & compiler, const SyntaxTreeNode * root)
+{
+    return ((root->getChild(0) != nullptr) ? traverseTreeRecursive(compiler, root->getChild(0)) : nullptr);
+}
+
 template<OpCode OP>
 static IntermediateInstr * emitUnaryOp(Compiler & compiler, const SyntaxTreeNode * root)
 {
-    EXPECT_NUM_CHILDREN(root, 1);
-    auto argument  = traverseTreeRecursive(compiler, root->getChild(0));
+    // child 0 is reserve for parameter list chain in function/constructor calls.
+    EXPECT_CHILD_AT_INDEX(root, 1);
+    auto argument  = traverseTreeRecursive(compiler, root->getChild(1));
     auto operation = compiler.newInstruction(OP);
-    return linkInstr(argument, operation);
+    return linkInstr(linkInstr(argument, operation), paramListChain(compiler, root));
 }
 
 template<OpCode OP>
 static IntermediateInstr * emitBinaryOp(Compiler & compiler, const SyntaxTreeNode * root)
 {
-    EXPECT_NUM_CHILDREN(root, 2);
-    auto arg0 = traverseTreeRecursive(compiler, root->getChild(0));
-    auto arg1 = traverseTreeRecursive(compiler, root->getChild(1));
+    // child 0 is reserve for parameter list chain in function/constructor calls.
+    EXPECT_CHILD_AT_INDEX(root, 1);
+    EXPECT_CHILD_AT_INDEX(root, 2);
+    auto arg0 = traverseTreeRecursive(compiler, root->getChild(1));
+    auto arg1 = traverseTreeRecursive(compiler, root->getChild(2));
     auto operation = compiler.newInstruction(OP);
-    return linkInstr(linkInstr(arg0, arg1), operation);
+    return linkInstr(linkInstr(linkInstr(arg0, arg1), operation), paramListChain(compiler, root));
 }
 
 template<OpCode OP>
 static IntermediateInstr * emitCompoundBinaryOp(Compiler & compiler, const SyntaxTreeNode * root)
 {
-    EXPECT_NUM_CHILDREN(root, 2);
-    EXPECT_SYMBOL(root->getChild(0));
+    // child 0 is reserve for parameter list chain in function/constructor calls.
+    EXPECT_CHILD_AT_INDEX(root, 1);
+    EXPECT_CHILD_AT_INDEX(root, 2);
+    EXPECT_SYMBOL(root->getChild(1));
 
-    auto targetSymbol = root->getChild(0)->symbol;
-    OpCode storeOp = OpCode::StoreGlob;
-    UInt16 paramIdx = 0;
+    auto targetSymbol = root->getChild(1)->symbol;
+    OpCode storeOp    = OpCode::StoreGlob;
+    OpCode loadOp     = OpCode::LoadGlob;
+    UInt16 paramIdx   = 0;
 
     if (targetSymbol->type == Symbol::Type::Identifier &&
         compiler.symbolIsFunctionLocal(targetSymbol, paramIdx))
     {
         storeOp = OpCode::StoreLocal;
+        loadOp  = OpCode::LoadLocal;
     }
 
-    auto arg0 = traverseTreeRecursive(compiler, root->getChild(0));
-    auto arg1 = traverseTreeRecursive(compiler, root->getChild(1));
+    auto arg0 = traverseTreeRecursive(compiler, root->getChild(1));
+    auto arg1 = traverseTreeRecursive(compiler, root->getChild(2));
 
     auto binOpInstr   = compiler.newInstruction(OP);
     auto storeOpInstr = compiler.newInstruction(storeOp, targetSymbol);
     storeOpInstr->paramIdx = paramIdx;
 
-    return linkInstr(linkInstr(arg0, arg1), linkInstr(binOpInstr, storeOpInstr));
+    auto paramList = paramListChain(compiler, root);
+    if (paramList != nullptr)
+    {
+        // If the expression is being used on a parameter list we need to
+        // load the symbol back into the stack after the write to memory.
+        paramList = linkInstr(compiler.newInstruction(loadOp, targetSymbol), paramList);
+    }
+
+    return linkInstr(linkInstr(linkInstr(arg0, arg1), linkInstr(binOpInstr, storeOpInstr)), paramList);
 }
 
 static IntermediateInstr * emitLoad(Compiler & compiler, const SyntaxTreeNode * root)
@@ -586,7 +579,7 @@ static IntermediateInstr * emitLoad(Compiler & compiler, const SyntaxTreeNode * 
         }
     }
 
-    auto operation = compiler.newInstruction(op, symbol);
+    auto operation = compiler.newInstruction(op, symbol, eval2VarType(root->evalType));
     operation->paramIdx = paramIdx;
 
     // Function calls consist of a chain of load instructions followed by one CALL instruction.
@@ -601,7 +594,7 @@ static IntermediateInstr * emitLoad(Compiler & compiler, const SyntaxTreeNode * 
 
 static IntermediateInstr * makeLoadMemberOffsetInstr(Compiler & compiler,
                                                      const Symbol * objSymbol,
-                                                     const Symbol * memSymbol,
+                                                     const Symbol * memberSymbol,
                                                      const TypeId ** typeIdOut = nullptr,
                                                      int * memberOffsetOut = nullptr)
 {
@@ -620,10 +613,10 @@ static IntermediateInstr * makeLoadMemberOffsetInstr(Compiler & compiler,
         MOON_INTERNAL_EXCEPTION("'" + toString(objSymbol->name) + "' is not a type or has no dynamic members table!");
     }
 
-    const int memberOffset = typeId->templateObject->findMemberIndex(memSymbol->name);
+    const int memberOffset = typeId->templateObject->findMemberIndex(memberSymbol->name);
     if (memberOffset < 0)
     {
-        MOON_INTERNAL_EXCEPTION("object has no member '" + toString(memSymbol->name) + "'");
+        MOON_INTERNAL_EXCEPTION("object has no member '" + toString(memberSymbol->name) + "'");
     }
 
     if (typeIdOut)       { *typeIdOut       = typeId;       }
@@ -671,13 +664,13 @@ static IntermediateInstr * setUpMemberOffsetLoadChain(Compiler & compiler, const
         for (UInt32 i = 2; i < compiler.memberRefList.size(); ++i)
         {
             MOON_ASSERT(lastMemberTypeId != nullptr);
-            const Symbol * memSymbol = compiler.memberRefList[i];
+            const Symbol * memberSymbol = compiler.memberRefList[i];
 
-            lastMemberOffset = lastMemberTypeId->templateObject->findMemberIndex(memSymbol->name);
+            lastMemberOffset = lastMemberTypeId->templateObject->findMemberIndex(memberSymbol->name);
             if (lastMemberOffset < 0)
             {
                 MOON_INTERNAL_EXCEPTION("sub object of type '" + toString(lastMemberTypeId->name) +
-                                        "' has no member '" + toString(memSymbol->name) + "'");
+                                        "' has no member '" + toString(memberSymbol->name) + "'");
             }
 
             auto offsetLiteral = compiler.symTable.findOrDefineIntValue(lastMemberOffset);
@@ -697,16 +690,17 @@ static IntermediateInstr * setUpMemberOffsetLoadChain(Compiler & compiler, const
 
 static IntermediateInstr * emitStore(Compiler & compiler, const SyntaxTreeNode * root)
 {
-    EXPECT_NUM_CHILDREN(root, 2);
+    EXPECT_CHILD_AT_INDEX(root, 1);
+    EXPECT_CHILD_AT_INDEX(root, 2);
 
     UInt32 numMemberOffsets  = 0;
     const Symbol * objSymbol = nullptr;
     Variant::Type symbType   = Variant::Type::Null;
 
     compiler.memberRefList.clear();
-    if (root->getChild(0)->nodeType == SyntaxTreeNode::Type::ExprMemberRef)
+    if (root->getChild(1)->nodeType == SyntaxTreeNode::Type::ExprMemberRef)
     {
-        collectMemberRefs(compiler.memberRefList, root->getChild(0));
+        collectMemberRefs(compiler.memberRefList, root->getChild(1));
         MOON_ASSERT(compiler.memberRefList.size() >= 2); // obj.member pair at least
 
         objSymbol = compiler.memberRefList[0];
@@ -714,7 +708,7 @@ static IntermediateInstr * emitStore(Compiler & compiler, const SyntaxTreeNode *
     }
     else
     {
-        objSymbol = root->getChildSymbol(0);
+        objSymbol = root->getChildSymbol(1);
         MOON_ASSERT(objSymbol != nullptr);
     }
 
@@ -737,7 +731,7 @@ static IntermediateInstr * emitStore(Compiler & compiler, const SyntaxTreeNode *
             typeId = compiler.symbolToTypeId(compiler.symTable.findSymbol("object"));
         }
 
-        symbType = variantTypeFromTypeId(typeId);
+        symbType = typeId2VarType(typeId);
     }
     else
     {
@@ -751,7 +745,7 @@ static IntermediateInstr * emitStore(Compiler & compiler, const SyntaxTreeNode *
     OpCode op;
     UInt16 paramIdx = 0;
     IntermediateInstr * memOffsetInstr = nullptr;
-    IntermediateInstr * argument = traverseTreeRecursive(compiler, root->getChild(1));
+    IntermediateInstr * argument = traverseTreeRecursive(compiler, root->getChild(2));
 
     // A local variable or function parameter?
     if (compiler.symbolIsFunctionLocal(objSymbol, paramIdx))
@@ -807,18 +801,20 @@ static IntermediateInstr * emitStore(Compiler & compiler, const SyntaxTreeNode *
 
 static IntermediateInstr * emitMemberRef(Compiler & compiler, const SyntaxTreeNode * root)
 {
-    EXPECT_NUM_CHILDREN(root, 2);
-    EXPECT_SYMBOL(root->getChild(1));
+    // child 0 is reserve for parameter list chain in function/constructor calls.
+    EXPECT_CHILD_AT_INDEX(root, 1);
+    EXPECT_CHILD_AT_INDEX(root, 2);
+    EXPECT_SYMBOL(root->getChild(2));
 
-    auto objLoad = traverseTreeRecursive(compiler, root->getChild(0));
-    const Symbol * objSymbol = root->getChildSymbol(0);
-    const Symbol * memSymbol = root->getChildSymbol(1);
+    auto objLoad = traverseTreeRecursive(compiler, root->getChild(1));
+    const Symbol * objSymbol    = root->getChildSymbol(1);
+    const Symbol * memberSymbol = root->getChildSymbol(2);
 
     IntermediateInstr * loadMemOffs;
     if (objSymbol != nullptr) // First pass
     {
         int memberOffset = 0;
-        loadMemOffs = makeLoadMemberOffsetInstr(compiler, objSymbol, memSymbol, &compiler.lastMemberTypeId, &memberOffset);
+        loadMemOffs = makeLoadMemberOffsetInstr(compiler, objSymbol, memberSymbol, &compiler.lastMemberTypeId, &memberOffset);
 
         const auto & member = compiler.lastMemberTypeId->templateObject->getMemberAt(memberOffset);
         if (member.data.type == Variant::Type::Object)
@@ -829,11 +825,11 @@ static IntermediateInstr * emitMemberRef(Compiler & compiler, const SyntaxTreeNo
     else // Going down a chain of obj.member.member.member ...
     {
         MOON_ASSERT(compiler.lastMemberTypeId != nullptr);
-        const int memberOffset = compiler.lastMemberTypeId->templateObject->findMemberIndex(memSymbol->name);
+        const int memberOffset = compiler.lastMemberTypeId->templateObject->findMemberIndex(memberSymbol->name);
         if (memberOffset < 0)
         {
             MOON_INTERNAL_EXCEPTION("sub object of type '" + toString(compiler.lastMemberTypeId->name) +
-                                    "' has no member '" + toString(memSymbol->name) + "'");
+                                    "' has no member '" + toString(memberSymbol->name) + "'");
         }
 
         auto offsetLiteral = compiler.symTable.findOrDefineIntValue(memberOffset);
@@ -846,12 +842,12 @@ static IntermediateInstr * emitMemberRef(Compiler & compiler, const SyntaxTreeNo
         }
     }
 
-    return linkInstr(linkInstr(objLoad, loadMemOffs), compiler.newInstruction(OpCode::MemberRef));
+    return linkInstr(linkInstr(linkInstr(objLoad, loadMemOffs), compiler.newInstruction(OpCode::MemberRef)), paramListChain(compiler, root));
 }
 
 static IntermediateInstr * emitArraySubscript(Compiler & compiler, const SyntaxTreeNode * root)
 {
-    // child[0] is reserved for parameter lists and may be null.
+    // child 0 is reserved for parameter lists and may be null.
     EXPECT_CHILD_AT_INDEX(root, 1);
     EXPECT_CHILD_AT_INDEX(root, 2);
     auto arrayExpr     = traverseTreeRecursive(compiler, root->getChild(1));
@@ -860,9 +856,6 @@ static IntermediateInstr * emitArraySubscript(Compiler & compiler, const SyntaxT
     return linkInstr(arrayExpr, linkInstr(subscriptExpr, subscriptOp));
 }
 
-//FIXME the argument counting is still broken.
-// it will count unrelated nodes like operators.
-// e.g.: println("a" + to_string("b")) would yield 3 instead of 2
 static void countArgsRecursive(const SyntaxTreeNode * root, int & argCountOut, Compiler & compiler)
 {
     if (root == nullptr)
@@ -877,10 +870,12 @@ static void countArgsRecursive(const SyntaxTreeNode * root, int & argCountOut, C
     {
         countArgsRecursive(root->getChild(0), argCountOut, compiler);
     }
-    if (!compiler.nodeWasVisited(root->getChild(1)))
-    {
-        countArgsRecursive(root->getChild(1), argCountOut, compiler);
-    }
+
+// doesn't seems to be necessary anymore...
+//    if (!compiler.nodeWasVisited(root->getChild(1)))
+//    {
+//        countArgsRecursive(root->getChild(1), argCountOut, compiler);
+//    }
 }
 
 // This function is used to resolve parameter chains for function calls,
@@ -900,7 +895,7 @@ static IntermediateInstr * emitParamChain(Compiler & compiler, const SyntaxTreeN
     IntermediateInstr * myArgs = nullptr;
     IntermediateInstr * argListChain = nullptr;
 
-    // We might be linked to an argument list chain, so go down the child 0 hierarchy:
+    // We might be linked to an parameter list chain, so go down the child 0 hierarchy:
     if (root->getChild(0) != nullptr)
     {
         argListChain = traverseTreeRecursive(compiler, root->getChild(0));
@@ -914,7 +909,7 @@ static IntermediateInstr * emitParamChain(Compiler & compiler, const SyntaxTreeN
     }
 
     // Argument count is appended as a literal integer:
-    auto argCountLiteral = compiler.symTable.findOrDefineIntValue(argumentCount);
+    auto argCountLiteral = compiler.symTable.findOrDefineIntValue(argumentCount); //TODO this pattern is repeated in a couple places. make it a function!
     auto loadArgCountOp  = compiler.newInstruction(OpCode::LoadGlob, argCountLiteral);
 
     // Wrap it up!
@@ -998,7 +993,7 @@ static IntermediateInstr * emitNewVar(Compiler & compiler, const SyntaxTreeNode 
 
     if (typeSymbol == nullptr)
     {
-        typeSymbol = symbolFromEval(compiler.symTable, root->evalType);
+        typeSymbol = eval2Symbol(compiler.symTable, root->evalType);
         if (root->evalType == SyntaxTreeNode::Eval::UDT)
         {
             // Find out the exact type of the UDT by looking at the constructor call:
@@ -1063,7 +1058,7 @@ static IntermediateInstr * emitNewRange(Compiler & compiler, const SyntaxTreeNod
     auto endExpr    = traverseTreeRecursive(compiler, root->getChild(2));
     auto newRangeOp = compiler.newInstruction(OpCode::NewRange);
 
-    return linkInstr(linkInstr(startExpr, endExpr), newRangeOp);
+    return linkInstr(linkInstr(linkInstr(startExpr, endExpr), newRangeOp), paramListChain(compiler, root));
 }
 
 static IntermediateInstr * emitMatchPrep(Compiler & compiler, const SyntaxTreeNode * root)
@@ -1113,17 +1108,39 @@ static IntermediateInstr * emitMatchDefault(Compiler & compiler, const SyntaxTre
 
 static IntermediateInstr * emitTypecast(Compiler & compiler, const SyntaxTreeNode * root)
 {
-    //TODO
-    return compiler.newInstruction(OpCode::NoOp);
+    EXPECT_CHILD_AT_INDEX(root, 1);
+    EXPECT_CHILD_AT_INDEX(root, 2);
+
+    // Second child must be a type identifier
+    EXPECT_SYMBOL(root->getChild(2));
+    auto loadTypeIdOp = compiler.newInstruction(OpCode::LoadGlob,
+                  root->getChild(2)->symbol, Variant::Type::Tid);
+
+    auto argument   = traverseTreeRecursive(compiler, root->getChild(1));
+    auto typecastOp = compiler.newInstruction(OpCode::Typecast);
+
+    return linkInstr(linkInstr(linkInstr(argument, loadTypeIdOp), typecastOp), paramListChain(compiler, root));
 }
 
 static IntermediateInstr * emitTypeof(Compiler & compiler, const SyntaxTreeNode * root)
 {
-    //TODO
-    //eval the expression and emit a typeof instruction, which pops the top
-    //of the stack and pushes the var type. the node can also be a type identifier,
-    //in which case we then just load its TypeId directly, no need to emit the typeof instr.
-    return compiler.newInstruction(OpCode::NoOp);
+    EXPECT_CHILD_AT_INDEX(root, 1);
+    IntermediateInstr * typeofInst;
+
+    // Simple case of 'type_of(TYPE_NAME)' => just load the TypeId directly.
+    if (root->getChild(1)->nodeType == SyntaxTreeNode::Type::ExprTypeIdent)
+    {
+        EXPECT_SYMBOL(root->getChild(1));
+        typeofInst = compiler.newInstruction(OpCode::LoadGlob,
+               root->getChild(1)->symbol, Variant::Type::Tid);
+    }
+    else // Resolve the argument expression first and emit a Typeof opcode:
+    {
+        auto argument = traverseTreeRecursive(compiler, root->getChild(1));
+        typeofInst = linkInstr(argument, compiler.newInstruction(OpCode::Typeof));
+    }
+
+    return linkInstr(typeofInst, paramListChain(compiler, root));
 }
 
 // ----------------------------------------------------------------------------
@@ -1200,6 +1217,19 @@ static IntermediateInstr * traverseTreeRecursive(Compiler & compiler, const Synt
     MOON_ASSERT(root != nullptr);
     const auto handlerIndex  = static_cast<UInt32>(root->nodeType);
     MOON_ASSERT(handlerIndex < static_cast<UInt32>(SyntaxTreeNode::Type::Count));
+
+    /*
+    //FIXME temp
+    if (root->symbol)
+    {
+        logStream() << "visiting tnode: " << toString(root->nodeType) << " (" << toString(root->symbol->name) << ")\n";
+    }
+    else
+    {
+        logStream() << "visiting tnode: " << toString(root->nodeType) << "\n";
+    }
+    */
+
     return emitInstrCallbacks[handlerIndex](compiler, root);
 }
 
@@ -1280,7 +1310,7 @@ const TypeId * Compiler::guessTypeId(const SyntaxTreeNode * root)
 
     if (typeSymbol == nullptr)
     {
-        typeSymbol = symbolFromEval(symTable, root->evalType);
+        typeSymbol = eval2Symbol(symTable, root->evalType);
         if (root->evalType == SyntaxTreeNode::Eval::UDT)
         {
             // Find out the exact type of the UDT by looking at the constructor call:

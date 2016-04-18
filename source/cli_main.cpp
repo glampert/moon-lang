@@ -277,6 +277,8 @@ static void testScriptArray(VM & vm)
     logStream() << "Moon: Script Array test passed.\n";
 }
 
+#include "semantic_check.hpp"
+
 // ================================================================================================
 
 int main(int argc, const char * argv[])
@@ -339,6 +341,7 @@ int main(int argc, const char * argv[])
         constexpr std::size_t minConstStrLen = sizeof(std::string) - (sizeof(std::size_t) * 2);
         logStream() << "sizeof(minConstStrLen)    = " << sizeof(minConstStrLen) << std::endl;
         logStream() << "sizeof(std::string)       = " << sizeof(std::string) << std::endl;
+        logStream() << "sizeof(VarInfo)           = " << sizeof(std::string) << std::endl;
         logStream() << "\n";
     }
 
@@ -349,18 +352,23 @@ int main(int argc, const char * argv[])
         std::string srcFile = "test.ml";
         std::string currText;
 
-        VM       vm;
+        VM vm;
         Compiler compiler;
-        Lexer    lexer  { parseCtx, std::cin };
-        Parser   parser { parseCtx };
+        Lexer lexer{ parseCtx, std::cin };
+        Parser parser{ parseCtx };
+        VarInfoTable varInfo{ parseCtx };
 
         parseCtx.lexer     = &lexer;
         parseCtx.parser    = &parser;
         parseCtx.symTable  = &compiler.symTable;
         parseCtx.syntTree  = &compiler.syntTree;
+        parseCtx.varInfo   = &varInfo;
         parseCtx.vm        = &vm;
         parseCtx.currText  = &currText;
         parseCtx.srcFile   = &srcFile;
+
+        //parseCtx.debugMode = false;
+        //parseCtx.enableWarnings = false;
 
         logStream() << (parser.parse() == 0 ? "\n-- FINISHED OK --" : "\n-- FINISHED WITH PARSE ERROR --") << "\n\n";
         //logStream() << compiler.symTable << "\n";
@@ -381,13 +389,14 @@ int main(int argc, const char * argv[])
             logStream() << std::endl;
         }
         */
-        return 0;
+        //return 0;
 
         compiler.compile(vm);
         logStream() << compiler << "\n";
-        logStream() << vm.functions << "\n";
+        //logStream() << vm.functions << "\n";
         logStream() << vm.code << "\n";
         logStream() << vm.data << "\n";
+        //return 0;
 
         vm.execute();
         logStream() << vm << "\n";

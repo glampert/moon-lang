@@ -626,6 +626,13 @@ bool isAssignmentValid(const Variant::Type destType, const Variant::Type srcType
 
 void performAssignmentWithConversion(Variant & dest, const Variant source)
 {
+    // 'Any' can assign if the underlaying types match.
+    if (source.isAny())
+    {
+        performAssignmentWithConversion(dest, source.unwrapAny());
+        return;
+    }
+
     if (!isAssignmentValid(dest.type, source.type))
     {
         MOON_RUNTIME_EXCEPTION("cannot assign " + toString(source.type) +

@@ -14,6 +14,7 @@
 #include "syntax_tree.hpp"
 #include "vm.hpp"
 
+//TODO maybe gather all these pool size constants and the like into a build_config.hpp?
 #ifndef MOON_INTERMEDIATE_INSTR_POOL_GRANULARITY
     #define MOON_INTERMEDIATE_INSTR_POOL_GRANULARITY 1024
 #endif // MOON_INTERMEDIATE_INSTR_POOL_GRANULARITY

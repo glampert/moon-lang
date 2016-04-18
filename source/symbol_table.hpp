@@ -64,17 +64,24 @@ struct Symbol final
     static Value valueFromRcStr(ConstRcString * rstr);
 
     // Compare this type and value for equality with the provided params.
-    bool cmpEqual(Type otherType, Value otherValue) const noexcept;
+    bool cmpEqual(Type otherType, Value otherValue) const;
+
+    // Compare the provide string (or hash thereof) for equality with this symbol's *name*.
+    bool cmpEqual(const char * otherName) const;
+    bool cmpEqual(const UInt32 otherNameHash) const noexcept
+    {
+        return name->hashVal == otherNameHash;
+    }
 
     // Test if the symbol's name is equal to one of the built-in types, e.g.: int, float, string, etc.
-    bool isBuiltInTypeId() const noexcept;
+    bool isBuiltInTypeId() const;
 
     // Print the symbol as a table row for use by the SymbolTable.
     void print(std::ostream & os) const;
 };
 
-std::string toString(const Symbol & sym); // Symbol value to string.
-std::string toString(Symbol::Type type);  // Symbol type to string.
+std::string toString(const Symbol & symbol); // Symbol value to string.
+std::string toString(Symbol::Type type);     // Symbol type to string.
 
 // ========================================================
 // class SymbolTable:
