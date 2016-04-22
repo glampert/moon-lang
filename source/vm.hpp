@@ -101,7 +101,7 @@ public:
     // VM interface:
     //
 
-    // loadBuiltIns: Load built-in native functions and helper types.
+    // loadBuiltIns: Load built-in native function libraries (string, array, object helpers).
     // stackSize:    Size in Variants of the program stack. Stack-size is fixed.
     VM(bool loadBuiltIns = true, int stackSize = DefaultStackSize);
 

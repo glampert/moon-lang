@@ -62,6 +62,9 @@ public:
     const TypeId * lastRhsTypeId     = nullptr;
     const Symbol * currentFuncSymbol = nullptr;
     const Symbol * currentUDTSymbol  = nullptr;
+
+    // Stuff use only inside functions:
+    bool foundReturnStmt = false;
     SyntaxTreeNode::Eval expectedReturnType = SyntaxTreeNode::Eval::Void;
 
 private:
@@ -85,6 +88,17 @@ private:
 };
 
 // ========================================================
+// Imported file registry:
+// ========================================================
+
+class ImportTable final
+{
+public:
+    //TODO
+private:
+};
+
+// ========================================================
 // Parsing and semantic check utilities:
 // ========================================================
 
@@ -101,6 +115,7 @@ SyntaxTreeNode * newTypecastNode(ParseContext & ctx, const SyntaxTreeNode * lhs,
 SyntaxTreeNode * newTypeofNode(ParseContext & ctx, SyntaxTreeNode * exprOrTypeNode);
 SyntaxTreeNode * newStatementNode(ParseContext & ctx, const SyntaxTreeNode * left, const SyntaxTreeNode * right);
 SyntaxTreeNode * newUDTNode(ParseContext & ctx, const Symbol * typeNameSymbol);
+SyntaxTreeNode * handleImportDirective(ParseContext & ctx, const Symbol * importFileSymbol);
 
 //
 // Variable declaration:

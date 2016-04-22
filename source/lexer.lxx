@@ -256,6 +256,7 @@ NEW_LINE      [\n\r]
 "function"       { LEX_LOG_TYPE( "function" ); return moon::Parser::token::TID_FUNC;         }
 
     /* ---- Language keywords: ---- */
+"import"         { LEX_LOG_KEYW( "import"   ); return moon::Parser::token::KW_IMPORT;        }
 "if"             { LEX_LOG_KEYW( "if"       ); return moon::Parser::token::KW_IF;            }
 "then"           { LEX_LOG_KEYW( "then"     ); return moon::Parser::token::KW_THEN;          }
 "else"           { LEX_LOG_KEYW( "else"     ); return moon::Parser::token::KW_ELSE;          }

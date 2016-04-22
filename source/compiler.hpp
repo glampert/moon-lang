@@ -22,10 +22,76 @@
 namespace moon
 {
 
+class FileIOCallbacks
+{
+public:
+    virtual ~FileIOCallbacks();
+
+    // Called to open a file for an explicit Compiler::parseScript() call.
+    // Should return true only if the file was successfully opened for reading.
+    virtual bool openScript(const std::string & scriptFile, std::istream ** streamOut) = 0;
+
+    // Called when an 'import' directive is encountered in a script.
+    // Receives the unaltered name string that followed the keyword.
+    // The implementation is free to perform any path-dependent file
+    // lookup or append predefined search paths to the name.
+    virtual bool openScriptImport(const std::string & importFile, std::istream ** streamOut) = 0;
+
+    // Called to return a stream object previously acquired by the above methods.
+    // NOTE: If the open method returned false, closeScript() is not called!
+    virtual void closeScript(std::istream ** stream) = 0;
+};
+
+// Relies on the Standard C++ streams library. Accesses the local File System.
+class DefaultFileIOCallbacks final
+    : public FileIOCallbacks
+{
+public:
+    DefaultFileIOCallbacks() = default;
+    bool openScript(const std::string & scriptFile, std::istream ** streamOut) override;
+    bool openScriptImport(const std::string & importFile, std::istream ** streamOut) override;
+    void closeScript(std::istream ** stream) override;
+};
+
+//TODO this is implementation detail. doesn't have to be exposed in a header file.
+struct OpenScriptRAII final
+{
+    using OpenMethod = bool (FileIOCallbacks::*)(const std::string &, std::istream **);
+
+    FileIOCallbacks * callbacks;
+    std::istream    * stream;
+
+    OpenScriptRAII(const std::string & filename, FileIOCallbacks * iocb, OpenMethod openMethod)
+        : callbacks{ iocb }
+        , stream{ doOpen(filename, openMethod) }
+    { }
+
+    ~OpenScriptRAII()
+    {
+        if (stream != nullptr)
+        {
+            callbacks->closeScript(&stream);
+        }
+    }
+
+    bool isOpen() const noexcept { return stream != nullptr; }
+
+private:
+
+    std::istream * doOpen(const std::string & filename, OpenMethod openMethod) const
+    {
+        MOON_ASSERT(callbacks != nullptr);
+        std::istream * outStr = nullptr;
+        const bool succeeded = (callbacks->*openMethod)(filename, &outStr);
+        return (succeeded ? outStr : nullptr);
+    }
+};
+
 // ========================================================
 // struct IntermediateInstr:
 // ========================================================
 
+//TODO IntermediateInstr is an implementation detail. Should not be exposed on a public header.
 struct IntermediateInstr final
 {
     union Operand
@@ -42,6 +108,7 @@ struct IntermediateInstr final
     OpCode              op;
 };
 
+constexpr UInt16 InvalidParamIdx = UInt16(-1);
 using DataMap  = HashTable<const Symbol *, UInt32>;
 using InstrMap = HashTable<const IntermediateInstr *, UInt32>;
 

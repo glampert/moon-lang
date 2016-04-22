@@ -130,6 +130,7 @@ void Parser::error(const std::string & message)
 %token TID_FUNC                   "function"
 
 /* Language keywords: */
+%token KW_IMPORT                  "import"
 %token KW_IF                      "if"
 %token KW_THEN                    "then"
 %token KW_ELSE                    "else"
@@ -223,7 +224,7 @@ void Parser::error(const std::string & message)
  * it will be a variable of type 'SyntaxTreeNode', as defined
  * in the SemanticVal/YYSTYPE union by the 'asSTNode' field.
  */
-%type <asSTNode> type_identifier builtin_type optional_return_type
+%type <asSTNode> type_identifier builtin_type optional_return_type import_statement
 %type <asSTNode> literal_const_expression identifier_expression
 %type <asSTNode> expression array_expression array_subscript_expression object_constructor_expression
 %type <asSTNode> translation_unit statement optional_statement_list
@@ -303,7 +304,8 @@ optional_statement_list
     ;
 
 statement
-    : struct_declaration
+    : import_statement
+    | struct_declaration
     | enum_declaration
     | type_alias_declaration
     | func_declaration
@@ -357,6 +359,10 @@ type_identifier
 
 identifier_expression
     : IDENTIFIER { $$ = newIdentNode(ctx, $1); }
+    ;
+
+import_statement
+    : "import" STR_LITERAL ";" { $$ = handleImportDirective(ctx, $2); }
     ;
 
 /*------------------------.

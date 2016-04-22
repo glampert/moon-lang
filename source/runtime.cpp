@@ -156,8 +156,8 @@ void Function::validateArguments(const Stack::Slice args) const
 
 bool Function::validateArguments(const Stack::Slice args, std::string & errorMessageOut) const
 {
-    // No args or varargs validated by the function itself.
-    if (argumentTypes == nullptr || argumentCount == 0)
+    // varargs validated by the function itself.
+    if (isVarArgs())
     {
         return true;
     }
@@ -869,6 +869,140 @@ Str::~Str()
 }
 
 // ========================================================
+// Internal Array helpers:
+// ========================================================
+
+static inline Variant packVar(const UInt8 * ptr, const UInt32 dataSize, const Variant::Type dataType)
+{
+    Variant result{ dataType };
+    switch (dataType)
+    {
+    // Numbers:
+    case Variant::Type::Integer :
+        {
+            switch (dataSize)
+            {
+            case sizeof(Int8)  : result.value.asInteger = *reinterpret_cast<const Int8  *>(ptr); break;
+            case sizeof(Int32) : result.value.asInteger = *reinterpret_cast<const Int32 *>(ptr); break;
+            case sizeof(Int64) : result.value.asInteger = *reinterpret_cast<const Int64 *>(ptr); break;
+            default : MOON_UNREACHABLE();
+            } // switch (dataSize)
+            break;
+        }
+    case Variant::Type::Float :
+        {
+            switch (dataSize)
+            {
+            case sizeof(Float32) : result.value.asFloat = *reinterpret_cast<const Float32 *>(ptr); break;
+            case sizeof(Float64) : result.value.asFloat = *reinterpret_cast<const Float64 *>(ptr); break;
+            default : MOON_UNREACHABLE();
+            } // switch (dataSize)
+            break;
+        }
+    // All pointers:
+    case Variant::Type::Null     :
+    case Variant::Type::Function :
+    case Variant::Type::Tid      :
+    case Variant::Type::Str      :
+    case Variant::Type::Object   :
+    case Variant::Type::Array    :
+        {
+            // Only one of the cases is true, of course,
+            // but this keeps the code 32/64bits portable.
+            switch (dataSize)
+            {
+            case sizeof(UInt32) : result.value.asInteger = *reinterpret_cast<const UInt32 *>(ptr); break;
+            case sizeof(UInt64) : result.value.asInteger = *reinterpret_cast<const UInt64 *>(ptr); break;
+            default : MOON_UNREACHABLE();
+            } // switch (dataSize)
+            break;
+        }
+    // Range (2 integers):
+    case Variant::Type::Range :
+        {
+            MOON_ASSERT(dataSize == sizeof(Range));
+            result.value.asRange.begin = reinterpret_cast<const Range *>(ptr)->begin;
+            result.value.asRange.end   = reinterpret_cast<const Range *>(ptr)->end;
+            break;
+        }
+    // Any (copy as a full Variant):
+    case Variant::Type::Any :
+        {
+            MOON_ASSERT(dataSize == sizeof(Variant));
+            result = *reinterpret_cast<const Variant *>(ptr);
+            break;
+        }
+    default :
+        MOON_UNREACHABLE();
+    } // switch (dataType)
+    return result;
+}
+
+static inline void unpackVar(UInt8 * ptr, const UInt32 dataSize, const Variant src)
+{
+    switch (src.type)
+    {
+    // Numbers:
+    case Variant::Type::Integer :
+        {
+            switch (dataSize)
+            {
+            case sizeof(Int8)  : *reinterpret_cast<Int8  *>(ptr) = static_cast<Int8 >(src.value.asInteger); break;
+            case sizeof(Int32) : *reinterpret_cast<Int32 *>(ptr) = static_cast<Int32>(src.value.asInteger); break;
+            case sizeof(Int64) : *reinterpret_cast<Int64 *>(ptr) = static_cast<Int64>(src.value.asInteger); break;
+            default : MOON_UNREACHABLE();
+            } // switch (dataSize)
+            break;
+        }
+    case Variant::Type::Float :
+        {
+            switch (dataSize)
+            {
+            case sizeof(Float32) : *reinterpret_cast<Float32 *>(ptr) = static_cast<Float32>(src.value.asFloat); break;
+            case sizeof(Float64) : *reinterpret_cast<Float64 *>(ptr) = static_cast<Float64>(src.value.asFloat); break;
+            default : MOON_UNREACHABLE();
+            } // switch (dataSize)
+            break;
+        }
+    // All pointers:
+    case Variant::Type::Null     :
+    case Variant::Type::Function :
+    case Variant::Type::Tid      :
+    case Variant::Type::Str      :
+    case Variant::Type::Object   :
+    case Variant::Type::Array    :
+        {
+            // Only one of the cases is true, of course,
+            // but this keeps the code 32/64bits portable.
+            switch (dataSize)
+            {
+            case sizeof(UInt32) : *reinterpret_cast<UInt32 *>(ptr) = static_cast<UInt32>(src.value.asInteger); break;
+            case sizeof(UInt64) : *reinterpret_cast<UInt64 *>(ptr) = static_cast<UInt64>(src.value.asInteger); break;
+            default : MOON_UNREACHABLE();
+            } // switch (dataSize)
+            break;
+        }
+    // Range (2 integers):
+    case Variant::Type::Range :
+        {
+            MOON_ASSERT(dataSize == sizeof(Range));
+            reinterpret_cast<Range *>(ptr)->begin = src.value.asRange.begin;
+            reinterpret_cast<Range *>(ptr)->end   = src.value.asRange.end;
+            break;
+        }
+    // Any (copy as a full Variant):
+    case Variant::Type::Any :
+        {
+            MOON_ASSERT(dataSize == sizeof(Variant));
+            *reinterpret_cast<Variant *>(ptr) = src;
+            break;
+        }
+    default :
+        MOON_UNREACHABLE();
+    } // switch (src.type)
+}
+
+// ========================================================
 // Script Array:
 // ========================================================
 
@@ -903,56 +1037,65 @@ Array * Array::newFromArgs(VM & vm, const TypeId * dataType, const Stack::Slice 
     return newArray;
 }
 
-Array * Array::newFromRawData(VM & vm, const TypeId * dataType, const void * data, const int lengthInItems)
+Array * Array::newFromRawData(VM & vm, const TypeId * dataType, const void * data, const int lengthInItems,
+                              const int sizeBytesPerItem, const Variant::Type varType)
 {
     MOON_ASSERT(data != nullptr);
     auto newArray = static_cast<Array *>(Array::newInstance(vm, vm.types.arrayTypeId));
     newArray->setItemTypeSize(dataType);
-    newArray->push(data, lengthInItems);
+    newArray->push(data, lengthInItems, sizeBytesPerItem, varType);
     return newArray;
 }
 
 void Array::push(const Variant var)
 {
-    if (var.type != varType)
+    MOON_ASSERT(itemSize > 0);
+    MOON_ASSERT(UInt32(itemSize) <= sizeof(Variant));
+
+    if (!isAssignmentValid(varType, var.type))
     {
         MOON_RUNTIME_EXCEPTION("trying to push " + toString(var.type) +
                                " into array of " + toString(varType));
     }
 
     reserveCapacity(arrayLen + 1);
-    appendInternal(&var.value, 1);
+
+    Variant temp{ varType };
+    performAssignmentWithConversion(temp, var);
+    unpackVar(getDataPtr() + (arrayLen * itemSize), itemSize, temp);
+
+    ++arrayLen;
 }
 
 void Array::push(const Array & other)
 {
-    if (other.varType != varType)
+    if (!isAssignmentValid(varType, other.varType))
     {
         MOON_RUNTIME_EXCEPTION("trying to append array of " + toString(other.varType) +
                                " into array of " + toString(varType));
     }
-    if (other.isEmptyArray())
-    {
-        return;
-    }
 
-    MOON_ASSERT(itemSize == other.itemSize);
     reserveCapacity(arrayLen + other.arrayLen);
-    appendInternal(other.getDataPtr(), other.arrayLen);
+    appendRawData(other.getDataPtr(), other.arrayLen, other.itemSize, other.varType);
 }
 
-void Array::push(const void * data, const int lengthInItems)
+void Array::push(const void * data, const int lengthInItems,
+                 const int sizeBytesPerItem, const Variant::Type dataType)
 {
-    // Assumes the input data format matches the array type.
-    MOON_ASSERT(data != nullptr);
+    if (!isAssignmentValid(varType, dataType))
+    {
+        MOON_RUNTIME_EXCEPTION("trying to push " + toString(dataType) +
+                               " into array of " + toString(varType));
+    }
+
     reserveCapacity(arrayLen + lengthInItems);
-    appendInternal(data, lengthInItems);
+    appendRawData(data, lengthInItems, sizeBytesPerItem, dataType);
 }
 
 Variant Array::getIndex(const int index) const
 {
     MOON_ASSERT(itemSize > 0);
-    MOON_ASSERT(UInt32(itemSize) <= sizeof(Variant::Value));
+    MOON_ASSERT(UInt32(itemSize) <= sizeof(Variant));
 
     if (index < 0 || index >= arrayLen)
     {
@@ -961,15 +1104,13 @@ Variant Array::getIndex(const int index) const
                                toString(arrayLen));
     }
 
-    Variant var{ varType };
-    std::memcpy(&var.value, getDataPtr() + (index * itemSize), itemSize);
-    return var;
+    return packVar(getDataPtr() + (index * itemSize), itemSize, varType);
 }
 
 void Array::setIndex(const int index, const Variant var)
 {
     MOON_ASSERT(itemSize > 0);
-    MOON_ASSERT(UInt32(itemSize) <= sizeof(Variant::Value));
+    MOON_ASSERT(UInt32(itemSize) <= sizeof(Variant));
 
     if (index < 0 || index >= arrayLen)
     {
@@ -977,13 +1118,16 @@ void Array::setIndex(const int index, const Variant var)
                                " is out-of-bound for array of length " +
                                toString(arrayLen));
     }
-    if (var.type != varType)
+
+    if (!isAssignmentValid(varType, var.type))
     {
         MOON_RUNTIME_EXCEPTION("trying to insert " + toString(var.type) +
                                " into array of " + toString(varType));
     }
 
-    std::memcpy(getDataPtr() + (index * itemSize), &var.value, itemSize);
+    Variant temp{ varType };
+    performAssignmentWithConversion(temp, var);
+    unpackVar(getDataPtr() + (index * itemSize), itemSize, temp);
 }
 
 void Array::setItemTypeSize(const TypeId * tid)
@@ -1036,7 +1180,7 @@ void Array::reserveCapacity(const int capacityHint)
 
         // Copy the old data back in:
         vec->resize(capacityHint * itemSize);
-        appendInternal(&oldData, oldLen);
+        appendRawData(&oldData, oldLen, itemSize, varType);
     }
     else // Already in vector mode.
     {
@@ -1047,27 +1191,54 @@ void Array::reserveCapacity(const int capacityHint)
 int Array::getArrayCapacity() const noexcept
 {
     MOON_ASSERT(itemSize > 0);
-    MOON_ASSERT(UInt32(itemSize) <= sizeof(Variant::Value));
+    MOON_ASSERT(UInt32(itemSize) <= sizeof(Variant));
 
-    const UInt32 bytesAllocated = isVector ? castTo<VecType>()->size() : sizeof(backingStore);
+    const UInt32 bytesAllocated = (isVector ? castTo<VecType>()->size() : sizeof(backingStore));
     return static_cast<int>(bytesAllocated / itemSize);
 }
 
-void Array::appendInternal(const void * data, const int lengthInItems)
+void Array::appendRawData(const void * data, const int lengthInItems,
+                          const int sizeBytesPerItem, const Variant::Type dataType)
 {
+    MOON_ASSERT(data != nullptr);
+    MOON_ASSERT(sizeBytesPerItem > 0);
+
     MOON_ASSERT(itemSize > 0);
-    MOON_ASSERT(UInt32(itemSize) <= sizeof(Variant::Value));
+    MOON_ASSERT(UInt32(itemSize) <= sizeof(Variant));
     MOON_ASSERT((getArrayCapacity() - arrayLen) >= lengthInItems);
 
-    //FIXME should not use these memcpys here.
-    //I think they will break for int<=>float float<=>double conversions.
-    //better to define a typed copy helper.
-    //performAssignmentWithConversion() or a variation thereof should be more adequate
-    if (lengthInItems > 0)
+    if (lengthInItems <= 0)
+    {
+        return;
+    }
+
+    // If everything matches, we can do a fast memcpy.
+    if (varType == dataType && itemSize == sizeBytesPerItem)
     {
         std::memcpy(getDataPtr() + (arrayLen * itemSize), data, lengthInItems * itemSize);
-        arrayLen += lengthInItems;
     }
+    else // Otherwise, implicit conversions are at play.
+    {
+        UInt8 * dstDataPtr             = getDataPtr() + (arrayLen * itemSize);
+        const UInt32 dstItemSize       = itemSize;
+        const Variant::Type dstVarType = varType;
+
+        const UInt8 * srcDataPtr       = reinterpret_cast<const UInt8 *>(data);
+        const UInt32 srcItemSize       = sizeBytesPerItem;
+        const Variant::Type srcVarType = dataType;
+
+        Variant dstVar{ dstVarType };
+        Variant srcVar{ srcVarType };
+
+        for (int i = 0; i < lengthInItems; ++i)
+        {
+            srcVar = packVar(srcDataPtr + (i * srcItemSize), srcItemSize, srcVarType);
+            performAssignmentWithConversion(dstVar, srcVar);
+            unpackVar(dstDataPtr + (i * dstItemSize), dstItemSize, dstVar);
+        }
+    }
+
+    arrayLen += lengthInItems;
 }
 
 std::string Array::getStringRepresentation() const

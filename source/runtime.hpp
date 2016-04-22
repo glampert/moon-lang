@@ -279,6 +279,11 @@ public:
             --size;
             return (++data);
         }
+        Variant pop() // Removes the last element and returns it
+        {
+            if (isEmpty()) { MOON_RUNTIME_EXCEPTION("stack slice underflow!"); }
+            return data[--size];
+        }
 
         int  getSize() const noexcept { return size;      }
         bool isEmpty() const noexcept { return size == 0; }
@@ -758,14 +763,16 @@ public:
     static Object * newInstance(VM & vm, const TypeId * tid);
     static Array * newEmpty(VM & vm, const TypeId * dataType, int capacityHint);
     static Array * newFromArgs(VM & vm, const TypeId * dataType, Stack::Slice args);
-    static Array * newFromRawData(VM & vm, const TypeId * dataType, const void * data, int lengthInItems);
+    static Array * newFromRawData(VM & vm, const TypeId * dataType, const void * data,
+                                  int lengthInItems, int sizeBytesPerItem, Variant::Type varType);
 
     std::string getStringRepresentation() const override;
     std::string getDataTypeString() const { return toString(varType); }
 
     void push(Variant var);
     void push(const Array & other);
-    void push(const void * data, int lengthInItems);
+    void push(const void * data, int lengthInItems,
+              int sizeBytesPerItem, Variant::Type dataType);
 
     Variant getIndex(int index) const;
     void setIndex(int index, Variant var);
@@ -817,7 +824,9 @@ private:
     {
         return isVector ? castTo<VecType>()->data() : castTo<UInt8>();
     }
-    void appendInternal(const void * data, int lengthInItems);
+
+    void appendRawData(const void * data, int lengthInItems,
+                       int sizeBytesPerItem, Variant::Type dataType);
 
     using VecType = std::vector<UInt8>;
     static constexpr int SmallBufSize = 56;

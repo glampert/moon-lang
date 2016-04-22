@@ -50,6 +50,9 @@ enum class OpCode : UInt8
     // Call a script function.
     Call,
 
+    // indirect call (via func pointer) from local function parameter or var
+    CallLocal,
+
     // creates a new typed Variant, pushes into the stack
     // assumes the previous load is the argument count, e.g.:
     // 0=uninitialized var; 1=pops one value for the initializer
@@ -141,7 +144,8 @@ inline bool isJumpOpCode(const OpCode op) noexcept
 
 inline bool referencesStackData(const OpCode op) noexcept
 {
-    return op == OpCode::LoadLocal  ||
+    return op == OpCode::CallLocal  ||
+           op == OpCode::LoadLocal  ||
            op == OpCode::StoreLocal ||
            op == OpCode::MemberStoreLocal;
 }

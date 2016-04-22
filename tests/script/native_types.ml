@@ -116,7 +116,7 @@ assert(type_of(arr_val_1[0]) == type_of(long));
 assert(type_of(arr_val_2[0]) == type_of(str));
 
 // A multi-dimensional array can store sub-arrays of any type:
-let the_matrix = [ [ "A", "B", "C" ], [ 1.1, 1.2, 1.3 ] ];
+let the_matrix = [ ["A", "B", "C"], [1.1, 1.2, 1.3] ];
 assert(type_of(the_matrix)    == type_of(array));
 assert(type_of(the_matrix[0]) == type_of(array));
 assert(type_of(the_matrix[1]) == type_of(array));
@@ -229,5 +229,8 @@ assert(type_of(null_val) == type_of(null));
 
 // ----------------------------------------------
 
+// SRC_FILE_NAME, SRC_LINE_NUM and SRC_FUNC_NAME
+// are built-in predefined globals with the corresponding
+// source filename, current line number and current function name.
 println("Finished running test script ", SRC_FILE_NAME);
 

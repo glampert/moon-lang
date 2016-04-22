@@ -128,14 +128,8 @@ static void opMemberStoreLocal(VM & vm, const UInt32 operandIndex)
     opMemberStoreCommon(vm, args[operandIndex]);
 }
 
-static void opCall(VM & vm, const UInt32 operandIndex)
+static void opCallCommon(VM & vm, const Variant funcVar)
 {
-    const Variant argcVar = vm.stack.getTopVar();
-    vm.funcArgs = vm.stack.slice(vm.stack.getCurrSize() - argcVar.getAsInteger() - 1, argcVar.getAsInteger() + 1);
-
-    const Variant funcVar = vm.data[operandIndex];
-    vm.stack.pop(); // the argCount
-
     if (funcVar.type != Variant::Type::Function)
     {
         MOON_RUNTIME_EXCEPTION("opCall: expected a function object!");
@@ -144,24 +138,64 @@ static void opCall(VM & vm, const UInt32 operandIndex)
     {
         MOON_RUNTIME_EXCEPTION("opCall: attempting to call a null function object!");
     }
+
+    const Variant argcVar = vm.stack.getTopVar();
+    const auto argc = argcVar.value.asInteger;
+
     if (argcVar.type != Variant::Type::Integer)
     {
         MOON_RUNTIME_EXCEPTION("opCall: function arg count sentry should be an integer!");
     }
 
-    const auto argc = argcVar.value.asInteger;
-    const auto args = vm.stack.slice(vm.stack.getCurrSize() - argc, argc);
+    vm.funcArgs = vm.stack.slice(vm.stack.getCurrSize() - argc - 1, argc + 1);
+    vm.stack.pop(); // the argCount
+
+    const auto callArgs = vm.stack.slice(vm.stack.getCurrSize() - argc, argc);
     vm.stack.popN(argc);
 
-    funcVar.value.asFunction->invoke(vm, args);
+    funcVar.value.asFunction->invoke(vm, callArgs);
 }
 
-static void opFuncStart(VM & vm, UInt32)
+static void opCall(VM & vm, const UInt32 operandIndex)
 {
-    // Copy from the main work stack to the function-local stack (including the argCount):
-    for (int i = 0; i < vm.funcArgs.getSize(); ++i)
+    // Source the function pointer from the global program data.
+    opCallCommon(vm, vm.data[operandIndex]);
+}
+
+static void opCallLocal(VM & vm, const UInt32 operandIndex)
+{
+    // Source the function pointer from the local function stack.
+    const auto argc = vm.locals.getTopVar().getAsInteger();
+    const auto args = vm.locals.slice(vm.locals.getCurrSize() - argc - 1, argc);
+    opCallCommon(vm, args[operandIndex]);
+}
+
+static void opFuncStart(VM & vm, const UInt32 operandIndex)
+{
+    const Variant funcVar = vm.data[operandIndex];
+
+    // Turn the stack slice into an array for the varargs:
+    if (funcVar.getAsFunction()->isVarArgs())
     {
-        vm.locals.push(vm.funcArgs[i]);
+        Stack::Slice arrayInitializers = vm.funcArgs;
+        arrayInitializers.pop();
+
+        // We don't known the types of each argument, so the array tag is 'Any'.
+        Variant result{ Variant::Type::Array };
+        result.value.asArray = Array::newFromArgs(vm, vm.types.anyTypeId, arrayInitializers);
+        vm.locals.push(result);
+
+        // Also push the argCount (1) so we can rollback at FuncEnd:
+        Variant argc{ Variant::Type::Integer };
+        argc.value.asInteger = 1;
+        vm.locals.push(argc);
+    }
+    else // Copy from the main work stack to the function-local stack (including the argCount):
+    {
+        for (int i = 0; i < vm.funcArgs.getSize(); ++i)
+        {
+            vm.locals.push(vm.funcArgs[i]);
+        }
     }
 
     // Save so we can return to the caller.
@@ -182,21 +216,21 @@ static void opFuncEnd(VM & vm, const UInt32 operandIndex)
     // We can double check this here, but the compiler should have
     // already validated the return type against the return statements.
     const Variant funcVar = vm.data[operandIndex];
-    funcVar.value.asFunction->validateReturnValue(vm.getReturnValue());
+    funcVar.getAsFunction()->validateReturnValue(vm.getReturnValue());
 }
 
 static void opNewVar(VM & vm, const UInt32 operandIndex)
 {
-    const Variant tid = vm.data[operandIndex];
+    const Variant tidVar = vm.data[operandIndex];
     Variant initVal;
 
-    if (tid.type == Variant::Type::Null)
+    if (tidVar.type == Variant::Type::Null)
     {
         initVal.type = Variant::Type::Null;
     }
     else
     {
-        initVal.type = typeId2VarType(tid.getAsTypeId());
+        initVal.type = typeId2VarType(tidVar.getAsTypeId());
     }
 
     const Variant hasInitializer = vm.stack.pop();
@@ -219,8 +253,8 @@ static void opNewVar(VM & vm, const UInt32 operandIndex)
 
 static void opNewObj(VM & vm, const UInt32 operandIndex)
 {
-    const Variant tid = vm.data[operandIndex];
-    if (tid.type != Variant::Type::Tid || tid.value.asTypeId == nullptr)
+    const Variant tidVar = vm.data[operandIndex];
+    if (tidVar.type != Variant::Type::Tid || tidVar.value.asTypeId == nullptr)
     {
         MOON_RUNTIME_EXCEPTION("opNewObj: expected a type id!");
     }
@@ -230,7 +264,7 @@ static void opNewObj(VM & vm, const UInt32 operandIndex)
     const auto args = vm.stack.slice(vm.stack.getCurrSize() - argc, argc);
 
     Variant newObj{ Variant::Type::Object };
-    newObj.value.asObject = newRuntimeObject(vm, tid.value.asTypeId, args);
+    newObj.value.asObject = newRuntimeObject(vm, tidVar.value.asTypeId, args);
 
     vm.stack.popN(argc);
     vm.stack.push(newObj);
@@ -300,8 +334,20 @@ static void opTypeof(VM & vm, UInt32)
     // type_of() simply converts its operand Variant to a TypeId.
     // Note that for the 'Any' type we actually want to get the underlaying type, not "any".
     const Variant operand = vm.stack.pop();
+    const Variant::Type varType = (operand.isAny() ? operand.anyType : operand.type);
+
     Variant tidVar{ Variant::Type::Tid };
-    tidVar.value.asTypeId = varType2TypeId(vm.types, (operand.isAny() ? operand.anyType : operand.type));
+    if (varType == Variant::Type::Object &&
+        operand.value.asObject != nullptr)
+    {
+        // For objects we can get the precise type
+        tidVar.value.asTypeId = operand.value.asObject->getTypeId();
+    }
+    else // Other types might get a generic tag
+    {
+        tidVar.value.asTypeId = varType2TypeId(vm.types, varType);
+    }
+
     vm.stack.push(tidVar);
 }
 
@@ -335,6 +381,7 @@ static const OpCodeHandlerCB opHandlerCallbacks[]
     &opTypeof,                          // Typeof
     &opTypecast,                        // Typecast
     &opCall,                            // Call
+    &opCallLocal,                       // CallLocal
     &opNewVar,                          // NewVar
     &opNewRange,                        // NewRange
     &opNewArray,                        // NewArray
@@ -534,6 +581,7 @@ std::string toString(const OpCode op)
         "TYPEOF",
         "TYPECAST",
         "CALL",
+        "CALL_LOCAL",
         "NEW_VAR",
         "NEW_RANGE",
         "NEW_ARRAY",

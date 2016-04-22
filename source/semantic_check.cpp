@@ -39,8 +39,15 @@ void VarInfoTable::beginFunc(const Symbol * funcNameSymbol)
 
 void VarInfoTable::endFunc()
 {
+    if (expectedReturnType != STEval::Void && !foundReturnStmt)
+    {
+        const std::string fname = color::white() + toString(currentFuncSymbol->name) + color::restore();
+        parserError(ctx, "missing return statement in non-void function '" + fname + "'");
+    }
+
     currentFuncLocals  = nullptr;
     currentFuncSymbol  = nullptr;
+    foundReturnStmt    = false;
     expectedReturnType = STEval::Void;
 }
 
@@ -57,7 +64,24 @@ void VarInfoTable::endUDT()
 
 const VarInfo * VarInfoTable::findVar(const Symbol * symbol) const
 {
-    return isParsingFunction() ? findFuncLocalVar(symbol) : findGlobalVar(symbol);
+    const VarInfo * vi = nullptr;
+
+    // It stands to reason that locals are referenced more often
+    // than globals inside functions, so check the local vars first.
+    if (isParsingFunction())
+    {
+        vi = findFuncLocalVar(symbol);
+        if (vi == nullptr) // Okay, try the globals now
+        {
+            vi = findGlobalVar(symbol);
+        }
+    }
+    else // Must be a global
+    {
+        vi = findGlobalVar(symbol);
+    }
+
+    return vi;
 }
 
 const VarInfo * VarInfoTable::findFuncLocalVar(const Symbol * symbol) const
@@ -117,6 +141,14 @@ void requireGlobalScope(ParseContext & ctx, const char * elementName)
     }
 }
 
+SyntaxTreeNode * handleImportDirective(ParseContext & ctx, const Symbol * importFileSymbol)
+{
+    //TODO
+    (void)ctx;
+    logStream() << "importing " << importFileSymbol->name->chars << "\n";
+    return ctx.syntTree->newNode(STNode::NoOp, nullptr, nullptr, nullptr, STEval::Void);
+}
+
 using AddVarCallback = void (VarInfoTable::*)(const Symbol *, const VarInfo &);
 static void registerVariable(ParseContext & ctx, const Symbol * varNameSymbol, const SyntaxTreeNode * initNode,
                              const SyntaxTreeNode * typeNode, const STEval stEval, AddVarCallback addVarMethod)
@@ -130,6 +162,10 @@ static void registerVariable(ParseContext & ctx, const Symbol * varNameSymbol, c
     else if (initNode != nullptr)
     {
         tidNode = initNode;
+        if (tidNode->evalType == STEval::Void)
+        {
+            parserError(ctx, "trying to initialize variable from return value of void function");
+        }
     }
     else
     {
@@ -148,10 +184,10 @@ static void registerVariable(ParseContext & ctx, const Symbol * varNameSymbol, c
 
     const Variant::Type varType = eval2VarType(stEval);
     const STEval arrayEval = ((varType == Variant::Type::Array && initNode != nullptr) ?
-                               initNode->getChild(2)->evalType : STEval::Null);
+                               initNode->getChild(2)->evalType : STEval::Any);
 
     const Function * funcPtr = nullptr;
-    if (varType == Variant::Type::Function && initNode != nullptr)
+    if (varType == Variant::Type::Function && initNode != nullptr && initNode->nodeType != STNode::ExprFuncCall)
     {
         funcPtr = ctx.vm->functions.findFunction(initNode->symbol->name);
         MOON_ASSERT(funcPtr != nullptr); // Already syntax-checked, so this suffices.
@@ -305,6 +341,13 @@ SyntaxTreeNode * newIdentNode(ParseContext & ctx, const Symbol * identifierSymbo
         if (vi != nullptr)
         {
             identNode->evalType = vi->stEval;
+
+            // VarArgs get converted to array on runtime, so we need to pretend references
+            // to a VarArgs are actually references to an untyped array (array of Any).
+            if (identNode->evalType == STEval::VarArgs)
+            {
+                identNode->evalType = STEval::Array;
+            }
         }
         else // Could be a function (in a 'var = function' kind of expression)
         {
@@ -565,6 +608,18 @@ SyntaxTreeNode * newBinaryOpNode(ParseContext & ctx, const STNode type,
     }
     else
     {
+        if (lhs->evalType == STEval::Void || rhs->evalType == STEval::Void)
+        {
+            if (binOp == OpCode::StoreGlob)
+            {
+                parserError(ctx, "void function cannot be used on assignment");
+            }
+            else
+            {
+                parserError(ctx, "void function cannot be used with operator " + binaryOpToString(binOp));
+            }
+        }
+
         const Variant::Type lhsVarType = eval2VarType(lhs->evalType);
         const Variant::Type rhsVarType = eval2VarType(rhs->evalType);
 
@@ -782,7 +837,7 @@ SyntaxTreeNode * newFunctionCallNode(ParseContext & ctx, const Symbol * funcName
 
     if (func == nullptr)
     {
-        // Cold be attempting to indirectly call via a function pointer
+        // Could be attempting to indirectly call via a function pointer
         const VarInfo * vi = ctx.varInfo->findVar(funcNameSymbol);
         if (vi != nullptr)
         {
@@ -941,64 +996,64 @@ SyntaxTreeNode * newFunctionDeclNode(ParseContext & ctx,
 
 SyntaxTreeNode * newVarArgsNode(ParseContext & ctx, const Symbol * varArgsSymbol)
 {
-    // Note: In a VarArgs function, the varargs node will be at child 1.
-    // This is to facilitate the traversal in collectFunctionArgTypes().
-    const SyntaxTreeNode * varArgsNode = newTypeIdNode(ctx, STEval::VarArgs);
-    return ctx.syntTree->newNodeWithSymbol(STNode::VarDeclStatement, varArgsSymbol,
-                                           nullptr, varArgsNode, nullptr,
-                                           varArgsNode->evalType);
+    // The varargs stack slice will be converted to an array at runtime.
+    const SyntaxTreeNode * varArgsTypeNode = newTypeIdNode(ctx, STEval::VarArgs);
+    return newVarDeclNode(ctx, varArgsSymbol, nullptr, varArgsTypeNode, STEval::VarArgs);
 }
 
 SyntaxTreeNode * newReturnNode(ParseContext & ctx, const SyntaxTreeNode * optExprNode)
 {
-    if (optExprNode == nullptr) // return ;
+    ctx.varInfo->foundReturnStmt = true;
+    if (!ctx.varInfo->isParsingFunction()) // Stray "return" statement?
     {
-        if (!ctx.varInfo->isParsingFunction())
-        {
-            parserError(ctx, "return statement found outside of a function");
-        }
+        parserError(ctx, "return statement found outside of a function");
+    }
 
+    //
+    // Void return: "return;"
+    //
+    if (optExprNode == nullptr)
+    {
         if (ctx.varInfo->expectedReturnType != STEval::Void)
         {
-            parserError(ctx, "function '" + toString(ctx.varInfo->currentFuncSymbol->name) +
-                             "' was expected to return " + toString(eval2VarType(ctx.varInfo->expectedReturnType)));
+            const std::string fname = color::white() + toString(ctx.varInfo->currentFuncSymbol->name) + color::restore();
+            parserError(ctx, "function '" + fname + "' was expected to return " +
+                        toString(eval2VarType(ctx.varInfo->expectedReturnType)));
         }
-
-        return ctx.syntTree->newNode(STNode::ReturnStatement,
-                                     nullptr, nullptr, nullptr,
-                                     STEval::Void);
+        return ctx.syntTree->newNodeWithEval(STNode::ReturnStatement, nullptr, STEval::Void);
     }
-    else // return expression ;
+
+    //
+    // Non-void return: "return expression;"
+    //
+    if (ctx.varInfo->expectedReturnType == STEval::Void)
     {
-        if (!ctx.varInfo->isParsingFunction())
-        {
-            parserError(ctx, "return statement found outside of a function");
-        }
-
-        if ((optExprNode->symbol != nullptr) &&
-            (optExprNode->nodeType != STNode::ExprFuncCall) &&
-            (optExprNode->nodeType != STNode::ExprLiteralConst) &&
-            !ctx.varInfo->findVar(optExprNode->symbol))
-        {
-            parserError(ctx, "undefined return expression '" +
-                             toString(optExprNode->symbol->name) + "'");
-        }
-
-        if (ctx.varInfo->expectedReturnType == STEval::Void)
-        {
-            parserError(ctx, "void function '" + toString(ctx.varInfo->currentFuncSymbol->name) +
-                             "' is not supposed to return a value");
-        }
-
-        if (!isAssignmentValid(eval2VarType(ctx.varInfo->expectedReturnType), eval2VarType(optExprNode->evalType)))
-        {
-            parserError(ctx, "function '" + toString(ctx.varInfo->currentFuncSymbol->name) +
-                             "' was expected to return " + toString(eval2VarType(ctx.varInfo->expectedReturnType)));
-        }
-
-        return ctx.syntTree->newNode(STNode::ReturnStatement, optExprNode,
-                                     nullptr, nullptr, optExprNode->evalType);
+        const std::string fname = color::white() + toString(ctx.varInfo->currentFuncSymbol->name) + color::restore();
+        parserError(ctx, "void function '" + fname + "' is not supposed to return a value");
     }
+
+    if ((optExprNode->symbol   != nullptr) &&
+        (optExprNode->nodeType != STNode::ExprFuncCall) &&
+        (optExprNode->nodeType != STNode::ExprObjectConstructor) &&
+        (optExprNode->nodeType != STNode::ExprLiteralConst))
+    {
+        // Not a var neither a function, then error out.
+        if (!ctx.varInfo->findVar(optExprNode->symbol) &&
+            !ctx.vm->functions.findFunction(optExprNode->symbol->name))
+        {
+            parserError(ctx, "undefined return expression '" + toString(optExprNode->symbol->name) + "'");
+        }
+    }
+
+    if (!isAssignmentValid(eval2VarType(ctx.varInfo->expectedReturnType), eval2VarType(optExprNode->evalType)))
+    {
+        const std::string fname = color::white() + toString(ctx.varInfo->currentFuncSymbol->name) + color::restore();
+        parserError(ctx, "function '" + fname + "' was expected to return " +
+                    toString(eval2VarType(ctx.varInfo->expectedReturnType)));
+    }
+
+    return ctx.syntTree->newNode(STNode::ReturnStatement, optExprNode,
+                                 nullptr, nullptr, optExprNode->evalType);
 }
 
 static void collectObjMembers(ParseContext & ctx, const SyntaxTreeNode * root, Object * objOut)
@@ -1324,19 +1379,20 @@ Variant::Type eval2VarType(const STEval stEval)
 {
     switch (stEval)
     {
-    case STEval::Null   : return Variant::Type::Null;
-    case STEval::Int    : return Variant::Type::Integer;
-    case STEval::Long   : return Variant::Type::Integer;
-    case STEval::Float  : return Variant::Type::Float;
-    case STEval::Double : return Variant::Type::Float;
-    case STEval::Bool   : return Variant::Type::Integer;
-    case STEval::Str    : return Variant::Type::Str;
-    case STEval::Array  : return Variant::Type::Array;
-    case STEval::Range  : return Variant::Type::Range;
-    case STEval::Any    : return Variant::Type::Any;
-    case STEval::Func   : return Variant::Type::Function;
-    case STEval::Tid    : return Variant::Type::Tid;
-    case STEval::UDT    : return Variant::Type::Object;
+    case STEval::Null    : return Variant::Type::Null;
+    case STEval::VarArgs : return Variant::Type::Array;
+    case STEval::Int     : return Variant::Type::Integer;
+    case STEval::Long    : return Variant::Type::Integer;
+    case STEval::Float   : return Variant::Type::Float;
+    case STEval::Double  : return Variant::Type::Float;
+    case STEval::Bool    : return Variant::Type::Integer;
+    case STEval::Str     : return Variant::Type::Str;
+    case STEval::Array   : return Variant::Type::Array;
+    case STEval::Range   : return Variant::Type::Range;
+    case STEval::Any     : return Variant::Type::Any;
+    case STEval::Func    : return Variant::Type::Function;
+    case STEval::Tid     : return Variant::Type::Tid;
+    case STEval::UDT     : return Variant::Type::Object;
     default : MOON_INTERNAL_EXCEPTION("can't convert STEval '" + toString(stEval) + "' to Variant type!");
     } // switch (stEval)
 }
@@ -1363,19 +1419,20 @@ const TypeId * eval2TypeId(const TypeTable & typeTable, const STEval stEval)
 {
     switch (stEval)
     {
-    case STEval::Null   : return typeTable.nullTypeId;
-    case STEval::Int    : return typeTable.intTypeId;
-    case STEval::Long   : return typeTable.longTypeId;
-    case STEval::Float  : return typeTable.floatTypeId;
-    case STEval::Double : return typeTable.doubleTypeId;
-    case STEval::Bool   : return typeTable.boolTypeId;
-    case STEval::Str    : return typeTable.strTypeId;
-    case STEval::Array  : return typeTable.arrayTypeId;
-    case STEval::Range  : return typeTable.rangeTypeId;
-    case STEval::Any    : return typeTable.anyTypeId;
-    case STEval::Func   : return typeTable.functionTypeId;
-    case STEval::Tid    : return typeTable.tidTypeId;
-    case STEval::UDT    : return typeTable.objectTypeId;
+    case STEval::Null    : return typeTable.nullTypeId;
+    case STEval::VarArgs : return typeTable.arrayTypeId;
+    case STEval::Int     : return typeTable.intTypeId;
+    case STEval::Long    : return typeTable.longTypeId;
+    case STEval::Float   : return typeTable.floatTypeId;
+    case STEval::Double  : return typeTable.doubleTypeId;
+    case STEval::Bool    : return typeTable.boolTypeId;
+    case STEval::Str     : return typeTable.strTypeId;
+    case STEval::Array   : return typeTable.arrayTypeId;
+    case STEval::Range   : return typeTable.rangeTypeId;
+    case STEval::Any     : return typeTable.anyTypeId;
+    case STEval::Func    : return typeTable.functionTypeId;
+    case STEval::Tid     : return typeTable.tidTypeId;
+    case STEval::UDT     : return typeTable.objectTypeId;
     default : MOON_INTERNAL_EXCEPTION("can't convert STEval '" + toString(stEval) + "' to TypeId!");
     } // switch (stEval)
 }

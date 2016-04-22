@@ -614,6 +614,15 @@ bool isAssignmentValid(const Variant::Type destType, const Variant::Type srcType
     {
         return true;
     }
+    // Null can assign to object and object-like built-ins (strings, arrays, tid, etc).
+    else if (srcType == Variant::Type::Null)
+    {
+        return (destType == Variant::Type::Function ||
+                destType == Variant::Type::Tid      ||
+                destType == Variant::Type::Str      ||
+                destType == Variant::Type::Object   ||
+                destType == Variant::Type::Array);
+    }
     else // Types must match exactly.
     {
         return destType == srcType;
@@ -659,14 +668,7 @@ void performAssignmentWithConversion(Variant & dest, const Variant source)
     #define CASE_COMMON_TYPE(destType, destVal)              \
         case destType :                                      \
         {                                                    \
-            if (source.type == destType)                     \
-            {                                                \
-                dest.value.destVal = source.value.destVal;   \
-            }                                                \
-            else                                             \
-            {                                                \
-                MOON_UNREACHABLE();                          \
-            }                                                \
+            dest.value.destVal = source.value.destVal;       \
             break;                                           \
         }
 
@@ -677,13 +679,13 @@ void performAssignmentWithConversion(Variant & dest, const Variant source)
     CASE_NUMBER_TYPE( Variant::Type::Float,    asFloat    );
 
     // Common type that require exact type matching:
+    CASE_COMMON_TYPE( Variant::Type::Null,     asVoidPtr  );
     CASE_COMMON_TYPE( Variant::Type::Function, asFunction );
     CASE_COMMON_TYPE( Variant::Type::Tid,      asTypeId   );
     CASE_COMMON_TYPE( Variant::Type::Str,      asString   );
     CASE_COMMON_TYPE( Variant::Type::Object,   asObject   );
     CASE_COMMON_TYPE( Variant::Type::Array,    asArray    );
     CASE_COMMON_TYPE( Variant::Type::Range,    asRange    );
-    CASE_COMMON_TYPE( Variant::Type::Null,     asVoidPtr  );
 
     // The special 'Any' type:
     case Variant::Type::Any :

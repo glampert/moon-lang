@@ -122,8 +122,8 @@ public:
     Lexer(const Lexer &) = delete;
     Lexer & operator = (const Lexer &) = delete;
 
-    Lexer(ParseContext & parseCtx, std::istream & source)
-        : yyFlexLexer { &source  }
+    Lexer(ParseContext & parseCtx, std::istream * source)
+        : yyFlexLexer { source   }
         , ctx         { parseCtx }
     { }
 

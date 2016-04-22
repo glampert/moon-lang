@@ -4,6 +4,18 @@
 # - debug
 # - release
 # Enable higher optimizations on release and maybe also LTO
+#
+# Consider splitting the source/ in:
+# lib/
+# cli/
+# Build lib as a static library and cli as a command-line tool.
+# This makefile should allows building one or both.
+#
+# We should probably also have a separate test binary that runs
+# all the test script in one go, so we can run 'make test' from the cmdline
+#
+# A separate Windows build (VS project)
+#
 
 #------------------------------------------------
 

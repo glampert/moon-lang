@@ -206,11 +206,12 @@ static void testScriptArray(VM & vm)
 
     constexpr int M = 5;
     constexpr int N = 15;
-    const int testData[M] = { 1, 2, 3, 4, 5 };
+    const Int32 testData[M] = { 1, 2, 3, 4, 5 };
 
     // Append the contents of another array:
     auto other = Array::newFromRawData(vm, vm.types.intTypeId,
-                                       testData, arrayLength(testData));
+                                       testData, arrayLength(testData),
+                                       sizeof(Int32), Variant::Type::Integer);
 
     MOON_ASSERT(other->getItemSize()    == sizeof(Int32));
     MOON_ASSERT(other->getArrayLength() == arrayLength(testData));
@@ -233,6 +234,8 @@ static void testScriptArray(VM & vm)
 
     // Change backing store capacity:
     array->reserveCapacity(128);
+    MOON_ASSERT(array->isSmallArray()     == false);
+    MOON_ASSERT(array->isDynamicArray()   == true);
     MOON_ASSERT(array->getArrayLength()   == N + other->getArrayLength());
     MOON_ASSERT(array->getArrayCapacity() >= 128);
 
@@ -271,8 +274,95 @@ static void testScriptArray(VM & vm)
     MOON_ASSERT(array->getArrayLength() == 0);
     MOON_ASSERT(array->getItemSize()    == sizeof(Int32));
 
+    // Now let's try pushing a few floats to test the implicit type conversion:
+    for (int i = 0; i < N; ++i)
+    {
+        Variant var{ Variant::Type::Float };
+        var.value.asFloat = static_cast<Float64>(i) + 0.1;
+        array->push(var);
+    }
+    // And validate (now truncated integers):
+    for (int i = 0; i < N; ++i)
+    {
+        Variant var = array->getIndex(i);
+        MOON_ASSERT(var.type == Variant::Type::Integer);
+        MOON_ASSERT(var.value.asInteger == i);
+    }
+
+    // And finally, test the elusive 'Any' type:
+    auto anyArray = Array::newEmpty(vm, vm.types.anyTypeId, /* capacityHint = */ 2);
+    {
+        // Put a few integers:
+        for (int i = 0; i < N; ++i)
+        {
+            Variant var{ Variant::Type::Integer };
+            var.value.asInteger = i;
+            anyArray->push(var);
+        }
+        // A few floats...
+        for (int i = 0; i < N; ++i)
+        {
+            Variant var{ Variant::Type::Float };
+            var.value.asFloat = static_cast<Float64>(i) + 0.5;
+            anyArray->push(var);
+        }
+
+        // A couple ranges:
+        Variant r{ Variant::Type::Range };
+        r.value.asRange = Range{ 0, 10 };
+        anyArray->push(r);
+        r.value.asRange = Range{ -1, 1 };
+        anyArray->push(r);
+
+        // And finally, other Anys:
+        Variant a{ Variant::Type::Any };
+        a.anyType = Variant::Type::Integer;
+        a.value.asInteger = 0xAA;
+        anyArray->push(a);
+        a.anyType = Variant::Type::Float;
+        a.value.asFloat = 3.14;
+        anyArray->push(a);
+
+        // Now validate the above:
+        int i = 0;
+        for (int j = 0; j < N; ++j)
+        {
+            Variant var = anyArray->getIndex(i++);
+            MOON_ASSERT(var.type    == Variant::Type::Any);
+            MOON_ASSERT(var.anyType == Variant::Type::Integer);
+            MOON_ASSERT(var.value.asInteger == j);
+        }
+        for (int j = 0; j < N; ++j)
+        {
+            Variant var = anyArray->getIndex(i++);
+            MOON_ASSERT(var.type    == Variant::Type::Any);
+            MOON_ASSERT(var.anyType == Variant::Type::Float);
+            MOON_ASSERT(var.value.asFloat == static_cast<Float64>(j) + 0.5);
+        }
+
+        // Two ranges and two more numbers:
+        const Variant r0 = anyArray->getIndex(i++);
+        const Variant r1 = anyArray->getIndex(i++);
+        MOON_ASSERT(r0.type    == Variant::Type::Any);
+        MOON_ASSERT(r0.anyType == Variant::Type::Range);
+        MOON_ASSERT(r1.type    == Variant::Type::Any);
+        MOON_ASSERT(r1.anyType == Variant::Type::Range);
+        MOON_ASSERT(r0.value.asRange.begin ==  0 && r0.value.asRange.end == 10);
+        MOON_ASSERT(r1.value.asRange.begin == -1 && r1.value.asRange.end == 1);
+
+        const Variant a0 = anyArray->getIndex(i++);
+        const Variant a1 = anyArray->getIndex(i++);
+        MOON_ASSERT(a0.type    == Variant::Type::Any);
+        MOON_ASSERT(a0.anyType == Variant::Type::Integer);
+        MOON_ASSERT(a1.type    == Variant::Type::Any);
+        MOON_ASSERT(a1.anyType == Variant::Type::Float);
+        MOON_ASSERT(a0.value.asInteger == 0xAA);
+        MOON_ASSERT(a1.value.asFloat   == 3.14);
+    }
+
     freeRuntimeObject(vm, array);
     freeRuntimeObject(vm, other);
+    freeRuntimeObject(vm, anyArray);
 
     logStream() << "Moon: Script Array test passed.\n";
 }
@@ -343,6 +433,14 @@ int main(int argc, const char * argv[])
         logStream() << "sizeof(std::string)       = " << sizeof(std::string) << std::endl;
         logStream() << "sizeof(VarInfo)           = " << sizeof(std::string) << std::endl;
         logStream() << "\n";
+
+        DefaultFileIOCallbacks iocb;
+
+        OpenScriptRAII raii1{ "test.ml", &iocb, &FileIOCallbacks::openScript };
+        MOON_ASSERT(raii1.isOpen() == true);
+
+        OpenScriptRAII raii2{ "inexistent.ml", &iocb, &FileIOCallbacks::openScript };
+        MOON_ASSERT(raii2.isOpen() == false);
     }
 
     try
@@ -352,9 +450,9 @@ int main(int argc, const char * argv[])
         std::string srcFile = "test.ml";
         std::string currText;
 
-        VM vm;
+        VM vm;//{false, VM::DefaultStackSize};
         Compiler compiler;
-        Lexer lexer{ parseCtx, std::cin };
+        Lexer lexer{ parseCtx, &std::cin };
         Parser parser{ parseCtx };
         VarInfoTable varInfo{ parseCtx };
 
