@@ -163,86 +163,98 @@ void to_string(VM & vm, Stack::Slice args) // (varargs) -> string
         switch (*flag)
         {
         case 'b' : // boolean
-            outputStr = toString(var->toBool());
-            // Anything but zero/null will be true, including negative numbers.
-            break;
-
+            {
+                outputStr = toString(var->toBool());
+                // Anything but zero/null will be true, including negative numbers.
+                break;
+            }
         case 'c' : // character
-            if (var->type == Variant::Type::Integer)
             {
-                outputStr = strPrintF("%c", static_cast<char>(var->value.asInteger));
+                if (var->type == Variant::Type::Integer)
+                {
+                    outputStr = strPrintF("%c", static_cast<char>(var->value.asInteger));
+                }
+                else
+                {
+                    outputStr = "?";
+                }
+                break;
             }
-            else
-            {
-                outputStr = "?";
-            }
-            break;
-
         case 'f' : // float
-            if (var->type == Variant::Type::Float)
             {
-                outputStr = toString(var->value.asFloat);
+                if (var->type == Variant::Type::Float)
+                {
+                    outputStr = toString(var->value.asFloat);
+                }
+                else if (var->type == Variant::Type::Integer)
+                {
+                    outputStr = toString(var->value.asInteger);
+                }
+                else // Not a number
+                {
+                    outputStr = "nan";
+                }
+                break;
             }
-            else if (var->type == Variant::Type::Integer)
-            {
-                outputStr = toString(var->value.asInteger);
-            }
-            else // Not a number
-            {
-                outputStr = "nan";
-            }
-            break;
-
         case 'l' : // long or
         case 'i' : // integer
-            if (var->type == Variant::Type::Float)
             {
-                // Floats will get truncated to integer.
-                outputStr = toString(static_cast<Int64>(var->value.asFloat));
+                if (var->type == Variant::Type::Float)
+                {
+                    // Floats will get truncated to integer.
+                    outputStr = toString(static_cast<Int64>(var->value.asFloat));
+                }
+                else if (var->type == Variant::Type::Integer)
+                {
+                    outputStr = toString(var->value.asInteger);
+                }
+                else // Not a number
+                {
+                    outputStr = "nan";
+                }
+                break;
             }
-            else if (var->type == Variant::Type::Integer)
-            {
-                outputStr = toString(var->value.asInteger);
-            }
-            else // Not a number
-            {
-                outputStr = "nan";
-            }
-            break;
-
         case 'h' : // hexadecimal
-            outputStr = strPrintF("0x%016llX", static_cast<UInt64>(var->value.asInteger));
-            break;
-
+            {
+                const UInt64 value = var->value.asInteger;
+                outputStr = strPrintF("0x%016llX", value);
+                break;
+            }
         case 'p' : // pointer
-            if (var->type == Variant::Type::Integer || var->type == Variant::Type::Float)
             {
-                // Types stored directly into the Variant can print the Variant's own address.
-                outputStr = strPrintF("0x%016llX", static_cast<UInt64>(
-                                      reinterpret_cast<std::uintptr_t>(var)));
+                UInt64 address;
+                if (var->type == Variant::Type::Integer ||
+                    var->type == Variant::Type::Float)
+                {
+                    // Types stored directly into the Variant can print the Variant's own address.
+                    address = static_cast<UInt64>(reinterpret_cast<std::uintptr_t>(var));
+                    outputStr = strPrintF("0x%016llX", address);
+                }
+                else // Objects print the address of the object:
+                {
+                    address = static_cast<UInt64>(reinterpret_cast<std::uintptr_t>(var->value.asVoidPtr));
+                    outputStr = strPrintF("0x%016llX", address);
+                }
+                break;
             }
-            else // Objects print the address of the object:
-            {
-                outputStr = strPrintF("0x%016llX", static_cast<UInt64>(
-                                      reinterpret_cast<std::uintptr_t>(var->value.asVoidPtr)));
-            }
-            break;
-
         case 't' : // type tag
-            outputStr = toString(var->type);
-            break;
-
+            {
+                outputStr = toString(var->type);
+                break;
+            }
         case 'o' : // object (all members recursive)
-            if (var->type == Variant::Type::Object && var->value.asObject != nullptr)
             {
-                outputStr = var->value.asObject->getStringRepresentation();
+                if (var->type == Variant::Type::Object &&
+                    var->value.asObject != nullptr)
+                {
+                    outputStr = var->value.asObject->getStringRepresentation();
+                }
+                else // Not an object. Print as if no flag given.
+                {
+                    outputStr = toString(*var);
+                }
+                break;
             }
-            else // Not an object. Print as if no flag given.
-            {
-                outputStr = toString(*var);
-            }
-            break;
-
         default :
             MOON_RUNTIME_EXCEPTION("to_string() called with unrecognized format flag '" + toString(flag) + "'");
         } // switch (*flag)

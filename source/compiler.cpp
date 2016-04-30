@@ -83,7 +83,7 @@ bool DefaultFileIOCallbacks::openScript(const std::string & scriptFile, std::ist
     MOON_ASSERT(streamOut != nullptr);
 
     std::ifstream inFile;
-    inFile.exceptions(0); // Don't throw on error.
+    inFile.exceptions(std::ifstream::goodbit); // Don't throw on error.
     inFile.open(scriptFile);
 
     const bool succeeded = (inFile.is_open() && inFile.good());
