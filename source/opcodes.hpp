@@ -76,7 +76,7 @@ enum class OpCode : UInt8
 
     // operand is the name of the iterator
     ForLoopPrep,
-    ForLoopTest,
+    ForLoopTest, // pushes true if the loop is NOT done, false if finished
     ForLoopStep,
 
     MatchPrep, // pops one value

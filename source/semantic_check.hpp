@@ -25,9 +25,9 @@ namespace moon
 struct VarInfo final
 {
     const TypeId   *     typeId;    // Runtime TypeId for UDTs and native types alike.
-    const Function *     funcPtr;   // If the var is a pointer-to-function, we resolve it at compile-time.
+    const Function *     funcPtr;   // If the var is a pointer-to-function, we can resolve it at compile-time.
     Variant::Type        varType;   // Final Variant type. Matches stEval.
-    SyntaxTreeNode::Eval arrayEval; // Only relevant if varType=Array.
+    SyntaxTreeNode::Eval arrayEval; // Only relevant if varType=Array. Data type stored in an array var.
     SyntaxTreeNode::Eval stEval;    // Matches varType; Cached conversion for frequent use.
 };
 
@@ -48,12 +48,19 @@ public:
     void beginUDT(const Symbol * typeNameSymbol, const char * elementName);
     void endUDT();
 
+    void beginForLoop(const Symbol * iteratorVarSymbol, const SyntaxTreeNode * iterableNode);
+    void endForLoop();
+
     const VarInfo * findVar(const Symbol * symbol) const;
     const VarInfo * findGlobalVar(const Symbol * symbol) const;
     const VarInfo * findFuncLocalVar(const Symbol * symbol) const;
 
     void addGlobalVar(const Symbol * varNameSymbol, const VarInfo & vi);
     void addFuncLocalVar(const Symbol * varNameSymbol, const VarInfo & vi);
+
+    bool removeVar(const Symbol * symbol);
+    bool removeGlobalVar(const Symbol * symbol);
+    bool removeFuncLocalVar(const Symbol * symbol);
 
     bool isParsingFunction() const noexcept { return currentFuncSymbol != nullptr; }
     bool isParsingUDT()      const noexcept { return currentUDTSymbol  != nullptr; }
@@ -63,9 +70,11 @@ public:
     const Symbol * currentFuncSymbol = nullptr;
     const Symbol * currentUDTSymbol  = nullptr;
 
-    // Stuff use only inside functions:
+    // Stuff use only inside loops/functions:
+    bool insideLoopStmt  = false;
     bool foundReturnStmt = false;
     SyntaxTreeNode::Eval expectedReturnType = SyntaxTreeNode::Eval::Void;
+    const SyntaxTreeNode * forLoopIteratorNode = nullptr;
 
 private:
 
@@ -85,6 +94,11 @@ private:
     // has a HashTable with a record for every local var + parameters.
     std::vector<FuncRecord> localVars;
     VarTable * currentFuncLocals = nullptr;
+
+    // Small stack for nested for-loops:
+    static constexpr int MaxNestedForLoops = 64;
+    const SyntaxTreeNode * forLoopIterStack[MaxNestedForLoops];
+    int forLoopIterStackTop = 0;
 };
 
 // ========================================================
@@ -149,11 +163,13 @@ SyntaxTreeNode * newCompareNode(ParseContext & ctx, const SyntaxTreeNode::Type t
 //
 // Loops:
 //
-SyntaxTreeNode * newLoopNode(ParseContext & ctx, const SyntaxTreeNode::Type nodeType,
-                             SyntaxTreeNode * loopCondNode, const SyntaxTreeNode * bodyStatementListNode,
-                             const Symbol * iteratorVarSymbol = nullptr);
+SyntaxTreeNode * newLoopNode(ParseContext & ctx, SyntaxTreeNode::Type nodeType, SyntaxTreeNode * loopCondNode,
+                             const SyntaxTreeNode * bodyStatementListNode);
 
-SyntaxTreeNode * newLoopJumpNode(ParseContext & ctx, const SyntaxTreeNode::Type nodeType);
+SyntaxTreeNode * newForLoopIteratorNode(ParseContext & ctx, const SyntaxTreeNode * iterableNode,
+                                        const Symbol * iteratorVarSymbol);
+
+SyntaxTreeNode * newLoopJumpNode(ParseContext & ctx, SyntaxTreeNode::Type nodeType);
 
 //
 // Function-related stuff:

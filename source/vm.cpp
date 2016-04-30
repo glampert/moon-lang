@@ -362,6 +362,84 @@ static void opTypecast(VM & vm, UInt32)
     vm.stack.push(destVar);
 }
 
+static void opForLoopPrep(VM & vm, UInt32)
+{
+    Variant forParam = vm.stack.pop();
+    Variant forIter  = vm.stack.pop();
+    Variant forIdx   = vm.stack.pop();
+
+    if (forParam.type == Variant::Type::Range)
+    {
+        forIdx.value.asInteger  = forParam.value.asRange.begin;
+        forIter.value.asInteger = forParam.value.asRange.begin;
+    }
+    else if (forParam.type == Variant::Type::Array)
+    {
+        forIdx.value.asInteger = 0;
+        performAssignmentWithConversion(forIter, forParam.value.asArray->getIndex(0));
+    }
+    else
+    {
+        MOON_RUNTIME_EXCEPTION("opForLoopPrep: for loop param is not a range or array!");
+    }
+
+    vm.stack.push(forIter);
+    vm.stack.push(forIdx);
+    // Gets written back to the 'i' and '__for_idx__' vars
+}
+
+static void opForLoopTest(VM & vm, UInt32)
+{
+    Variant forParam = vm.stack.pop();
+    Variant forIdx   = vm.stack.pop();
+    Variant continueLooping{ Variant::Type::Integer };
+
+    if (forParam.type == Variant::Type::Range)
+    {
+        continueLooping.value.asInteger = (forIdx.value.asInteger != forParam.value.asRange.end);
+    }
+    else if (forParam.type == Variant::Type::Array)
+    {
+        continueLooping.value.asInteger = (forIdx.value.asInteger != forParam.value.asArray->getArrayLength());
+    }
+    else
+    {
+        MOON_RUNTIME_EXCEPTION("opForLoopTest: for loop param is not a range or array!");
+    }
+
+    vm.stack.push(continueLooping);
+}
+
+static void opForLoopStep(VM & vm, UInt32)
+{
+    Variant forParam = vm.stack.pop();
+    Variant forIter  = vm.stack.pop();
+    Variant forIdx   = vm.stack.pop();
+
+    forIdx.value.asInteger += 1;
+    const int idx = forIdx.value.asInteger;
+
+    if (forParam.type == Variant::Type::Range)
+    {
+        forIter.value.asInteger = idx;
+    }
+    else if (forParam.type == Variant::Type::Array)
+    {
+        if (idx < forParam.value.asArray->getArrayLength())
+        {
+            performAssignmentWithConversion(forIter, forParam.value.asArray->getIndex(idx));
+        }
+    }
+    else
+    {
+        MOON_RUNTIME_EXCEPTION("opForLoopStep: for loop param is not a range or array!");
+    }
+
+    vm.stack.push(forIter);
+    vm.stack.push(forIdx);
+    // Gets written back to the 'i' and '__for_idx__' vars
+}
+
 // ----------------------------------------------------------------------------
 // opHandlerCallbacks[]:
 //
@@ -372,7 +450,7 @@ static void opTypecast(VM & vm, UInt32)
 static const OpCodeHandlerCB opHandlerCallbacks[]
 {
     &opNOOP,                            // NoOp
-    &opNOOP,                            // ProgStart
+    &opNOOP,                            // ProgStart TODO: allow user hooking up some callback?
     &opProgEnd,                         // ProgEnd
     &opJump,                            // Jmp
     &opJumpIfTrue,                      // JmpIfTrue
@@ -388,9 +466,9 @@ static const OpCodeHandlerCB opHandlerCallbacks[]
     &opNewObj,                          // NewObj
     &opFuncStart,                       // FuncStart
     &opFuncEnd,                         // FuncEnd
-    &opNOOP,                            // ForLoopPrep
-    &opNOOP,                            // ForLoopTest
-    &opNOOP,                            // ForLoopStep
+    &opForLoopPrep,                     // ForLoopPrep
+    &opForLoopTest,                     // ForLoopTest
+    &opForLoopStep,                     // ForLoopStep
     &opNOOP,                            // MatchPrep
     &opNOOP,                            // MatchTest
     &opArraySubscript,                  // ArraySubscript

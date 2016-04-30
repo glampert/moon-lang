@@ -238,6 +238,15 @@ const Symbol * SymbolTable::findOrDefineStrValue(const char * value)
     return addStrLiteral(value, Symbol::LineNumBuiltIn);
 }
 
+const Symbol * SymbolTable::findOrDefineIdentifier(const char * name)
+{
+    if (auto symbol = findSymbol(name))
+    {
+        return symbol;
+    }
+    return addIdentifier(name, Symbol::LineNumBuiltIn);
+}
+
 const Symbol * SymbolTable::addSymbol(ConstRcString * name, const int declLineNum,
                                       const Symbol::Type type, const Symbol::Value value)
 {

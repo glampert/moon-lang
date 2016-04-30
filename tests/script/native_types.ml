@@ -29,7 +29,6 @@ assert(type_of(i_val_3) == type_of(long));
 assert(type_of(i_val_4) == type_of(long));
 assert(type_of(i_val_5) == type_of(long));
 assert(type_of(i_val_6) == type_of(long));
-
 // ----------------------------------------------
 // Floating-point numbers:
 // ----------------------------------------------
@@ -64,7 +63,7 @@ assert(b_val_1 == true);
 assert(b_val_2 == false);
 assert(b_val_3 == false);
 
-// Booleans also expand to integers.
+// Booleans also expand to integers (long, more specifically).
 assert(type_of(b_val_1) == type_of(long));
 assert(type_of(b_val_2) == type_of(long));
 assert(type_of(b_val_3) == type_of(long));
@@ -194,7 +193,6 @@ assert(type_of(any_val) == type_of(array));
 any_val = temp_rng;
 assert(any_val == temp_rng);
 assert(type_of(any_val) == type_of(range));
-
 // ----------------------------------------------
 // Type Id (tid):
 // ----------------------------------------------

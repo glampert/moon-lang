@@ -617,7 +617,8 @@ bool isAssignmentValid(const Variant::Type destType, const Variant::Type srcType
     // Null can assign to object and object-like built-ins (strings, arrays, tid, etc).
     else if (srcType == Variant::Type::Null)
     {
-        return (destType == Variant::Type::Function ||
+        return (destType == Variant::Type::Null     ||
+                destType == Variant::Type::Function ||
                 destType == Variant::Type::Tid      ||
                 destType == Variant::Type::Str      ||
                 destType == Variant::Type::Object   ||

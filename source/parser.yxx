@@ -618,23 +618,27 @@ continue_statement
     ;
 
 loop_statement
-    : "loop" optional_statement_list end_statement
+    : "loop" { ctx.varInfo->insideLoopStmt = true; } optional_statement_list end_statement
         {
-            $$ = newLoopNode(ctx, STNode::LoopStatement, nullptr, $2);
+            $$ = newLoopNode(ctx, STNode::LoopStatement, nullptr, $3);
+            ctx.varInfo->insideLoopStmt = false;
         }
     ;
 
 while_statement
-    : "while" expression "do" optional_statement_list end_statement
+    : "while" expression "do" { ctx.varInfo->insideLoopStmt = true; } optional_statement_list end_statement
         {
-            $$ = newLoopNode(ctx, STNode::WhileStatement, $2, $4);
+            $$ = newLoopNode(ctx, STNode::WhileStatement, $2, $5);
+            ctx.varInfo->insideLoopStmt = false;
         }
     ;
 
 for_statement
-    : "for" IDENTIFIER "in" range_or_array_or_ident_or_call "do" optional_statement_list end_statement
+    : "for" IDENTIFIER "in" range_or_array_or_ident_or_call "do"
+    { ctx.varInfo->beginForLoop($2, $4); } optional_statement_list end_statement
         {
-            $$ = newLoopNode(ctx, STNode::ForStatement, $4, $6, $2);
+            $$ = newLoopNode(ctx, STNode::ForStatement, $4, $7);
+            ctx.varInfo->endForLoop();
         }
     ;
 

@@ -95,7 +95,7 @@ std::string toString(const SyntaxTreeNode::Eval evalType)
         color::yellow() + std::string("EVAL_FLOAT")   + color::restore(),
         color::yellow() + std::string("EVAL_DOUBLE")  + color::restore(),
         color::yellow() + std::string("EVAL_BOOL")    + color::restore(),
-        color::yellow() + std::string("EVAL_STRING")  + color::restore(),
+        color::yellow() + std::string("EVAL_STR")     + color::restore(),
         color::yellow() + std::string("EVAL_ARRAY")   + color::restore(),
         color::yellow() + std::string("EVAL_RANGE")   + color::restore(),
         color::yellow() + std::string("EVAL_ANY")     + color::restore(),

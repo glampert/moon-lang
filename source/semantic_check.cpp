@@ -62,6 +62,34 @@ void VarInfoTable::endUDT()
     currentUDTSymbol = nullptr;
 }
 
+void VarInfoTable::beginForLoop(const Symbol * iteratorVarSymbol, const SyntaxTreeNode * iterableNode)
+{
+    if (forLoopIteratorNode != nullptr)
+    {
+        if (forLoopIterStackTop == MaxNestedForLoops)
+        {
+            MOON_INTERNAL_EXCEPTION("too many nested for loops!"); // Some nasty loops :P
+        }
+        forLoopIterStack[forLoopIterStackTop++] = forLoopIteratorNode;
+    }
+
+    insideLoopStmt = true;
+    forLoopIteratorNode = newForLoopIteratorNode(ctx, iterableNode, iteratorVarSymbol);
+}
+
+void VarInfoTable::endForLoop()
+{
+    insideLoopStmt = false;
+    if (forLoopIterStackTop > 0)
+    {
+        forLoopIteratorNode = forLoopIterStack[--forLoopIterStackTop];
+    }
+    else
+    {
+        forLoopIteratorNode = nullptr;
+    }
+}
+
 const VarInfo * VarInfoTable::findVar(const Symbol * symbol) const
 {
     const VarInfo * vi = nullptr;
@@ -120,6 +148,37 @@ void VarInfoTable::addFuncLocalVar(const Symbol * varNameSymbol, const VarInfo &
     MOON_ASSERT(varNameSymbol != nullptr);
     MOON_ASSERT(currentFuncLocals != nullptr);
     currentFuncLocals->insert(std::make_pair(varNameSymbol, vi));
+}
+
+bool VarInfoTable::removeVar(const Symbol * symbol)
+{
+    bool removed;
+    if (isParsingFunction())
+    {
+        removed = removeFuncLocalVar(symbol);
+        if (!removed) // Okay, try the globals now
+        {
+            removed = removeGlobalVar(symbol);
+        }
+    }
+    else // Must be a global
+    {
+        removed = removeGlobalVar(symbol);
+    }
+    return removed;
+}
+
+bool VarInfoTable::removeGlobalVar(const Symbol * symbol)
+{
+    MOON_ASSERT(symbol != nullptr);
+    return globalVars.erase(symbol) != 0;
+}
+
+bool VarInfoTable::removeFuncLocalVar(const Symbol * symbol)
+{
+    MOON_ASSERT(symbol != nullptr);
+    MOON_ASSERT(currentFuncLocals != nullptr);
+    return currentFuncLocals->erase(symbol) != 0;
 }
 
 // ========================================================
@@ -608,6 +667,17 @@ SyntaxTreeNode * newBinaryOpNode(ParseContext & ctx, const STNode type,
     }
     else
     {
+        if (lhs->evalType == STEval::Undefined)
+        {
+            const std::string name = color::white() + toString(lhs->symbol->name) + color::restore();
+            parserError(ctx, "undefined identifier '" + name + "' on left-hand-side of expression");
+        }
+        if (rhs->evalType == STEval::Undefined)
+        {
+            const std::string name = color::white() + toString(rhs->symbol->name) + color::restore();
+            parserError(ctx, "undefined identifier '" + name + "' on right-hand-side of expression");
+        }
+
         if (lhs->evalType == STEval::Void || rhs->evalType == STEval::Void)
         {
             if (binOp == OpCode::StoreGlob)
@@ -649,6 +719,12 @@ SyntaxTreeNode * newBinaryOpNode(ParseContext & ctx, const STNode type,
 SyntaxTreeNode * newUnaryOpNode(ParseContext & ctx, const STNode type,
                                 const OpCode unaryOp, const SyntaxTreeNode * operand)
 {
+    if (operand->evalType == STEval::Undefined)
+    {
+        const std::string name = color::white() + toString(operand->symbol->name) + color::restore();
+        parserError(ctx, "undefined identifier '" + name + "' on unary expression");
+    }
+
     const Variant::Type varType = eval2VarType(operand->evalType);
     if (!isUnaryOpValid(unaryOp, varType))
     {
@@ -749,39 +825,123 @@ SyntaxTreeNode * newTypeofNode(ParseContext & ctx, SyntaxTreeNode * exprOrTypeNo
     return ctx.syntTree->newNode(STNode::ExprTypeof, nullptr, exprOrTypeNode, nullptr, STEval::Tid);
 }
 
-SyntaxTreeNode * newLoopNode(ParseContext & ctx, const STNode nodeType, SyntaxTreeNode * loopCondNode,
-                             const SyntaxTreeNode * bodyStatementListNode, const Symbol * iteratorVarSymbol)
+SyntaxTreeNode * newForLoopIteratorNode(ParseContext & ctx, const SyntaxTreeNode * iterableNode,
+                                        const Symbol * iteratorVarSymbol)
 {
-    if (nodeType == STNode::LoopStatement)
+    STEval stEval;
+    const STEval evalType = iterableNode->evalType;
+    const STNode nodeType = iterableNode->nodeType;
+
+    if (evalType == STEval::Range)
     {
-        return ctx.syntTree->newNode(STNode::LoopStatement, bodyStatementListNode);
+        // Ranges are just a pair of integer numbers.
+        stEval = STEval::Long;
     }
-    else if (nodeType == STNode::WhileStatement)
+    else if (evalType == STEval::Array)
+    {
+        if (nodeType == STNode::ExprArrayLiteral)
+        {
+            // Second child is a dummy node that caries the underlaying array type.
+            stEval = iterableNode->getChild(2)->evalType;
+        }
+        else if (nodeType == STNode::ExprArraySubscript || nodeType == STNode::ExprFuncCall)
+        {
+            // Array of arrays or function returning array.
+            // We won't backtrack to the declaration to find out the exact type stored
+            // in the array, so the var will be 'Any' and we will rely on runtime checking.
+            stEval = STEval::Any;
+        }
+        else // Variable of type array:
+        {
+            // Lookup the underlaying data type stored in this array:
+            const VarInfo * vi = ctx.varInfo->findVar(iterableNode->symbol);
+            MOON_ASSERT(vi != nullptr);
+            stEval = vi->arrayEval;
+        }
+    }
+    else // Error:
+    {
+        const std::string errorStr = ((evalType == STEval::Undefined) ? "is undefined" : "is not an iterable type");
+        if (iterableNode->symbol != nullptr)
+        {
+            const std::string name = color::white() + toString(iterableNode->symbol->name) + color::restore();
+            parserError(ctx, "for loop argument '" + name + "' " + errorStr);
+        }
+        else
+        {
+            parserError(ctx, "for loop argument " + errorStr);
+        }
+    }
+
+    // These variables are implicitly declared inside every for loop to serve as auxiliary loop counters.
+    char tempName1[256];
+    char tempName2[256];
+    std::snprintf(tempName1, arrayLength(tempName1), "__for_idx__%i", ctx.lexer->lineno());
+    std::snprintf(tempName2, arrayLength(tempName2), "__for_prm__%i", ctx.lexer->lineno());
+    const Symbol * internalCounterSymbol = ctx.symTable->findOrDefineIdentifier(tempName1);
+    const Symbol * internalParamSymbol   = ctx.symTable->findOrDefineIdentifier(tempName2);
+
+    const SyntaxTreeNode * iteratorTypeNode = newTypeIdNode(ctx, stEval);
+    SyntaxTreeNode * iteratorNode = newVarDeclNode(ctx, iteratorVarSymbol, nullptr,
+                                                   iteratorTypeNode, stEval);
+
+    const SyntaxTreeNode * internalCounterTypeNode = newTypeIdNode(ctx, STEval::Long);
+    SyntaxTreeNode * internalCounterNode = newVarDeclNode(ctx, internalCounterSymbol, nullptr,
+                                                          internalCounterTypeNode, STEval::Long);
+
+    const SyntaxTreeNode * internalParamTypeNode = newTypeIdNode(ctx, evalType);
+    SyntaxTreeNode * internalParamNode = newVarDeclNode(ctx, internalParamSymbol, nullptr,
+                                                        internalParamTypeNode, evalType);
+
+    iteratorNode->setChild(2, internalCounterNode);
+    internalCounterNode->setChild(2, internalParamNode);
+    return iteratorNode;
+}
+
+SyntaxTreeNode * newLoopNode(ParseContext & ctx, const STNode nodeType, SyntaxTreeNode * loopCondNode,
+                             const SyntaxTreeNode * bodyStatementListNode)
+{
+    if (nodeType == STNode::LoopStatement) // 'loop'
+    {
+        return ctx.syntTree->newNode(STNode::LoopStatement, bodyStatementListNode,
+                                     nullptr, nullptr, STEval::Void);
+    }
+    else if (nodeType == STNode::WhileStatement) // 'while cond do'
     {
         return newCompareNode(ctx, STNode::WhileStatement, loopCondNode,
                               bodyStatementListNode, nullptr);
     }
-    else if (nodeType == STNode::ForStatement)
+    else if (nodeType == STNode::ForStatement) // 'for i in range do'
     {
-        // loopVarNode type has to be inferred from the loop expression/range
-        const SyntaxTreeNode * loopVarNode =
-            ctx.syntTree->newNodeWithEval(STNode::VarDeclStatement,
-                                          iteratorVarSymbol, loopCondNode->evalType);
-
+        // Once the for loop is complete we must delete the iterator name
+        // to prevent a redefinition error on subsequent loops.
+        MOON_ASSERT(ctx.varInfo->forLoopIteratorNode != nullptr);
+        ctx.varInfo->removeVar(ctx.varInfo->forLoopIteratorNode->symbol);
         return ctx.syntTree->newNodeWithSymbol(STNode::ForStatement, nullptr,
-                                               loopVarNode, loopCondNode,
-                                               bodyStatementListNode);
+                                               ctx.varInfo->forLoopIteratorNode,
+                                               loopCondNode, bodyStatementListNode,
+                                               STEval::Void);
     }
     else
     {
-        MOON_ASSERT(false && "Bad node type!");
+        MOON_ASSERT(false && "Bad loop node type!");
     }
 }
 
 SyntaxTreeNode * newLoopJumpNode(ParseContext & ctx, const STNode nodeType)
 {
-    (void)ctx;//TODO validate that we are inside some loop!
-    return ctx.syntTree->newNode(nodeType);
+    if (!ctx.varInfo->insideLoopStmt)
+    {
+        if (nodeType == STNode::ContinueStatement)
+        {
+            parserError(ctx, "continue statement found outside of a loop");
+        }
+        else
+        {
+            parserError(ctx, "break statement found outside of a loop");
+        }
+    }
+    return ctx.syntTree->newNode(nodeType, nullptr, nullptr, nullptr, STEval::Void);
 }
 
 SyntaxTreeNode * newStatementNode(ParseContext & ctx, const SyntaxTreeNode * left, const SyntaxTreeNode * right)

@@ -172,9 +172,17 @@ static Variant::Type varTypeForNodeEval(const Compiler & compiler, const SyntaxT
     return eval2VarType(stEval);
 }
 
+// FIXME this function is essentially broken due to the unordered_map nature.
+// If we for instance declare a var 'A' and have the string "A" in the same source file,
+// they will clash. Types differ, but the name symbol is the same, hence the problem.
+// Need to address this soon!
 static UInt32 addSymbolToProgData(VM & vm, const Symbol & symbol, const Variant::Type type)
 {
     Variant var{}; // Default initialized to null.
+
+    //FIXME temp
+//    logStream() << "addSymbolToProgData: " << toString(symbol.name)
+//        << ", " << toString(symbol.type) << ", " << toString(type) << "\n";
 
     // Identifies might be variables, function or user defined types.
     if (symbol.type == Symbol::Type::Identifier)
@@ -496,18 +504,92 @@ static IntermediateInstr * emitWhileLoop(Compiler & compiler, const SyntaxTreeNo
 
 static IntermediateInstr * emitForLoop(Compiler & compiler, const SyntaxTreeNode * root)
 {
-    // Must have the counter (i) and a range/call/name expression:
+    auto makeLoadInstr = [](Compiler & comp, const IntermediateInstr * inInstr) -> IntermediateInstr *
+    {
+        auto load = comp.newInstruction(inInstr);
+        const bool isGlobal = (inInstr->op == OpCode::StoreGlob);
+        load->op = (isGlobal ? OpCode::LoadGlob : OpCode::LoadLocal);
+        return load;
+    };
+
+    // Must have the counter (i) and a for parameter.
     EXPECT_CHILD_AT_INDEX(root, 0);
     EXPECT_CHILD_AT_INDEX(root, 1);
-    EXPECT_SYMBOL(root->getChild(0));
 
-    auto forIndex = root->getChild(0)->symbol;
-    auto forInit  = traverseTreeRecursive(compiler, root->getChild(1));
-    auto forPrep  = compiler.newInstruction(OpCode::ForLoopPrep, forIndex);
-    auto forTest  = compiler.newInstruction(OpCode::ForLoopTest, forIndex);
-    auto forStep  = compiler.newInstruction(OpCode::ForLoopStep, forIndex);
-    auto forCont  = compiler.newInstruction(OpCode::Jmp, forStep);
-    auto forEnd   = compiler.newInstruction(OpCode::NoOp);
+    // The termination condition or collection to iterate (for loop parameter):
+    auto forParam = traverseTreeRecursive(compiler, root->getChild(1));
+    if (root->getChild(1)->nodeType == SyntaxTreeNode::Type::ExprFuncCall)
+    {
+        forParam = linkInstr(forParam, compiler.newInstruction(OpCode::LoadRVR));
+    }
+
+    //
+    // Iterator, internal index and stored parameter:
+    //
+
+    // 'i' iterator:
+    auto forVars = traverseTreeRecursive(compiler, root->getChild(0));
+    auto storeIter = forVars;
+    for (; storeIter->next != nullptr; storeIter = storeIter->next) { }
+    MOON_ASSERT(storeIter->op == OpCode::StoreLocal || storeIter->op == OpCode::StoreGlob);
+
+    // The internal index '__for_idx__' is linked to the 'i' iterator:
+    forVars = linkInstr(forVars, traverseTreeRecursive(compiler, root->getChild(0)->getChild(2)));
+    auto storeIdx = forVars;
+    for (; storeIdx->next != nullptr; storeIdx = storeIdx->next) { }
+    MOON_ASSERT(storeIdx->op == OpCode::StoreLocal || storeIdx->op == OpCode::StoreGlob);
+
+    // The copy of the loop parameter/condition '__for_prm__' is linked to '__for_idx__':
+    forVars = linkInstr(forVars, traverseTreeRecursive(compiler, root->getChild(0)->getChild(2)->getChild(2)));
+    auto storeParam = forVars;
+    for (; storeParam->next != nullptr; storeParam = storeParam->next) { }
+    MOON_ASSERT(storeParam->op == OpCode::StoreLocal || storeParam->op == OpCode::StoreGlob);
+
+    // Assign the '__for_prm__'s initial value from stack top.
+    auto forPrmInit = compiler.newInstruction(storeParam);
+
+    //
+    // ForLoopPrep:
+    //
+
+    // ForLoopPrep is preceded by loading the param, iterator and internal index:
+    auto forPrep = compiler.newInstruction(OpCode::ForLoopPrep);
+    forPrep = linkInstr(makeLoadInstr(compiler, storeParam), forPrep);
+    forPrep = linkInstr(makeLoadInstr(compiler, storeIter),  forPrep);
+    forPrep = linkInstr(makeLoadInstr(compiler, storeIdx),   forPrep);
+
+    // After prepping, the updated values get written back to memory:
+    forPrep = linkInstr(forPrep, compiler.newInstruction(storeIdx));
+    forPrep = linkInstr(forPrep, compiler.newInstruction(storeIter));
+
+    //
+    // ForLoopTest:
+    //
+
+    // ForLoopTest requires loading the internal index and the loop param/termination cond:
+    auto forTest = compiler.newInstruction(OpCode::ForLoopTest);
+    forTest = linkInstr(makeLoadInstr(compiler, storeParam), forTest);
+    forTest = linkInstr(makeLoadInstr(compiler, storeIdx),   forTest);
+
+    //
+    // ForLoopStep:
+    //
+
+    // Similarly to ForLoopPrep, we need the param, iterator and internal index.
+    auto forStep = compiler.newInstruction(OpCode::ForLoopStep);
+    forStep = linkInstr(makeLoadInstr(compiler, storeParam), forStep);
+    forStep = linkInstr(makeLoadInstr(compiler, storeIter),  forStep);
+    forStep = linkInstr(makeLoadInstr(compiler, storeIdx),   forStep);
+
+    // After stepping, the updated values get written back to memory:
+    forStep = linkInstr(forStep, compiler.newInstruction(storeIdx));
+    forStep = linkInstr(forStep, compiler.newInstruction(storeIter));
+
+    //
+    // Wrap it up:
+    //
+    auto forCont = compiler.newInstruction(OpCode::Jmp, forStep);
+    auto forEnd  = compiler.newInstruction(OpCode::NoOp);
 
     // Goes after the ForLoopTest to break if the result was false.
     auto jumpIfFalse = compiler.newInstruction(OpCode::JmpIfFalse, forEnd);
@@ -530,7 +612,7 @@ static IntermediateInstr * emitForLoop(Compiler & compiler, const SyntaxTreeNode
 
     auto block0 = linkInstr(postPrepJump, linkInstr(linkInstr(forStep, forTest), jumpIfFalse));
     auto block1 = linkInstr(linkInstr(forPrep, block0), loopBody);
-    return linkInstr(forInit, linkInstr(block1, linkInstr(forCont, forEnd)));
+    return linkInstr(forVars, linkInstr(linkInstr(forParam, forPrmInit), linkInstr(block1, linkInstr(forCont, forEnd))));
 }
 
 static IntermediateInstr * emitBreak(Compiler & compiler, const SyntaxTreeNode *)
@@ -825,8 +907,8 @@ static IntermediateInstr * emitStore(Compiler & compiler, const SyntaxTreeNode *
     else
     {
         objSymbol = root->getChildSymbol(1);
-        MOON_ASSERT(objSymbol != nullptr);
     }
+    MOON_ASSERT(objSymbol != nullptr);
 
     // Don't enter if doing a obj.member store
     if (root->evalType == SyntaxTreeNode::Eval::Undefined && numMemberOffsets == 0)
@@ -1274,23 +1356,31 @@ static IntermediateInstr * emitTypecast(Compiler & compiler, const SyntaxTreeNod
 
 static IntermediateInstr * emitTypeof(Compiler & compiler, const SyntaxTreeNode * root)
 {
-    EXPECT_CHILD_AT_INDEX(root, 1);
     IntermediateInstr * typeofInstr;
 
-    // Simple case of 'type_of(TYPE_NAME)' => just load the TypeId directly.
-    if (root->getChild(1)->nodeType == SyntaxTreeNode::Type::ExprTypeIdent ||
-        compiler.symbolToTypeId(root->getChild(1)->symbol))
+    EXPECT_CHILD_AT_INDEX(root, 1);
+    const SyntaxTreeNode * child1 = root->getChild(1);
+
+    const bool nodeIsTypeId  = (child1->nodeType == SyntaxTreeNode::Type::ExprTypeIdent);
+    const bool nodeIsLiteral = (child1->nodeType == SyntaxTreeNode::Type::ExprLiteralConst);
+    const bool symbIsTypeId  = (child1->symbol && compiler.symbolToTypeId(child1->symbol));
+    const bool isNullLiteral = (nodeIsLiteral && child1->evalType == SyntaxTreeNode::Eval::Null);
+
+    // Simple case of 'type_of(TYPE_NAME)/type_of(123)' => just load the TypeId directly.
+    // Note that 'null' is a special case we can't just load the TypeId directly.
+    // 'null' behaves like an identifier and a literal constant at the same time,
+    // so the easiest way to handle 'type_of(null)' is to just do the runtime resolution.
+    if (!isNullLiteral && (nodeIsTypeId || nodeIsLiteral || symbIsTypeId))
     {
-        EXPECT_SYMBOL(root->getChild(1));
-        typeofInstr = compiler.newInstruction(OpCode::LoadGlob,
-                root->getChild(1)->symbol, Variant::Type::Tid);
+        const Symbol * typeSymbol = (nodeIsLiteral ? eval2Symbol(compiler.symTable, child1->evalType) : child1->symbol);
+        typeofInstr = compiler.newInstruction(OpCode::LoadGlob, typeSymbol, Variant::Type::Tid);
     }
     else // Resolve the argument expression first and emit a Typeof opcode:
     {
-        IntermediateInstr * argument = traverseTreeRecursive(compiler, root->getChild(1));
+        IntermediateInstr * argument = traverseTreeRecursive(compiler, child1);
 
         // If either term is a func call, we must load from the Return Value Register.
-        if (root->getChild(1)->nodeType == SyntaxTreeNode::Type::ExprFuncCall)
+        if (child1->nodeType == SyntaxTreeNode::Type::ExprFuncCall)
         {
             argument = linkInstr(argument, compiler.newInstruction(OpCode::LoadRVR));
         }
@@ -1385,7 +1475,7 @@ static IntermediateInstr * traverseTreeRecursive(Compiler & compiler, const Synt
     {
         logStream() << "visiting tnode: " << toString(root->nodeType) << "\n";
     }
-    */
+    //*/
 
     return emitInstrCallbacks[handlerIndex](compiler, root);
 }
@@ -1807,6 +1897,15 @@ IntermediateInstr * Compiler::newInstruction(const OpCode op, const Intermediate
     instr->paramIdx           = InvalidParamIdx;
     instr->type               = Variant::Type::Null;
     instr->op                 = op;
+    return instr;
+}
+
+IntermediateInstr * Compiler::newInstruction(const IntermediateInstr * copy)
+{
+    auto instr                = instrPool.allocate();
+    *instr                    = *copy;
+    instr->next               = nullptr;
+    instr->uid                = instructionCount++;
     return instr;
 }
 

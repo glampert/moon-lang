@@ -483,7 +483,7 @@ Object::Object(const TypeId * tid) noexcept
 Object::~Object()
 {
     // We share ownership of the member name
-    // strings, so they must be unrefed.
+    // strings, so they must be unrefed now.
     const int memberCount = getMemberCount();
     for (int m = 0; m < memberCount; ++m)
     {

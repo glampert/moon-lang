@@ -592,10 +592,6 @@ public:
     {
         return static_cast<int>(members.size());
     }
-    Range getMembersRange() const noexcept
-    {
-        return { 0, getMemberCount() };
-    }
 
     // Query the dynamic type of the object (Array, Str, Struct, user-defined, etc).
     const TypeId * getTypeId() const noexcept

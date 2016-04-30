@@ -99,8 +99,9 @@ public:
     const Symbol * findSymbol(const char * name) const          { return findInternal(name); }
 
     // Find equivalent constant in the table or define a new built-in literal value for it.
-    const Symbol * findOrDefineIntValue(Int64 value);        // IntLiteral
-    const Symbol * findOrDefineStrValue(const char * value); // StrLiteral
+    const Symbol * findOrDefineIntValue(Int64 value);         // IntLiteral
+    const Symbol * findOrDefineStrValue(const char * value);  // StrLiteral
+    const Symbol * findOrDefineIdentifier(const char * name); // Identifier
 
     // Add new symbol. Symbol must NOT be in the table. Fails with an assertion
     // if a symbol with the same NAME is already present. Returns the new symbol.

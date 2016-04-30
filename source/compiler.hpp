@@ -103,14 +103,16 @@ struct IntermediateInstr final
     IntermediateInstr * next;
     Operand             operand;
     UInt32              uid;
-    UInt16              paramIdx;
-    Variant::Type       type;
+    UInt16              paramIdx; // rename to stackIndex?
+    Variant::Type       type;     // rename to varType or dataType?
     OpCode              op;
 };
 
 constexpr UInt16 InvalidParamIdx = UInt16(-1);
 using DataMap  = HashTable<const Symbol *, UInt32>;
 using InstrMap = HashTable<const IntermediateInstr *, UInt32>;
+//TODO maps are not working properly. We must also segregate symbols by type.
+//consider another data structure when we get to the compiler refactoring.
 
 // ========================================================
 // class Compiler:
@@ -200,6 +202,7 @@ public:
     IntermediateInstr * newInstruction(OpCode op);
     IntermediateInstr * newInstruction(OpCode op, const Symbol * symbol, Variant::Type type = Variant::Type::Null);//FIXME no default value in here!
     IntermediateInstr * newInstruction(OpCode op, const IntermediateInstr * jumpTarget);
+    IntermediateInstr * newInstruction(const IntermediateInstr * copy); // clone the input into a new instr
 
 private:
 
