@@ -4,11 +4,11 @@
 // -----------------------------------------------
 
 if 1 < 2 then
-    println("This will print.");
+    println("This will print");
 elseif 1 != 0 then
-    println("And this wont.");
+    println("And this wont");
 else
-    println("And neither will this.");
+    println("And neither will this");
 end
 
 let a = null;
@@ -55,6 +55,16 @@ elseif numbers[4] != 4 then
     assert(false);
 else
     println("OK");
+end
+
+func test_func() -> int
+    return 1234;
+end
+
+if test_func() == 4321 then
+    println("This shouldn't print");
+elseif test_func() == 1234 then
+    println("This should print");
 end
 
 println("Finished running test script ", SRC_FILE_NAME);

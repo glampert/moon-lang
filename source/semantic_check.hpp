@@ -71,9 +71,10 @@ public:
     const Symbol * currentUDTSymbol  = nullptr;
 
     // Stuff use only inside loops/functions:
-    bool insideLoopStmt  = false;
-    bool foundReturnStmt = false;
-    SyntaxTreeNode::Eval expectedReturnType = SyntaxTreeNode::Eval::Void;
+    bool                   insideLoopStmt      = false;
+    bool                   foundReturnStmt     = false;
+    SyntaxTreeNode::Eval   expectedReturnType  = SyntaxTreeNode::Eval::Void;
+    std::uint32_t          forLoopIdCounter    = 0;
     const SyntaxTreeNode * forLoopIteratorNode = nullptr;
 
 private:
@@ -120,7 +121,7 @@ void beginTranslationUnit(ParseContext & ctx, const SyntaxTreeNode * statements)
 void requireGlobalScope(ParseContext & ctx, const char * elementName);
 
 //
-// Misc:
+// Miscellaneous:
 //
 SyntaxTreeNode * newLiteralNode(ParseContext & ctx, const SyntaxTreeNode::Eval stEval, const Symbol * symbol);
 SyntaxTreeNode * newTypeIdNode(ParseContext & ctx, const SyntaxTreeNode::Eval stEval, const Symbol * symbol = nullptr);

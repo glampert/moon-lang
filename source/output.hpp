@@ -44,15 +44,18 @@ namespace moon
 namespace color
 {
 
-inline bool colorPrintEnabled() noexcept
-{
-// Only attempt color print if none of the streams we use were redirected.
 #if MOON_PRINT_USE_ANSI_COLOR_CODES
-    return isatty(fileno(stdout)) && isatty(fileno(stderr));
+    inline bool colorPrintEnabled() noexcept
+    {
+        // Only attempt color print if none of the streams we use were redirected.
+        // We can also cache the value since it is unlikely that this will change
+        // while the program is still running.
+        static bool notRedirected = (isatty(fileno(stdout)) && isatty(fileno(stderr)));
+        return notRedirected;
+    }
 #else // !MOON_PRINT_USE_ANSI_COLOR_CODES
-    return false;
+    constexpr bool colorPrintEnabled() noexcept { return false; }
 #endif // MOON_PRINT_USE_ANSI_COLOR_CODES
-}
 
 // ANSI color codes:
 inline const char * restore() noexcept { return colorPrintEnabled() ? "\033[0;1m"  : ""; }

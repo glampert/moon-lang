@@ -701,7 +701,7 @@ Str * Str::newFromString(VM & vm, const char * cstr, const UInt32 length, const 
 
     // The size of the small internal buffer of a std::string should be more of less the
     // whole size of the type minus a length and pointer, likely sizeof(size_t) bytes each.
-    constexpr std::size_t minConstStrLen = sizeof(std::string) - (sizeof(std::size_t) * 2);
+    constexpr UInt32 minConstStrLen = sizeof(std::string) - (sizeof(std::size_t) * 2);
 
     // If the string is short enough to fit in the small string buffer of
     // std::string we ignore the user hint and avoid the extra allocation.
@@ -1304,5 +1304,257 @@ const BuiltInTypeDesc * getBuiltInTypeNames()
     };
     return builtInTypeNames;
 }
+
+// ========================================================
+// Minimal unit tests for Array and Str:
+// ========================================================
+
+#if MOON_DEBUG
+namespace
+{
+struct RuntimeSupportTests
+{
+    RuntimeSupportTests()
+    {
+        VM vm;
+        testScriptArray(vm);
+        testScriptString(vm);
+        logStream() << "Moon: Runtime support tests passed.\n";
+    }
+
+    static void testScriptString(VM & vm)
+    {
+        // Small string allocated into the in-place buffer (not a ConstRcString).
+        auto str1 = Str::newFromString(vm, "hello-", false);
+
+        // Initial invariants:
+        MOON_ASSERT(std::strcmp(str1->c_str(), "hello-") == 0);
+        MOON_ASSERT(str1->isEmptyString()   == false);
+        MOON_ASSERT(str1->isConstString()   == false);
+        MOON_ASSERT(str1->getStringLength() == 6);
+
+        // Share string reference:
+        ConstRcString * rstr = newConstRcString("this is a ref counted string");
+        auto str2 = Str::newFromString(vm, rstr);
+
+        MOON_ASSERT(std::strcmp(str2->c_str(), rstr->chars) == 0);
+        MOON_ASSERT(str2->isEmptyString()   == false);
+        MOON_ASSERT(str2->isConstString()   == true);
+        MOON_ASSERT(str2->getStringLength() == rstr->length);
+
+        // Append into new string:
+        auto str3 = Str::newFromStrings(vm, *str1, *str2, false);
+        const char result[] = "hello-this is a ref counted string";
+        MOON_ASSERT(std::strcmp(str3->c_str(), result) == 0);
+        MOON_ASSERT(str3->isEmptyString()   == false);
+        MOON_ASSERT(str3->isConstString()   == false);
+        MOON_ASSERT(str3->getStringLength() == std::strlen(result));
+
+        // Comparisons:
+        MOON_ASSERT(str1->cmpEqual(*str2) == false);
+        MOON_ASSERT(str2->cmpEqual(*str3) == false);
+        MOON_ASSERT(str1->compare(*str2)  != 0);
+        MOON_ASSERT(str2->compare(*str3)  != 0);
+
+        // Binary ops:
+        MOON_ASSERT(Str::binaryOp(OpCode::LogicOr,  *str1, *str2).toBool() == true);
+        MOON_ASSERT(Str::binaryOp(OpCode::LogicAnd, *str1, *str2).toBool() == true);
+        str1->clear();
+        MOON_ASSERT(Str::binaryOp(OpCode::LogicOr,  *str1, *str2).toBool() == true);
+        MOON_ASSERT(Str::binaryOp(OpCode::LogicAnd, *str1, *str2).toBool() == false);
+        str2->clear();
+        MOON_ASSERT(Str::binaryOp(OpCode::LogicOr,  *str1, *str2).toBool() == false);
+        MOON_ASSERT(Str::binaryOp(OpCode::LogicAnd, *str1, *str2).toBool() == false);
+
+        MOON_ASSERT(str1->isEmptyString() == true);
+        MOON_ASSERT(str2->isEmptyString() == true);
+        MOON_ASSERT(str3->isEmptyString() == false);
+
+        releaseRcString(rstr);
+        freeRuntimeObject(vm, str1);
+        freeRuntimeObject(vm, str2);
+        freeRuntimeObject(vm, str3);
+
+        logStream() << "Moon: Script String test passed.\n";
+    }
+
+    static void testScriptArray(VM & vm)
+    {
+        // Array of Int32's (intTypeId="int")
+        auto array = Array::newEmpty(vm, vm.types.intTypeId, /* capacityHint = */ 5);
+
+        // Initial invariants:
+        MOON_ASSERT(array->isEmptyArray()     == true);
+        MOON_ASSERT(array->isSmallArray()     == true);
+        MOON_ASSERT(array->isDynamicArray()   == false);
+        MOON_ASSERT(array->getArrayLength()   == 0);
+        MOON_ASSERT(array->getItemSize()      == sizeof(Int32));
+        MOON_ASSERT(array->getArrayCapacity() >= 0);
+
+        constexpr int M = 5;
+        constexpr int N = 15;
+        const Int32 testData[M] = { 1, 2, 3, 4, 5 };
+
+        // Append the contents of another array:
+        auto other = Array::newFromRawData(vm, vm.types.intTypeId,
+                                           testData, arrayLength(testData),
+                                           sizeof(Int32), Variant::Type::Integer);
+
+        MOON_ASSERT(other->getItemSize()    == sizeof(Int32));
+        MOON_ASSERT(other->getArrayLength() == arrayLength(testData));
+        array->push(*other);
+
+        // Append some more items:
+        for (int i = 0; i < N; ++i)
+        {
+            Variant var{ Variant::Type::Integer };
+            var.value.asInteger = i + M + 1;
+            array->push(var);
+        }
+
+        MOON_ASSERT(array->isEmptyArray()     == false);
+        MOON_ASSERT(array->isSmallArray()     == false);
+        MOON_ASSERT(array->isDynamicArray()   == true);
+        MOON_ASSERT(array->getArrayLength()   == N + other->getArrayLength());
+        MOON_ASSERT(array->getItemSize()      == sizeof(Int32));
+        MOON_ASSERT(array->getArrayCapacity() >= N);
+
+        // Change backing store capacity:
+        array->reserveCapacity(128);
+        MOON_ASSERT(array->isSmallArray()     == false);
+        MOON_ASSERT(array->isDynamicArray()   == true);
+        MOON_ASSERT(array->getArrayLength()   == N + other->getArrayLength());
+        MOON_ASSERT(array->getArrayCapacity() >= 128);
+
+        // Validate:
+        for (int i = 0; i < array->getArrayLength(); ++i)
+        {
+            Variant var = array->getIndex(i);
+            MOON_ASSERT(var.type == Variant::Type::Integer);
+            MOON_ASSERT(var.value.asInteger == i + 1);
+        }
+
+        // Pop values:
+        array->pop(1);
+        array->pop(2);
+        array->pop(2);
+        MOON_ASSERT(array->getArrayLength() == N + other->getArrayLength() - 5);
+
+        // Reset every remaining element:
+        for (int i = 0; i < array->getArrayLength(); ++i)
+        {
+            Variant var{ Variant::Type::Integer };
+            var.value.asInteger = 42;
+            array->setIndex(i, var);
+        }
+        // Validate the rest:
+        for (int i = 0; i < array->getArrayLength(); ++i)
+        {
+            Variant var = array->getIndex(i);
+            MOON_ASSERT(var.type == Variant::Type::Integer);
+            MOON_ASSERT(var.value.asInteger == 42);
+        }
+
+        array->clear();
+        MOON_ASSERT(array->isEmptyArray()   == true);
+        MOON_ASSERT(array->isDynamicArray() == true); // Once it goes dynamic, it never returns to small-array
+        MOON_ASSERT(array->getArrayLength() == 0);
+        MOON_ASSERT(array->getItemSize()    == sizeof(Int32));
+
+        // Now let's try pushing a few floats to test the implicit type conversion:
+        for (int i = 0; i < N; ++i)
+        {
+            Variant var{ Variant::Type::Float };
+            var.value.asFloat = static_cast<Float64>(i) + 0.1;
+            array->push(var);
+        }
+        // And validate (now truncated integers):
+        for (int i = 0; i < N; ++i)
+        {
+            Variant var = array->getIndex(i);
+            MOON_ASSERT(var.type == Variant::Type::Integer);
+            MOON_ASSERT(var.value.asInteger == i);
+        }
+
+        // And finally, test the elusive 'Any' type:
+        auto anyArray = Array::newEmpty(vm, vm.types.anyTypeId, /* capacityHint = */ 2);
+        {
+            // Put a few integers:
+            for (int i = 0; i < N; ++i)
+            {
+                Variant var{ Variant::Type::Integer };
+                var.value.asInteger = i;
+                anyArray->push(var);
+            }
+            // A few floats...
+            for (int i = 0; i < N; ++i)
+            {
+                Variant var{ Variant::Type::Float };
+                var.value.asFloat = static_cast<Float64>(i) + 0.5;
+                anyArray->push(var);
+            }
+
+            // A couple ranges:
+            Variant r{ Variant::Type::Range };
+            r.value.asRange = Range{ 0, 10 };
+            anyArray->push(r);
+            r.value.asRange = Range{ -1, 1 };
+            anyArray->push(r);
+
+            // And finally, other Anys:
+            Variant a{ Variant::Type::Any };
+            a.anyType = Variant::Type::Integer;
+            a.value.asInteger = 0xAA;
+            anyArray->push(a);
+            a.anyType = Variant::Type::Float;
+            a.value.asFloat = 3.14;
+            anyArray->push(a);
+
+            // Now validate the above:
+            int i = 0;
+            for (int j = 0; j < N; ++j)
+            {
+                Variant var = anyArray->getIndex(i++);
+                MOON_ASSERT(var.type    == Variant::Type::Any);
+                MOON_ASSERT(var.anyType == Variant::Type::Integer);
+                MOON_ASSERT(var.value.asInteger == j);
+            }
+            for (int j = 0; j < N; ++j)
+            {
+                Variant var = anyArray->getIndex(i++);
+                MOON_ASSERT(var.type    == Variant::Type::Any);
+                MOON_ASSERT(var.anyType == Variant::Type::Float);
+                MOON_ASSERT(var.value.asFloat == static_cast<Float64>(j) + 0.5);
+            }
+
+            // Two ranges and two more numbers:
+            const Variant r0 = anyArray->getIndex(i++);
+            const Variant r1 = anyArray->getIndex(i++);
+            MOON_ASSERT(r0.type    == Variant::Type::Any);
+            MOON_ASSERT(r0.anyType == Variant::Type::Range);
+            MOON_ASSERT(r1.type    == Variant::Type::Any);
+            MOON_ASSERT(r1.anyType == Variant::Type::Range);
+            MOON_ASSERT(r0.value.asRange.begin ==  0 && r0.value.asRange.end == 10);
+            MOON_ASSERT(r1.value.asRange.begin == -1 && r1.value.asRange.end == 1);
+
+            const Variant a0 = anyArray->getIndex(i++);
+            const Variant a1 = anyArray->getIndex(i++);
+            MOON_ASSERT(a0.type    == Variant::Type::Any);
+            MOON_ASSERT(a0.anyType == Variant::Type::Integer);
+            MOON_ASSERT(a1.type    == Variant::Type::Any);
+            MOON_ASSERT(a1.anyType == Variant::Type::Float);
+            MOON_ASSERT(a0.value.asInteger == 0xAA);
+            MOON_ASSERT(a1.value.asFloat   == 3.14);
+        }
+
+        freeRuntimeObject(vm, array);
+        freeRuntimeObject(vm, other);
+        freeRuntimeObject(vm, anyArray);
+
+        logStream() << "Moon: Script Array test passed.\n";
+    }
+} localRuntimeSupportTests;
+} // namespace {}
+#endif // MOON_DEBUG
 
 } // namespace moon {}

@@ -29,18 +29,7 @@
     #include <FlexLexer.h>
 #endif // INC_LEXER
 
-// This is used in only a couple places and should ultimately be replaced by using non-shared data.
-#if MOON_HAS_CXX11_THREAD_LOCAL
-    #define MOON_ATTRIBUTE_TLS thread_local
-#elif defined(__GNUC__) || defined(__clang__)
-    #define MOON_ATTRIBUTE_TLS __thread
-#elif defined(_MSC_VER)
-    #define MOON_ATTRIBUTE_TLS __declspec(thread)
-#else // !C++11 && !__GNUC__ && !__clang__ && !_MSC_VER
-    #error "Define a thread local storage qualifier for your compiler/platform!"
-#endif // MOON_HAS_CXX11_THREAD_LOCAL
-
-// Portability macros:
+// Portability macros for printf-like functions printing 64bits integers:
 #ifndef MOON_I64_PRINT_FMT
     #ifdef PRIi64
         #define MOON_I64_PRINT_FMT "%" PRIi64

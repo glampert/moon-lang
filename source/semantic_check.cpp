@@ -877,17 +877,11 @@ SyntaxTreeNode * newForLoopIteratorNode(ParseContext & ctx, const SyntaxTreeNode
         }
     }
 
-    // FIXME: This should probably be better suited as a compiler state.
-    // Not quite sure what would be the implications of having it thread_local
-    // when running multiple script compilers from different threads... Probably
-    // safe, but again, could be a transient compiler state instead...
-    MOON_ATTRIBUTE_TLS static std::uint32_t forLoopIdCounter = 0;
-
     // These variables are implicitly declared inside every for loop to serve as auxiliary loop counters.
     char tempName1[512];
     char tempName2[512];
-    std::snprintf(tempName1, arrayLength(tempName1), "__for_idx_%i_%u__", ctx.lexer->lineno(), forLoopIdCounter++);
-    std::snprintf(tempName2, arrayLength(tempName2), "__for_prm_%i_%u__", ctx.lexer->lineno(), forLoopIdCounter++);
+    std::snprintf(tempName1, arrayLength(tempName1), "__for_idx_%i_%u__", ctx.lexer->lineno(), ctx.varInfo->forLoopIdCounter++);
+    std::snprintf(tempName2, arrayLength(tempName2), "__for_prm_%i_%u__", ctx.lexer->lineno(), ctx.varInfo->forLoopIdCounter++);
     const Symbol * internalCounterSymbol = ctx.symTable->findOrDefineIdentifier(tempName1, ctx.lexer->lineno());
     const Symbol * internalParamSymbol   = ctx.symTable->findOrDefineIdentifier(tempName2, ctx.lexer->lineno());
 
@@ -954,8 +948,57 @@ SyntaxTreeNode * newLoopJumpNode(ParseContext & ctx, const STNode nodeType)
     return ctx.syntTree->newNode(nodeType, nullptr, nullptr, nullptr, STEval::Void);
 }
 
+static bool checkUnusedExprResult(ParseContext & ctx, const SyntaxTreeNode * root)
+{
+    const STNode type = root->nodeType;
+
+    switch (type)
+    {
+    case STNode::ExprNameIdent :
+    case STNode::ExprLiteralConst :
+    case STNode::ExprRange :
+    case STNode::ExprArrayLiteral :
+    case STNode::ExprArraySubscript :
+    case STNode::ExprMemberRef :
+    case STNode::ExprObjectConstructor :
+    case STNode::ExprTypecast :
+    case STNode::ExprTypeof :
+    case STNode::ExprCmpNotEqual :
+    case STNode::ExprCmpEqual :
+    case STNode::ExprCmpGreaterEqual :
+    case STNode::ExprCmpGreaterThan :
+    case STNode::ExprCmpLessEqual :
+    case STNode::ExprCmpLessThan :
+    case STNode::ExprLogicOr :
+    case STNode::ExprLogicAnd :
+    case STNode::ExprLogicNot :
+    case STNode::ExprSubtract :
+    case STNode::ExprAdd :
+    case STNode::ExprModulo :
+    case STNode::ExprDivide :
+    case STNode::ExprMultiply :
+    case STNode::ExprUnaryMinus :
+    case STNode::ExprUnaryPlus :
+        parserWarn(ctx, "result of expression is not used. Dead code will be removed");
+        return true;
+
+    default :
+        return false;
+    } // switch (type)
+}
+
 SyntaxTreeNode * newStatementNode(ParseContext & ctx, const SyntaxTreeNode * left, const SyntaxTreeNode * right)
 {
+    if (right != nullptr)
+    {
+        const bool isUnused = checkUnusedExprResult(ctx, right);
+        if (isUnused)
+        {
+            // Just ignore this subtree, since it has no side-effects, no code should be generated.
+            right = ctx.syntTree->newNode(STNode::NoOp, nullptr, nullptr, nullptr, STEval::Void);
+        }
+    }
+
     return ctx.syntTree->newNode(STNode::Statement, left, right, nullptr, STEval::Void);
 }
 

@@ -134,8 +134,7 @@ void warning(const std::string & warnMessage,
     std::abort();
 }
 
-[[noreturn]] void unreachable(const std::string & srcFile,
-                              const int lineNum)
+[[noreturn]] void unreachable(const std::string & srcFile, const int lineNum)
 {
     runtimeAssertionError("trying to run unreachable code path!", srcFile, lineNum);
 }
