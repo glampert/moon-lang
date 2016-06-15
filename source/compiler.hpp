@@ -228,6 +228,7 @@ private:
     // is used for such cases.
     std::vector<const SyntaxTreeNode *> visitedNodes;
 
+    //FIXME: this should be replaced by the VarInfoTable. No need to generate this data twice.
     using TypedSymbol = std::pair<const Symbol *, const TypeId *>;
 
     // Temp store we use to gather local vars and function parameters.

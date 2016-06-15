@@ -155,7 +155,8 @@ Symbol::Value Symbol::valueFromRcStr(ConstRcString * rstr)
     MOON_ASSERT(isRcStringValid(rstr));
 
     Symbol::Value valOut;
-    valOut.asString = rstr; // NOTE: Ref not added by design.
+    valOut.asString = rstr;
+    addRcStringRef(rstr);
     return valOut;
 }
 
@@ -200,97 +201,218 @@ SymbolTable::SymbolTable()
     // under the same symbol whenever possible, we can predefine
     // a few defaults that will likely be used on most programs.
     //
-    addStrLiteral("",       Symbol::LineNumBuiltIn);
-    addIntLiteral("0",      Symbol::LineNumBuiltIn);
-    addIntLiteral("1",      Symbol::LineNumBuiltIn);
-    addBoolLiteral("true",  Symbol::LineNumBuiltIn);
-    addBoolLiteral("false", Symbol::LineNumBuiltIn);
-    addFloatLiteral("0.0",  Symbol::LineNumBuiltIn);
-    addFloatLiteral("1.0",  Symbol::LineNumBuiltIn);
+
+    Symbol::Value v[7];
+    v[0].asString  = newConstRcString("");
+    v[1].asInteger = 0;
+    v[2].asInteger = 1;
+    v[3].asBoolean = true;
+    v[4].asBoolean = false;
+    v[5].asFloat   = 0.0;
+    v[6].asFloat   = 1.0;
+
+    addSymbol(generateSymbolName(Symbol::Type::StrLiteral),   Symbol::LineNumBuiltIn, Symbol::Type::StrLiteral,   v[0]);
+    addSymbol(generateSymbolName(Symbol::Type::IntLiteral),   Symbol::LineNumBuiltIn, Symbol::Type::IntLiteral,   v[1]);
+    addSymbol(generateSymbolName(Symbol::Type::IntLiteral),   Symbol::LineNumBuiltIn, Symbol::Type::IntLiteral,   v[2]);
+    addSymbol(generateSymbolName(Symbol::Type::BoolLiteral),  Symbol::LineNumBuiltIn, Symbol::Type::BoolLiteral,  v[3]);
+    addSymbol(generateSymbolName(Symbol::Type::BoolLiteral),  Symbol::LineNumBuiltIn, Symbol::Type::BoolLiteral,  v[4]);
+    addSymbol(generateSymbolName(Symbol::Type::FloatLiteral), Symbol::LineNumBuiltIn, Symbol::Type::FloatLiteral, v[5]);
+    addSymbol(generateSymbolName(Symbol::Type::FloatLiteral), Symbol::LineNumBuiltIn, Symbol::Type::FloatLiteral, v[6]);
 
     auto builtIns = getBuiltInTypeNames();
     for (int i = 0; builtIns[i].name != nullptr; ++i)
     {
-        addIdentifier(builtIns[i].name.get(), Symbol::LineNumBuiltIn);
+        // Same name and value for identifiers.
+        Symbol::Value value = Symbol::valueFromRcStr(builtIns[i].name.get());
+        addSymbol(builtIns[i].name.get(), Symbol::LineNumBuiltIn, Symbol::Type::Identifier, value);
     }
 }
 
-const Symbol * SymbolTable::findOrDefineIntValue(const Int64 value)
+SymbolTable::~SymbolTable()
 {
-    auto key = toString(value);
-    if (auto symbol = findSymbol(key.c_str()))
+    // Need to release the strings for StrLiteral and Identifier types.
+    for (auto && entry : *this)
     {
-        return symbol;
+        auto symbol = entry.second;
+        if (symbol->type == Symbol::Type::StrLiteral ||
+            symbol->type == Symbol::Type::Identifier)
+        {
+            releaseRcString(symbol->value.asString);
+        }
     }
-
-    // Define new built-in:
-    Symbol::Value intVal;
-    intVal.asInteger = value;
-    return addSymbol(key.c_str(), Symbol::LineNumBuiltIn, Symbol::Type::IntLiteral, intVal);
 }
 
-const Symbol * SymbolTable::findOrDefineStrValue(const char * value)
-{
-    if (auto symbol = findSymbol(value))
-    {
-        return symbol;
-    }
-    return addStrLiteral(value, Symbol::LineNumBuiltIn);
-}
-
-const Symbol * SymbolTable::findOrDefineIdentifier(const char * name)
-{
-    if (auto symbol = findSymbol(name))
-    {
-        return symbol;
-    }
-    return addIdentifier(name, Symbol::LineNumBuiltIn);
-}
-
-const Symbol * SymbolTable::addSymbol(ConstRcString * name, const int declLineNum,
-                                      const Symbol::Type type, const Symbol::Value value)
+const Symbol * SymbolTable::addSymbol(ConstRcString * name, const int declLineNum, const Symbol::Type type, const Symbol::Value value)
 {
     MOON_ASSERT(!findSymbol(name) && "Symbol already registered!");
     return addInternal(name, construct(symbolPool.allocate(), { name, value, declLineNum, type }));
 }
 
-const Symbol * SymbolTable::addSymbol(const char * name, const int declLineNum,
-                                      const Symbol::Type type, const Symbol::Value value)
+const Symbol * SymbolTable::addSymbol(const char * const name, const int declLineNum, const Symbol::Type type, const Symbol::Value value)
 {
     ConstRcStrUPtr key{ newConstRcString(name) };
     return addSymbol(key.get(), declLineNum, type, value);
 }
 
-const Symbol * SymbolTable::addIdentifier(const char * value, const int declLineNum)
+const Symbol * SymbolTable::findOrDefineLiteral(ConstRcString * valueStr, const int declLineNum, const Symbol::Type typeWanted)
 {
-    ConstRcStrUPtr key{ newConstRcString(value) };
-    return addSymbol(key.get(), declLineNum, Symbol::Type::Identifier, Symbol::valueFromRcStr(key.get()));
+    MOON_ASSERT(isRcStringValid(valueStr));
+    MOON_ASSERT(typeWanted != Symbol::Type::Identifier && "Use SymbolTable::findOrDefineIdentifier() instead!");
+
+    Symbol::Value value;
+    switch (typeWanted)
+    {
+    case Symbol::Type::IntLiteral :
+        value = Symbol::valueFromIntegerStr(valueStr->chars);
+        break;
+    case Symbol::Type::FloatLiteral :
+        value = Symbol::valueFromFloatStr(valueStr->chars);
+        break;
+    case Symbol::Type::BoolLiteral :
+        value = Symbol::valueFromBoolStr(valueStr->chars);
+        break;
+    case Symbol::Type::StrLiteral :
+        value.asString = valueStr; // No ref needed just for comparing.
+        break;
+    default :
+        MOON_UNREACHABLE();
+    } // switch (typeWanted)
+
+    // Try to find existing:
+    for (auto && entry : *this)
+    {
+        if (entry.second->cmpEqual(typeWanted, value))
+        {
+            return entry.second;
+        }
+    }
+
+    // Nothing found, define a new one:
+    if (typeWanted == Symbol::Type::StrLiteral)
+    {
+        addRcStringRef(value.asString); // Must add a ref for storing.
+    }
+    return addSymbol(generateSymbolName(typeWanted), declLineNum, typeWanted, value);
 }
 
-const Symbol * SymbolTable::addStrLiteral(const char * value, const int declLineNum)
+const Symbol * SymbolTable::findOrDefineLiteral(const char * const valueStr, const int declLineNum, const Symbol::Type typeWanted)
 {
-    ConstRcStrUPtr key{ newConstRcString(value) };
-    return addSymbol(key.get(), declLineNum, Symbol::Type::StrLiteral, Symbol::valueFromRcStr(key.get()));
+    MOON_ASSERT(valueStr != nullptr);
+    MOON_ASSERT(typeWanted != Symbol::Type::Identifier && "Use SymbolTable::findOrDefineIdentifier() instead!");
+
+    Symbol::Value value;
+    ConstRcString tempRcStr;
+
+    switch (typeWanted)
+    {
+    case Symbol::Type::IntLiteral :
+        value = Symbol::valueFromIntegerStr(valueStr);
+        break;
+    case Symbol::Type::FloatLiteral :
+        value = Symbol::valueFromFloatStr(valueStr);
+        break;
+    case Symbol::Type::BoolLiteral :
+        value = Symbol::valueFromBoolStr(valueStr);
+        break;
+    case Symbol::Type::StrLiteral :
+        // No ref needed just for comparing, so use a stack temporary:
+        tempRcStr.chars    = valueStr;
+        tempRcStr.length   = static_cast<UInt32>(std::strlen(valueStr));
+        tempRcStr.hashVal  = hashCString(valueStr);
+        tempRcStr.refCount = 1;
+        value.asString     = &tempRcStr;
+        break;
+    default :
+        MOON_UNREACHABLE();
+    } // switch (typeWanted)
+
+    // Try to find existing:
+    for (auto && entry : *this)
+    {
+        if (entry.second->cmpEqual(typeWanted, value))
+        {
+            return entry.second;
+        }
+    }
+
+    // Nothing found, define a new one:
+    if (typeWanted == Symbol::Type::StrLiteral)
+    {
+        // Copy the RC string now:
+        value.asString = newConstRcString(valueStr); // Ref = 1
+    }
+    return addSymbol(generateSymbolName(typeWanted), declLineNum, typeWanted, value);
 }
 
-const Symbol * SymbolTable::addIdentifier(ConstRcString * value, const int declLineNum)
+const Symbol * SymbolTable::findOrDefineIdentifier(ConstRcString * name, const int declLineNum)
 {
-    return addSymbol(value, declLineNum, Symbol::Type::Identifier, Symbol::valueFromRcStr(value));
+    if (auto symbol = findSymbol(name))
+    {
+        return symbol;
+    }
+
+    // Name and string value are the same for identifiers.
+    return addSymbol(name, declLineNum, Symbol::Type::Identifier, Symbol::valueFromRcStr(name));
 }
 
-const Symbol * SymbolTable::addIntLiteral(const char * value, const int declLineNum)
+const Symbol * SymbolTable::findOrDefineIdentifier(const char * const name, const int declLineNum)
 {
-    return addSymbol(value, declLineNum, Symbol::Type::IntLiteral, Symbol::valueFromIntegerStr(value));
+    if (auto symbol = findSymbol(name))
+    {
+        return symbol;
+    }
+
+    // Name and string value are the same for identifiers.
+    ConstRcStrUPtr rstr{ newConstRcString(name) };
+    return addSymbol(rstr.get(), declLineNum, Symbol::Type::Identifier, Symbol::valueFromRcStr(rstr.get()));
 }
 
-const Symbol * SymbolTable::addFloatLiteral(const char * value, const int declLineNum)
+const Symbol * SymbolTable::findOrDefineIntLiteral(const Int64 value)
 {
-    return addSymbol(value, declLineNum, Symbol::Type::FloatLiteral, Symbol::valueFromFloatStr(value));
+    char valueStr[128];
+    std::snprintf(valueStr, arrayLength(valueStr), MOON_I64_PRINT_FMT, value);
+    return findOrDefineLiteral(valueStr, Symbol::LineNumBuiltIn, Symbol::Type::IntLiteral);
 }
 
-const Symbol * SymbolTable::addBoolLiteral(const char * value, const int declLineNum)
+const Symbol * SymbolTable::findOrDefineFloatLiteral(const Float64 value)
 {
-    return addSymbol(value, declLineNum, Symbol::Type::BoolLiteral, Symbol::valueFromBoolStr(value));
+    char valueStr[128];
+    std::snprintf(valueStr, arrayLength(valueStr), "%lf", value);
+    return findOrDefineLiteral(valueStr, Symbol::LineNumBuiltIn, Symbol::Type::FloatLiteral);
+}
+
+const Symbol * SymbolTable::findOrDefineBoolLiteral(const bool value)
+{
+    return findOrDefineLiteral((value ? "true" : "false"), Symbol::LineNumBuiltIn, Symbol::Type::BoolLiteral);
+}
+
+const Symbol * SymbolTable::findOrDefineStrLiteral(const char * const valueStr)
+{
+    return findOrDefineLiteral(valueStr, Symbol::LineNumBuiltIn, Symbol::Type::StrLiteral);
+}
+
+ConstRcString * SymbolTable::generateSymbolName(const Symbol::Type type)
+{
+    char tempStr[128];
+    switch (type)
+    {
+    case Symbol::Type::IntLiteral :
+        std::snprintf(tempStr, arrayLength(tempStr), "$I_%u", nextSymId++);
+        break;
+    case Symbol::Type::FloatLiteral :
+        std::snprintf(tempStr, arrayLength(tempStr), "$F_%u", nextSymId++);
+        break;
+    case Symbol::Type::BoolLiteral :
+        std::snprintf(tempStr, arrayLength(tempStr), "$B_%u", nextSymId++);
+        break;
+    case Symbol::Type::StrLiteral :
+        std::snprintf(tempStr, arrayLength(tempStr), "$S_%u", nextSymId++);
+        break;
+    default :
+        MOON_UNREACHABLE();
+    } // switch (typeWanted)
+
+    return newConstRcString(tempStr);
 }
 
 void SymbolTable::print(std::ostream & os) const

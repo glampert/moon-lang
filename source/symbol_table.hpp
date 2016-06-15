@@ -47,12 +47,12 @@ struct Symbol final
         Int64           asInteger;
         Float64         asFloat;
         bool            asBoolean;
-        ConstRcString * asString;
+        ConstRcString * asString; // Reference held if type == StrLiteral | Identifier.
 
         Value() noexcept { asInteger = 0; }
     };
 
-    ConstRcString * name;    // Reference to the symbol name in the parent table. Not owned by Symbol.
+    ConstRcString * name;    // Pointer to the symbol name in the parent table. Not owned/referenced by Symbol.
     const Value     value;   // Intrinsic value of the symbol.
     const int       lineNum; // Line number in the source file where it was found. Negative for built-ins.
     const Type      type;    // Type that defines the symbol's value.
@@ -61,7 +61,7 @@ struct Symbol final
     static Value valueFromIntegerStr(const char * cstr);
     static Value valueFromFloatStr(const char * cstr);
     static Value valueFromBoolStr(const char * cstr);
-    static Value valueFromRcStr(ConstRcString * rstr);
+    static Value valueFromRcStr(ConstRcString * rstr); // Adds a ref
 
     // Compare this type and value for equality with the provided params.
     bool cmpEqual(Type otherType, Value otherValue) const;
@@ -92,16 +92,12 @@ class SymbolTable final
 {
 public:
 
-    SymbolTable();
+     SymbolTable();
+    ~SymbolTable();
 
     // Symbol access by name/id. Null returned if not found.
     const Symbol * findSymbol(ConstRcString * const name) const { return findInternal(name); }
     const Symbol * findSymbol(const char * name) const          { return findInternal(name); }
-
-    // Find equivalent constant in the table or define a new built-in literal value for it.
-    const Symbol * findOrDefineIntValue(Int64 value);         // IntLiteral
-    const Symbol * findOrDefineStrValue(const char * value);  // StrLiteral
-    const Symbol * findOrDefineIdentifier(const char * name); // Identifier
 
     // Add new symbol. Symbol must NOT be in the table. Fails with an assertion
     // if a symbol with the same NAME is already present. Returns the new symbol.
@@ -110,19 +106,31 @@ public:
     const Symbol * addSymbol(ConstRcString * name, int declLineNum, Symbol::Type type, Symbol::Value value);
     const Symbol * addSymbol(const char * name, int declLineNum, Symbol::Type type, Symbol::Value value);
 
-    // Add new literal constants. Constant must NOT be in the table. Fails with an assertion
-    // if a symbol with the same VALUE is already present. All will return the new symbol.
-    const Symbol * addIntLiteral(const char * value, int declLineNum);
-    const Symbol * addFloatLiteral(const char * value, int declLineNum);
-    const Symbol * addBoolLiteral(const char * value, int declLineNum);
-    const Symbol * addStrLiteral(const char * value, int declLineNum);
-    const Symbol * addIdentifier(const char * value, int declLineNum);
-    const Symbol * addIdentifier(ConstRcString * value, int declLineNum);
+    // Find a registered literal value with the equivalent string value or define a new one.
+    // The name used to register the new literal will be auto-generated.
+    const Symbol * findOrDefineLiteral(ConstRcString * valueStr, int declLineNum, Symbol::Type typeWanted);
+    const Symbol * findOrDefineLiteral(const char * valueStr, int declLineNum, Symbol::Type typeWanted);
+
+    // Find a registered identifier with the given name or define a new one.
+    const Symbol * findOrDefineIdentifier(ConstRcString * name, int declLineNum);
+    const Symbol * findOrDefineIdentifier(const char * name, int declLineNum);
+
+    // Shorthand to define built-in strings or number values:
+    const Symbol * findOrDefineIntLiteral(Int64 value);
+    const Symbol * findOrDefineFloatLiteral(Float64 value);
+    const Symbol * findOrDefineBoolLiteral(bool value);
+    const Symbol * findOrDefineStrLiteral(const char * valueStr);
 
     // Print the whole table in table format (no pun intended).
     void print(std::ostream & os) const;
 
+    // Auto-generated name for literal symbol types (IntLiteral, FloatLiteral, BoolLiteral, StrLiteral only).
+    ConstRcString * generateSymbolName(Symbol::Type type);
+
 private:
+
+    // For generated names.
+    UInt32 nextSymId = 0;
 
     // Symbols are allocated from here. The table holds pointers into this pool.
     Pool<Symbol, MOON_SYMBOL_POOL_GRANULARITY> symbolPool;

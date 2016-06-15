@@ -133,44 +133,44 @@ void Lexer::lexOnMultiLineComment()
  * | moon::Lexer special symbol/token handlers:      | *
  * +-------------------------------------------------+ */
 
+void Lexer::lexOnIdentifier()
+{
+    MOON_ASSERT(ctx.yylval   != nullptr);
+    MOON_ASSERT(ctx.symTable != nullptr);
+    ctx.yylval->asSymbol = ctx.symTable->findOrDefineIdentifier(YYText(), lineno());
+}
+
+void Lexer::lexOnIntLiteral()
+{
+    MOON_ASSERT(ctx.yylval   != nullptr);
+    MOON_ASSERT(ctx.symTable != nullptr);
+    ctx.yylval->asSymbol = ctx.symTable->findOrDefineLiteral(YYText(), lineno(), Symbol::Type::IntLiteral);
+}
+
+void Lexer::lexOnFloatLiteral()
+{
+    MOON_ASSERT(ctx.yylval   != nullptr);
+    MOON_ASSERT(ctx.symTable != nullptr);
+    ctx.yylval->asSymbol = ctx.symTable->findOrDefineLiteral(YYText(), lineno(), Symbol::Type::FloatLiteral);
+}
+
+void Lexer::lexOnBoolLiteral()
+{
+    MOON_ASSERT(ctx.yylval   != nullptr);
+    MOON_ASSERT(ctx.symTable != nullptr);
+    ctx.yylval->asSymbol = ctx.symTable->findOrDefineLiteral(YYText(), lineno(), Symbol::Type::BoolLiteral);
+}
+
 void Lexer::lexOnStrLiteral()
 {
     MOON_ASSERT(ctx.yylval   != nullptr);
     MOON_ASSERT(ctx.symTable != nullptr);
 
     // We have to do this special handling here to
-    // resolve escaped string characters like \n, \t, etc.
+    // resolve escaped string characters like \n, \t, \r, etc.
     const std::string escaped = escapeString(YYText());
-
-    const Symbol * symbol = ctx.symTable->findSymbol(escaped.c_str());
-    if (symbol == nullptr)
-    {
-        symbol = ctx.symTable->addStrLiteral(escaped.c_str(), lineno());
-    }
-    ctx.yylval->asSymbol = symbol;
+    ctx.yylval->asSymbol = ctx.symTable->findOrDefineLiteral(escaped.c_str(), lineno(), Symbol::Type::StrLiteral);
 }
-
-//
-// Generic handlers:
-//
-#define LEX_DEFINE_SYMBOL_HANDLER(handlerName, addMethod)           \
-    void Lexer::handlerName()                                       \
-    {                                                               \
-        MOON_ASSERT(ctx.yylval   != nullptr);                       \
-        MOON_ASSERT(ctx.symTable != nullptr);                       \
-        const Symbol * symbol = ctx.symTable->findSymbol(YYText()); \
-        if (symbol == nullptr)                                      \
-        {                                                           \
-            symbol = ctx.symTable->addMethod(YYText(), lineno());   \
-        }                                                           \
-        ctx.yylval->asSymbol = symbol;                              \
-    }
-
-LEX_DEFINE_SYMBOL_HANDLER( lexOnIdentifier,   addIdentifier   )
-LEX_DEFINE_SYMBOL_HANDLER( lexOnIntLiteral,   addIntLiteral   )
-LEX_DEFINE_SYMBOL_HANDLER( lexOnFloatLiteral, addFloatLiteral )
-LEX_DEFINE_SYMBOL_HANDLER( lexOnBoolLiteral,  addBoolLiteral  )
-#undef LEX_DEFINE_SYMBOL_HANDLER
 
 } // namespace moon {}
 

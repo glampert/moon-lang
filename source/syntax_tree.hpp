@@ -177,7 +177,7 @@ public:
     int  getSize() const noexcept { return nodePool.getObjectsAlive();      }
 
     void setRoot(const SyntaxTreeNode * newRoot) noexcept { root = newRoot; }
-    const SyntaxTreeNode * getRoot() const noexcept { return root; }
+    const SyntaxTreeNode * getRoot() const noexcept       { return root;    }
 
     // Simple recursive listing of each node for debug logging.
     void print(std::ostream & os) const;

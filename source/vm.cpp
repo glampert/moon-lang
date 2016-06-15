@@ -64,13 +64,13 @@ static void opStoreRVR(VM & vm, UInt32)
     vm.setReturnValue(vm.stack.pop());
 }
 
-static void opLoadGlob(VM & vm, const UInt32 operandIndex)
+static void opLoadGlobal(VM & vm, const UInt32 operandIndex)
 {
     // Push integer operand to the VM stack.
     vm.stack.push(vm.data[operandIndex]);
 }
 
-static void opStoreGlob(VM & vm, const UInt32 operandIndex)
+static void opStoreGlobal(VM & vm, const UInt32 operandIndex)
 {
     // Stores the current stack top to the data index of
     // this instruction, then pop the VM stack.
@@ -87,8 +87,21 @@ static void opLoadLocal(VM & vm, const UInt32 operandIndex)
 static void opStoreLocal(VM & vm, const UInt32 operandIndex)
 {
     const auto argc = vm.locals.getTopVar().getAsInteger();
-    auto args = vm.locals.slice(vm.locals.getCurrSize() - argc - 1, argc);
-    performAssignmentWithConversion(args[operandIndex], vm.stack.pop());
+
+    // Expand the local stack if needed:
+    if (operandIndex >= argc)
+    {
+        Variant argcVar = vm.locals.pop();
+        argcVar.value.asInteger += 1;
+
+        vm.locals.push(vm.stack.pop());
+        vm.locals.push(argcVar);
+    }
+    else // Assign to already allocated stack variable (function local or parameter):
+    {
+        auto args = vm.locals.slice(vm.locals.getCurrSize() - argc - 1, argc);
+        performAssignmentWithConversion(args[operandIndex], vm.stack.pop());
+    }
 }
 
 static void opMemberStoreCommon(VM & vm, Variant objRef)
@@ -114,7 +127,7 @@ static void opMemberStoreCommon(VM & vm, Variant objRef)
     performAssignmentWithConversion(memberRef->data, storeValue);
 }
 
-static void opMemberStoreGlob(VM & vm, const UInt32 operandIndex)
+static void opMemberStoreGlobal(VM & vm, const UInt32 operandIndex)
 {
     // Source the target object from the global program data.
     opMemberStoreCommon(vm, vm.data[operandIndex]);
@@ -126,6 +139,57 @@ static void opMemberStoreLocal(VM & vm, const UInt32 operandIndex)
     const auto argc = vm.locals.getTopVar().getAsInteger();
     auto args = vm.locals.slice(vm.locals.getCurrSize() - argc - 1, argc);
     opMemberStoreCommon(vm, args[operandIndex]);
+}
+
+static void opStoreArraySubLocal(VM & vm, const UInt32 operandIndex)
+{
+    const Variant subscriptVar   = vm.stack.pop();
+    const Variant assignedValVar = vm.stack.pop();
+
+    const auto argc = vm.locals.getTopVar().getAsInteger();
+    auto args = vm.locals.slice(vm.locals.getCurrSize() - argc - 1, argc);
+
+    Array * destArray = args[operandIndex].getAsArray();
+
+    const int index = static_cast<int>(subscriptVar.getAsInteger());
+    destArray->setIndex(index, assignedValVar);
+}
+
+static void opStoreArraySubGlobal(VM & vm, const UInt32 operandIndex)
+{
+    const Variant subscriptVar   = vm.stack.pop();
+    const Variant assignedValVar = vm.stack.pop();
+
+    Array * destArray = vm.data[operandIndex].getAsArray();
+
+    const int index = static_cast<int>(subscriptVar.getAsInteger());
+    destArray->setIndex(index, assignedValVar);
+}
+
+static void opStoreSetTypeLocal(VM & vm, const UInt32 operandIndex)
+{
+    const auto argc = vm.locals.getTopVar().getAsInteger();
+
+    // Expand the local stack if needed:
+    if (operandIndex >= argc)
+    {
+        Variant argcVar = vm.locals.pop();
+        argcVar.value.asInteger += 1;
+
+        vm.locals.push(vm.stack.pop());
+        vm.locals.push(argcVar);
+    }
+    else // Assign to already allocated stack variable (function local or parameter):
+    {
+        auto args = vm.locals.slice(vm.locals.getCurrSize() - argc - 1, argc);
+        args[operandIndex] = vm.stack.pop(); // Override the type instead of assigning with conversion.
+    }
+}
+
+static void opStoreSetTypeGlobal(VM & vm, const UInt32 operandIndex)
+{
+    // Override the type instead of assigning with conversion.
+    vm.data[operandIndex] = vm.stack.pop();
 }
 
 static void opCallCommon(VM & vm, const Variant funcVar)
@@ -240,15 +304,6 @@ static void opNewVar(VM & vm, const UInt32 operandIndex)
         performAssignmentWithConversion(initVal, rhs);
     }
     vm.stack.push(initVal);
-
-    // Expand the function scope stack if we're newing from a function:
-    if (!vm.locals.isEmpty())
-    {
-        auto argc = vm.locals.pop();
-        argc.value.asInteger += 1;
-        vm.locals.push(initVal);
-        vm.locals.push(argc);
-    }
 }
 
 static void opNewObj(VM & vm, const UInt32 operandIndex)
@@ -440,6 +495,72 @@ static void opForLoopStep(VM & vm, UInt32)
     // Gets written back to the 'i' and '__for_idx__' vars
 }
 
+static void opMatchTest(VM & vm, UInt32)
+{
+    const Variant caseVar = vm.stack.pop();
+    const Variant testVar = vm.stack.pop();
+    Variant result;
+
+    if (caseVar.type == Variant::Type::Range && testVar.type != Variant::Type::Range)
+    {
+        Int32 test;
+        const Range range = caseVar.getAsRange();
+
+        if (testVar.type == Variant::Type::Integer)
+        {
+            test = static_cast<Int32>(testVar.getAsInteger());
+        }
+        else if (testVar.type == Variant::Type::Str)
+        {
+            if (testVar.value.asString->getStringLength() != 1)
+            {
+                MOON_RUNTIME_EXCEPTION("expected single character literal in match statement");
+            }
+
+            // Get the ASCII value of the character:
+            test = *(testVar.value.asString->c_str());
+        }
+        else
+        {
+            MOON_RUNTIME_EXCEPTION("cannot compare range with " + toString(testVar.type));
+        }
+
+        result.type = Variant::Type::Integer;
+        result.value.asInteger = (test >= range.begin && test < range.end);
+    }
+    else if (caseVar.type == Variant::Type::Array && testVar.type != Variant::Type::Array)
+    {
+        // Test each array element against the testVar.
+        const Array * array = caseVar.getAsArray();
+        const int count = array->getArrayLength();
+
+        for (int i = 0; i < count; ++i)
+        {
+            const Variant arrayElement = array->getIndex(i);
+            result = performBinaryOp(OpCode::CmpEqual, testVar, arrayElement, &vm);
+            if (!result.isZero())
+            {
+                break;
+            }
+        }
+    }
+    else
+    {
+        result = performBinaryOp(OpCode::CmpEqual, testVar, caseVar, &vm);
+    }
+
+    // The test value is put back into the stack for the next case.
+    // MatchEnd removes it when reached.
+    vm.stack.push(testVar);
+    vm.stack.push(result);
+}
+
+static void opMatchEnd(VM & vm, UInt32)
+{
+    // Pop the match test value.
+    vm.stack.pop();
+}
+
 // ----------------------------------------------------------------------------
 // opHandlerCallbacks[]:
 //
@@ -469,18 +590,22 @@ static const OpCodeHandlerCB opHandlerCallbacks[]
     &opForLoopPrep,                     // ForLoopPrep
     &opForLoopTest,                     // ForLoopTest
     &opForLoopStep,                     // ForLoopStep
-    &opNOOP,                            // MatchPrep
-    &opNOOP,                            // MatchTest
+    &opMatchTest,                       // MatchTest
+    &opMatchEnd,                        // MatchEnd
     &opArraySubscript,                  // ArraySubscript
     &opMemberRef,                       // MemberRef
     &opLoadRVR,                         // LoadRVR
     &opStoreRVR,                        // StoreRVR
-    &opLoadGlob,                        // LoadGlob
-    &opStoreGlob,                       // StoreGlob
-    &opMemberStoreGlob,                 // MemberStoreGlob
+    &opLoadGlobal,                      // LoadGlobal
+    &opStoreGlobal,                     // StoreGlobal
+    &opMemberStoreGlobal,               // MemberStoreGlobal
     &opLoadLocal,                       // LoadLocal
     &opStoreLocal,                      // StoreLocal
     &opMemberStoreLocal,                // MemberStoreLocal
+    &opStoreArraySubLocal,              // StoreArraySubLocal
+    &opStoreArraySubGlobal,             // StoreArraySubGlobal
+    &opStoreSetTypeLocal,               // StoreSetTypeLocal
+    &opStoreSetTypeGlobal,              // StoreSetTypeGlobal
     &opBinary<OpCode::CmpNotEqual>,     // CmpNotEqual
     &opBinary<OpCode::CmpEqual>,        // CmpEqual
     &opBinary<OpCode::CmpGreaterEqual>, // CmpGreaterEqual
@@ -572,15 +697,15 @@ void VM::executeSingleInstruction(const OpCode op, const UInt32 operandIndex)
 
 static void dumpVariant(const Variant var, const int index, std::ostream & os)
 {
-    auto valStr  = toString(var);
-    auto typeStr = toString(var.type);
+    std::string valStr  = toString(var);
+    std::string typeStr = toString(var.type);
 
     if (var.type == Variant::Type::Str)
     {
         valStr = unescapeString(valStr.c_str());
     }
 
-    os << strPrintF("%s[ %3i ]%s %s0x%016llX%s (%s%s%s) => %s\n",
+    os << strPrintF("%s[ %3i ]%s %s" MOON_X64_PRINT_FMT "%s (%s%s%s) => %s\n",
                     color::cyan(), index, color::restore(), color::yellow(),
                     static_cast<UInt64>(var.value.asInteger), color::restore(),
                     color::red(), valStr.c_str(), color::restore(), typeStr.c_str());
@@ -669,18 +794,22 @@ std::string toString(const OpCode op)
         "FOR_LOOP_PREP",
         "FOR_LOOP_TEST",
         "FOR_LOOP_STEP",
-        "MATCH_PREP",
         "MATCH_TEST",
+        "MATCH_END",
         "ARRAY_SUBSCRIPT",
         "MEMBER_REF",
         "LOAD_RVR",
         "STORE_RVR",
-        "LOAD_GLOB",
-        "STORE_GLOB",
-        "MEMBER_STORE_GLOB",
+        "LOAD_GLOBAL",
+        "STORE_GLOBAL",
+        "MEMBER_STORE_GLOBAL",
         "LOAD_LOCAL",
         "STORE_LOCAL",
         "MEMBER_STORE_LOCAL",
+        "STORE_ARRAYSUB_LOCAL",
+        "STORE_ARRAYSUB_GLOBAL",
+        "STORE_SETTYPE_LOCAL",
+        "STORE_SETTYPE_GLOBAL",
         "CMP_NOT_EQUAL",
         "CMP_EQUAL",
         "CMP_GREATER_EQUAL",

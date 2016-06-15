@@ -371,14 +371,14 @@ SyntaxTreeNode * newIdentNode(ParseContext & ctx, const Symbol * identifierSymbo
                                      ctx.srcFile->c_str() :
                                      "<unknown file>");
         return ctx.syntTree->newNodeWithEval(STNode::ExprLiteralConst,
-                                             ctx.symTable->findOrDefineStrValue(srcFileName),
+                                             ctx.symTable->findOrDefineStrLiteral(srcFileName),
                                              STEval::Str);
     }
     else if (identifierSymbol->cmpEqual(lineHash))
     {
         const long srcLineNum = ctx.lexer->lineno();
         return ctx.syntTree->newNodeWithEval(STNode::ExprLiteralConst,
-                                             ctx.symTable->findOrDefineIntValue(srcLineNum),
+                                             ctx.symTable->findOrDefineIntLiteral(srcLineNum),
                                              STEval::Long);
     }
     else if (identifierSymbol->cmpEqual(funcHash))
@@ -387,7 +387,7 @@ SyntaxTreeNode * newIdentNode(ParseContext & ctx, const Symbol * identifierSymbo
                                   ctx.varInfo->currentFuncSymbol->name->chars :
                                   "<global scope>");
         return ctx.syntTree->newNodeWithEval(STNode::ExprLiteralConst,
-                                             ctx.symTable->findOrDefineStrValue(funcName),
+                                             ctx.symTable->findOrDefineStrLiteral(funcName),
                                              STEval::Str);
     }
 
@@ -524,6 +524,10 @@ SyntaxTreeNode * newRangeParamNode(ParseContext & ctx, const Symbol * literalSym
         {
             parserError(ctx, "only single character literals are allowed in range expressions");
         }
+
+        // Convert to its ASCII value.
+        const int c = literalSymbol->value.asString->chars[0];
+        literalSymbol = ctx.symTable->findOrDefineIntLiteral(c);
     }
 
     return ctx.syntTree->newNodeWithEval(STNode::ExprLiteralConst, literalSymbol,
@@ -607,7 +611,7 @@ SyntaxTreeNode * newBinaryOpNode(ParseContext & ctx, const STNode type,
     case STNode::ExprCmpGreaterThan  : binOp = OpCode::CmpGreater;      break;
     case STNode::ExprCmpLessEqual    : binOp = OpCode::CmpLessEqual;    break;
     case STNode::ExprCmpLessThan     : binOp = OpCode::CmpLess;         break;
-    case STNode::ExprAssign          : binOp = OpCode::StoreGlob;       break;
+    case STNode::ExprAssign          : binOp = OpCode::StoreGlobal;     break;
     case STNode::ExprMemberRef       : binOp = OpCode::MemberRef;       break;
     default : MOON_INTERNAL_EXCEPTION("unhandled STNode type " + toString(type) + " in binary op!");
     } // switch (type)
@@ -680,7 +684,7 @@ SyntaxTreeNode * newBinaryOpNode(ParseContext & ctx, const STNode type,
 
         if (lhs->evalType == STEval::Void || rhs->evalType == STEval::Void)
         {
-            if (binOp == OpCode::StoreGlob)
+            if (binOp == OpCode::StoreGlobal)
             {
                 parserError(ctx, "void function cannot be used on assignment");
             }
@@ -693,7 +697,7 @@ SyntaxTreeNode * newBinaryOpNode(ParseContext & ctx, const STNode type,
         const Variant::Type lhsVarType = eval2VarType(lhs->evalType);
         const Variant::Type rhsVarType = eval2VarType(rhs->evalType);
 
-        if (binOp == OpCode::StoreGlob) // Generic assignment tag
+        if (binOp == OpCode::StoreGlobal) // Generic assignment tag
         {
             if (!isAssignmentValid(lhsVarType, rhsVarType))
             {
@@ -744,7 +748,7 @@ SyntaxTreeNode * newCompareNode(ParseContext & ctx, const STNode type, SyntaxTre
     if (child0->nodeType == STNode::ExprNameIdent)
     {
         // Turn it into a compare against zero/null/false expression:
-        SyntaxTreeNode * zeroNode = newLiteralNode(ctx, STEval::Long, ctx.symTable->findOrDefineIntValue(0));
+        SyntaxTreeNode * zeroNode = newLiteralNode(ctx, STEval::Long, ctx.symTable->findOrDefineIntLiteral(0));
         SyntaxTreeNode * cmpNode  = newBinaryOpNode(ctx, STNode::ExprCmpNotEqual, child0, zeroNode);
         return ctx.syntTree->newNode(type, cmpNode, child1, child2, STEval::Void);
     }
@@ -873,13 +877,19 @@ SyntaxTreeNode * newForLoopIteratorNode(ParseContext & ctx, const SyntaxTreeNode
         }
     }
 
+    // FIXME: This should probably be better suited as a compiler state.
+    // Not quite sure what would be the implications of having it thread_local
+    // when running multiple script compilers from different threads... Probably
+    // safe, but again, could be a transient compiler state instead...
+    MOON_ATTRIBUTE_TLS static std::uint32_t forLoopIdCounter = 0;
+
     // These variables are implicitly declared inside every for loop to serve as auxiliary loop counters.
-    char tempName1[256];
-    char tempName2[256];
-    std::snprintf(tempName1, arrayLength(tempName1), "__for_idx__%i", ctx.lexer->lineno());
-    std::snprintf(tempName2, arrayLength(tempName2), "__for_prm__%i", ctx.lexer->lineno());
-    const Symbol * internalCounterSymbol = ctx.symTable->findOrDefineIdentifier(tempName1);
-    const Symbol * internalParamSymbol   = ctx.symTable->findOrDefineIdentifier(tempName2);
+    char tempName1[512];
+    char tempName2[512];
+    std::snprintf(tempName1, arrayLength(tempName1), "__for_idx_%i_%u__", ctx.lexer->lineno(), forLoopIdCounter++);
+    std::snprintf(tempName2, arrayLength(tempName2), "__for_prm_%i_%u__", ctx.lexer->lineno(), forLoopIdCounter++);
+    const Symbol * internalCounterSymbol = ctx.symTable->findOrDefineIdentifier(tempName1, ctx.lexer->lineno());
+    const Symbol * internalParamSymbol   = ctx.symTable->findOrDefineIdentifier(tempName2, ctx.lexer->lineno());
 
     const SyntaxTreeNode * iteratorTypeNode = newTypeIdNode(ctx, stEval);
     SyntaxTreeNode * iteratorNode = newVarDeclNode(ctx, iteratorVarSymbol, nullptr,
@@ -1060,9 +1070,9 @@ SyntaxTreeNode * newFunctionCallNode(ParseContext & ctx, const Symbol * funcName
                                     ctx.varInfo->currentFuncSymbol->name->chars :
                                     "<global scope>");
 
-        auto fileNode = ctx.syntTree->newNodeWithSymbol(STNode::ExprLiteralConst, ctx.symTable->findOrDefineStrValue(srcFileName));
-        auto lineNode = ctx.syntTree->newNodeWithSymbol(STNode::ExprLiteralConst, ctx.symTable->findOrDefineIntValue(srcLineNum));
-        auto funcNode = ctx.syntTree->newNodeWithSymbol(STNode::ExprLiteralConst, ctx.symTable->findOrDefineStrValue(callerName));
+        auto fileNode = ctx.syntTree->newNodeWithSymbol(STNode::ExprLiteralConst, ctx.symTable->findOrDefineStrLiteral(srcFileName));
+        auto lineNode = ctx.syntTree->newNodeWithSymbol(STNode::ExprLiteralConst, ctx.symTable->findOrDefineIntLiteral(srcLineNum));
+        auto funcNode = ctx.syntTree->newNodeWithSymbol(STNode::ExprLiteralConst, ctx.symTable->findOrDefineStrLiteral(callerName));
 
         fileNode->evalType = STEval::Str;
         lineNode->evalType = STEval::Long;

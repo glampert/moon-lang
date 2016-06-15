@@ -537,7 +537,7 @@ std::string Object::getTypeName() const
 
 std::string Object::getAddressString() const
 {
-    return strPrintF("[@%016llX]", static_cast<UInt64>(reinterpret_cast<std::uintptr_t>(this)));
+    return strPrintF("[@" MOON_X64_PRINT_FMT "]", static_cast<UInt64>(reinterpret_cast<std::uintptr_t>(this)));
 }
 
 std::string Object::getStringRepresentation() const
@@ -763,7 +763,7 @@ Variant Str::unaryOp(const OpCode op, const Str & str)
     // end
     //
     Variant result{ Variant::Type::Integer };
-    result.value.asInteger = !str.isEmptyString();
+    result.value.asInteger = str.isEmptyString();
     return result;
 }
 

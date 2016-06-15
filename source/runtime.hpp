@@ -742,8 +742,6 @@ private:
     // using the C++ string, and vice versa.
     ConstRcString * constString = nullptr;
     std::string     mutableString;
-    //TODO Use a custom SmallStr-like implementation like the Array
-    //so we can place more inline storage in the Str objects?
 };
 
 // ========================================================

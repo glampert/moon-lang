@@ -443,33 +443,33 @@ int main(int argc, const char * argv[])
         MOON_ASSERT(raii2.isOpen() == false);
     }
 
+    ParseContext parseCtx;
+
+    std::string srcFile = "test.ml";
+    std::string currText;
+
+    VM vm; //{false, VM::DefaultStackSize};
+    Compiler compiler;
+    Lexer lexer{ parseCtx, &std::cin };
+    Parser parser{ parseCtx };
+    VarInfoTable varInfo{ parseCtx };
+
+    parseCtx.lexer = &lexer;
+    parseCtx.parser = &parser;
+    parseCtx.symTable = &compiler.symTable;
+    parseCtx.syntTree = &compiler.syntTree;
+    parseCtx.varInfo = &varInfo;
+    parseCtx.vm = &vm;
+    parseCtx.currText = &currText;
+    parseCtx.srcFile = &srcFile;
+
+    //parseCtx.debugMode = false;
+    //parseCtx.enableWarnings = false;
+
     try
     {
-        ParseContext parseCtx;
-
-        std::string srcFile = "test.ml";
-        std::string currText;
-
-        VM vm;//{false, VM::DefaultStackSize};
-        Compiler compiler;
-        Lexer lexer{ parseCtx, &std::cin };
-        Parser parser{ parseCtx };
-        VarInfoTable varInfo{ parseCtx };
-
-        parseCtx.lexer     = &lexer;
-        parseCtx.parser    = &parser;
-        parseCtx.symTable  = &compiler.symTable;
-        parseCtx.syntTree  = &compiler.syntTree;
-        parseCtx.varInfo   = &varInfo;
-        parseCtx.vm        = &vm;
-        parseCtx.currText  = &currText;
-        parseCtx.srcFile   = &srcFile;
-
-        //parseCtx.debugMode = false;
-        //parseCtx.enableWarnings = false;
-
         logStream() << (parser.parse() == 0 ? "\n-- FINISHED OK --" : "\n-- FINISHED WITH PARSE ERROR --") << "\n\n";
-        //logStream() << compiler.symTable << "\n";
+        logStream() << compiler.symTable << "\n";
         //logStream() << vm.types << "\n";
         logStream() << compiler.syntTree << "\n";
 
@@ -517,6 +517,9 @@ int main(int argc, const char * argv[])
         testScriptString(vm);
         testScriptArray(vm);
 
+        std::cout << "MOON_X64_PRINT_FMT = " << MOON_X64_PRINT_FMT << "\n";
+        std::cout << "MOON_I64_PRINT_FMT = " << MOON_I64_PRINT_FMT << "\n";
+
         /*
         logStream() << "----------------------------------" << std::endl;
         logStream() << "GC OBJECTS:\n" << std::endl;
@@ -531,5 +534,6 @@ int main(int argc, const char * argv[])
     catch (const std::exception & e)
     {
         logStream() << e.what() << std::endl;
+        //logStream() << compiler.symTable << "\n";
     }
 }

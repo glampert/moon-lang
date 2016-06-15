@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <cinttypes>
 
 #include <utility>
 #include <string>
@@ -27,6 +28,34 @@
     // This header file is a built-in that comes bundled with the Flex install.
     #include <FlexLexer.h>
 #endif // INC_LEXER
+
+// This is used in only a couple places and should ultimately be replaced by using non-shared data.
+#if MOON_HAS_CXX11_THREAD_LOCAL
+    #define MOON_ATTRIBUTE_TLS thread_local
+#elif defined(__GNUC__) || defined(__clang__)
+    #define MOON_ATTRIBUTE_TLS __thread
+#elif defined(_MSC_VER)
+    #define MOON_ATTRIBUTE_TLS __declspec(thread)
+#else // !C++11 && !__GNUC__ && !__clang__ && !_MSC_VER
+    #error "Define a thread local storage qualifier for your compiler/platform!"
+#endif // MOON_HAS_CXX11_THREAD_LOCAL
+
+// Portability macros:
+#ifndef MOON_I64_PRINT_FMT
+    #ifdef PRIi64
+        #define MOON_I64_PRINT_FMT "%" PRIi64
+    #else // PRIi64 not defined
+        #define MOON_I64_PRINT_FMT "%lli"
+    #endif // PRIi64
+#endif // MOON_I64_PRINT_FMT
+
+#ifndef MOON_X64_PRINT_FMT
+    #ifdef PRIX64
+        #define MOON_X64_PRINT_FMT "0x%016" PRIX64
+    #else // PRIX64 not defined
+        #define MOON_X64_PRINT_FMT "0x%016llX"
+    #endif // PRIX64
+#endif // MOON_X64_PRINT_FMT
 
 namespace moon
 {
@@ -213,13 +242,12 @@ std::string unescapeString(const char * escaped);
 // Also strips the first and last double-quotes, if any. The Lexer needs that for string literals.
 std::string escapeString(const char * unescaped);
 
-// Temporary formatting buffer used is fixed to 2048
-// chars, so longer strings will get truncated!
-#ifdef __GNUC__
-std::string strPrintF(const char * format, ...) __attribute__((format(printf, 1, 2)));
-#else // !__GNUC__
-std::string strPrintF(const char * format, ...);
-#endif // __GNUC__
+// Temporary formatting buffer used internally is fixed to 2048 chars, so longer strings will get truncated!
+#if defined(__GNUC__) || defined(__clang__)
+    std::string strPrintF(const char * format, ...) __attribute__((format(printf, 1, 2)));
+#else // !__GNUC__ and !__clang__
+    std::string strPrintF(const char * format, ...);
+#endif // __GNUC__ or __clang__
 
 // ------------------------------------
 
@@ -328,10 +356,10 @@ constexpr UInt32 hashCString(const char * cstr)
 
 struct ConstRcString final
 {
-    const char * const chars;    // Immutable null-terminated C-string.
-    const UInt32       length;   // Length in characters, not including the null terminator.
-    const UInt32       hashVal;  // Precomputed hashCString() since the string is immutable.
-    UInt32             refCount; // Current reference count. Deleted when it drops to zero.
+    const char * chars;    // Immutable null-terminated C-string.
+    UInt32       length;   // Length in characters, not including the null terminator.
+    UInt32       hashVal;  // Precomputed hashCString() since the string is immutable.
+    UInt32       refCount; // Current reference count. Deleted when it drops to zero.
 };
 
 // The const Ref Counted String has a precomputed hash of the string, so equal comparison

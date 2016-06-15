@@ -79,8 +79,8 @@ enum class OpCode : UInt8
     ForLoopTest, // pushes true if the loop is NOT done, false if finished
     ForLoopStep,
 
-    MatchPrep, // pops one value
-    MatchTest, // pops one value, pushes the result of the test
+    MatchTest, // pushes the result of the test
+    MatchEnd,
 
     ArraySubscript, // pops the array ref and subscript from the stack[array_ref, sub]
                     // pushes the resulting value into the stack
@@ -92,14 +92,22 @@ enum class OpCode : UInt8
     StoreRVR, // store stack top into RVR
 
     // global variable/constant
-    LoadGlob,  // push operand into stack
-    StoreGlob, // store stack top into operand and pop
-    MemberStoreGlob, // pops 2 from the stack, [obj, member_idx] and writes to member variable
+    LoadGlobal,  // push operand into stack
+    StoreGlobal, // store stack top into operand and pop
+    MemberStoreGlobal, // pops 2 from the stack, [obj, member_idx] and writes to member variable
 
     // local variable (function scope)
     LoadLocal,
     StoreLocal,
     MemberStoreLocal,
+
+    // Pops the value and subscript, write to the array operand.
+    StoreArraySubLocal,
+    StoreArraySubGlobal,
+
+    // Same as StoreLocal/StoreGlobal, but overrides the type of the operand instead of assigning with conversion/checking.
+    StoreSetTypeLocal,
+    StoreSetTypeGlobal,
 
     CmpNotEqual,
     CmpEqual,
@@ -140,14 +148,6 @@ inline bool isJumpOpCode(const OpCode op) noexcept
            op == OpCode::JmpIfFalse ||
            op == OpCode::JmpIfTrue  ||
            op == OpCode::JmpReturn;
-}
-
-inline bool referencesStackData(const OpCode op) noexcept
-{
-    return op == OpCode::CallLocal  ||
-           op == OpCode::LoadLocal  ||
-           op == OpCode::StoreLocal ||
-           op == OpCode::MemberStoreLocal;
 }
 
 // ========================================================

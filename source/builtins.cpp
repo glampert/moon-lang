@@ -217,7 +217,7 @@ void to_string(VM & vm, Stack::Slice args) // (varargs) -> string
         case 'h' : // hexadecimal
             {
                 const UInt64 value = var->value.asInteger;
-                outputStr = strPrintF("0x%016llX", value);
+                outputStr = strPrintF(MOON_X64_PRINT_FMT, value);
                 break;
             }
         case 'p' : // pointer
@@ -228,12 +228,12 @@ void to_string(VM & vm, Stack::Slice args) // (varargs) -> string
                 {
                     // Types stored directly into the Variant can print the Variant's own address.
                     address = static_cast<UInt64>(reinterpret_cast<std::uintptr_t>(var));
-                    outputStr = strPrintF("0x%016llX", address);
+                    outputStr = strPrintF(MOON_X64_PRINT_FMT, address);
                 }
                 else // Objects print the address of the object:
                 {
                     address = static_cast<UInt64>(reinterpret_cast<std::uintptr_t>(var->value.asVoidPtr));
-                    outputStr = strPrintF("0x%016llX", address);
+                    outputStr = strPrintF(MOON_X64_PRINT_FMT, address);
                 }
                 break;
             }

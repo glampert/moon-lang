@@ -116,7 +116,7 @@ public:
     int getReturnAddress() const noexcept { return retAddr; }
 
     void setReturnValue(Variant retVal) noexcept { rvr = retVal; }
-    Variant getReturnValue() const noexcept { return rvr; }
+    Variant getReturnValue() const noexcept      { return rvr;   }
 
     void execute();
     void executeSingleInstruction(OpCode op, UInt32 operandIndex);
