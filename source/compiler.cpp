@@ -11,7 +11,6 @@
 #include "semantic_check.hpp"
 #include <algorithm>
 #include <iomanip> // For std::setw & friends
-#include <fstream> // Used by the DefaultFileIOCallbacks
 
 namespace moon
 {
@@ -68,58 +67,6 @@ namespace moon
 #endif // MOON_ENABLE_ASSERT
 
 // ========================================================
-// FileIOCallbacks / DefaultFileIOCallbacks:
-// ========================================================
-
-bool DefaultFileIOCallbacks::openScriptImport(const std::string & importFile, std::istream ** streamOut)
-{
-    // No extra handling. We don't perform import path searching for the default callbacks.
-    return openScript(importFile, streamOut);
-}
-
-bool DefaultFileIOCallbacks::openScript(const std::string & scriptFile, std::istream ** streamOut)
-{
-    MOON_ASSERT(!scriptFile.empty());
-    MOON_ASSERT(streamOut != nullptr);
-
-    std::ifstream inFile;
-    inFile.exceptions(std::ifstream::goodbit); // Don't throw on error.
-    inFile.open(scriptFile);
-
-    const bool succeeded = (inFile.is_open() && inFile.good());
-    if (!succeeded)
-    {
-        // Avoid allocating a new file object if we can't open.
-        return false;
-    }
-
-    (*streamOut) = new std::ifstream{ std::move(inFile) };
-
-    #if MOON_DEBUG
-    logStream() << "Moon: DefaultFileIOCallbacks - Opened script file \"" << scriptFile << "\"\n";
-    #endif // MOON_DEBUG
-    return succeeded;
-}
-
-void DefaultFileIOCallbacks::closeScript(std::istream ** stream)
-{
-    #if MOON_DEBUG
-    logStream() << "Moon: DefaultFileIOCallbacks - Closing script file.\n";
-    #endif // MOON_DEBUG
-
-    delete (*stream);
-    stream = nullptr;
-}
-
-FileIOCallbacks::~FileIOCallbacks()
-{
-    // This is here to anchor the vtable to this file,
-    // preventing the 'weak-vtables' warning on Clang.
-}
-
-// ========================================================
-
-// ========================================================
 // Intermediate code generator context:
 // ========================================================
 
@@ -132,6 +79,9 @@ struct CodeGen final
     //This can then be declared locally in the compile() method.
     //
 };
+
+using DataMap  = HashTable<const Symbol *, UInt32>;
+using InstrMap = HashTable<const IntermediateInstr *, UInt32>;
 
 static UInt32 getProgCodeIndex(const InstrMap & instrMapping, const IntermediateInstr * instr)
 {
@@ -237,10 +187,10 @@ static void printIntermediateInstrListHelper(const IntermediateInstr * head, std
             {
                 if (instr->operand.symbol != nullptr)
                 {
-                    if (instr->type != Variant::Type::Null)
+                    if (instr->dataType != Variant::Type::Null)
                     {
                         os << " \'" << color::magenta() << unescapeString(toString(*(instr->operand.symbol)).c_str())
-                           << color::restore() << "\'" << " (" << toString(instr->type) << ")" << color::restore();
+                           << color::restore() << "\'" << " (" << toString(instr->dataType) << ")" << color::restore();
                     }
                     else
                     {
@@ -702,12 +652,12 @@ static IntermediateInstr * emitCompoundBinaryOp(Compiler & compiler, const Synta
         lhsIsArraySubscript = false;
     }
 
-    OpCode storeOp  = (!lhsIsArraySubscript ? OpCode::StoreGlobal : OpCode::StoreArraySubGlobal);
-    OpCode loadOp   = OpCode::LoadGlobal;
-    UInt16 paramIdx = InvalidParamIdx;
+    OpCode storeOp = (!lhsIsArraySubscript ? OpCode::StoreGlobal : OpCode::StoreArraySubGlobal);
+    OpCode loadOp  = OpCode::LoadGlobal;
+    UInt16 stackIndex = InvalidStackIndex;
 
     if (targetSymbol->type == Symbol::Type::Identifier &&
-        compiler.symbolIsFunctionLocal(targetSymbol, paramIdx))
+        compiler.symbolIsFunctionLocal(targetSymbol, stackIndex))
     {
         storeOp = (!lhsIsArraySubscript ? OpCode::StoreLocal : OpCode::StoreArraySubLocal);
         loadOp  = OpCode::LoadLocal;
@@ -730,7 +680,7 @@ static IntermediateInstr * emitCompoundBinaryOp(Compiler & compiler, const Synta
     if (root->getChild(1)->nodeType != SyntaxTreeNode::Type::ExprFuncCall)
     {
         auto storeOpInstr = compiler.newInstruction(storeOp, targetSymbol);
-        storeOpInstr->paramIdx = paramIdx;
+        storeOpInstr->stackIndex = stackIndex;
 
         // Load the subscript index right after if the left hand side is an array subscript.
         if (lhsIsArraySubscript)
@@ -769,7 +719,7 @@ static IntermediateInstr * emitLoad(Compiler & compiler, const SyntaxTreeNode * 
     auto symbol = root->symbol;
 
     OpCode op = OpCode::LoadGlobal;
-    UInt16 paramIdx = InvalidParamIdx;
+    UInt16 stackIndex = InvalidStackIndex;
 
     // Booleans are converted to integer (0=false, 1=true).
     if (symbol->type == Symbol::Type::BoolLiteral)
@@ -778,14 +728,14 @@ static IntermediateInstr * emitLoad(Compiler & compiler, const SyntaxTreeNode * 
     }
     else if (symbol->type == Symbol::Type::Identifier)
     {
-        if (compiler.symbolIsFunctionLocal(symbol, paramIdx)) // A local variable or function parameter?
+        if (compiler.symbolIsFunctionLocal(symbol, stackIndex)) // A local variable or function parameter?
         {
             op = OpCode::LoadLocal;
         }
     }
 
     auto operation = compiler.newInstruction(op, symbol, eval2VarType(root->evalType));
-    operation->paramIdx = paramIdx;
+    operation->stackIndex = stackIndex;
 
     // Function calls consist of a chain of load instructions followed by one CALL instruction.
     if (root->getChild(0) != nullptr)
@@ -813,10 +763,10 @@ static IntermediateInstr * appendTrailingLoadOpIfNeeded(Compiler & compiler, Int
         // Need to load the result of the rhs expression back into the stack.
         // Reusing the last store op from the resolved argument for that.
         IntermediateInstr * tailLoad = compiler.newInstruction(OpCode::NoOp);
-        tailLoad->op       = ((last->op == OpCode::StoreGlobal) ? OpCode::LoadGlobal : OpCode::LoadLocal);
-        tailLoad->type     = last->type;
-        tailLoad->paramIdx = last->paramIdx;
-        tailLoad->operand  = last->operand;
+        tailLoad->op         = ((last->op == OpCode::StoreGlobal) ? OpCode::LoadGlobal : OpCode::LoadLocal);
+        tailLoad->dataType   = last->dataType;
+        tailLoad->stackIndex = last->stackIndex;
+        tailLoad->operand    = last->operand;
 
         argument = linkInstr(argument, tailLoad);
     }
@@ -981,7 +931,7 @@ static IntermediateInstr * emitStore(Compiler & compiler, const SyntaxTreeNode *
     }
 
     OpCode op;
-    UInt16 paramIdx = InvalidParamIdx;
+    UInt16 stackIndex = InvalidStackIndex;
     IntermediateInstr * memOffsetInstr = nullptr;
     IntermediateInstr * argument = traverseTreeRecursive(compiler, root->getChild(2));
 
@@ -990,7 +940,7 @@ static IntermediateInstr * emitStore(Compiler & compiler, const SyntaxTreeNode *
     argument = appendTrailingLoadOpIfNeeded(compiler, argument, root->getChild(2));
 
     // A local variable or function parameter?
-    if (compiler.symbolIsFunctionLocal(objSymbol, paramIdx))
+    if (compiler.symbolIsFunctionLocal(objSymbol, stackIndex))
     {
         if (numMemberOffsets > 0)
         {
@@ -1035,7 +985,7 @@ static IntermediateInstr * emitStore(Compiler & compiler, const SyntaxTreeNode *
     }
 
     auto operation = compiler.newInstruction(op, objSymbol, symbType);
-    operation->paramIdx = paramIdx;
+    operation->stackIndex = stackIndex;
 
     // Load the subscript right after.
     if (isArraySubscript)
@@ -1159,18 +1109,18 @@ static void countArgsRecursive(const SyntaxTreeNode * root, int & argCountOut, C
 template<OpCode OP, Variant::Type OperandType>
 static IntermediateInstr * emitParamChain(Compiler & compiler, const SyntaxTreeNode * root)
 {
-    UInt16 paramIdx = InvalidParamIdx;
+    UInt16 stackIndex = InvalidStackIndex;
     OpCode op = OP;
 
     // Check for the case where attempting an indirect function call
     // via a function parameter or local var of type 'function'.
-    if (op == OpCode::Call && compiler.symbolIsFunctionLocal(root->symbol, paramIdx))
+    if (op == OpCode::Call && compiler.symbolIsFunctionLocal(root->symbol, stackIndex))
     {
         op = OpCode::CallLocal;
     }
 
     auto operation = compiler.newInstruction(op, root->symbol, OperandType);
-    operation->paramIdx = paramIdx;
+    operation->stackIndex = stackIndex;
 
     // We have to keep track of the visited nodes to be able to properly
     // compute the argument counts. Some nodes will be visited more than
@@ -1304,9 +1254,9 @@ static IntermediateInstr * emitNewVar(Compiler & compiler, const SyntaxTreeNode 
 
     const Symbol * symbol = root->symbol;
     OpCode op = OpCode::StoreGlobal;
-    UInt16 paramIdx = InvalidParamIdx;
+    UInt16 stackIndex = InvalidStackIndex;
 
-    if (compiler.symbolIsFunctionLocal(symbol, paramIdx)) // A local variable or function parameter?
+    if (compiler.symbolIsFunctionLocal(symbol, stackIndex)) // A local variable or function parameter?
     {
         op = OpCode::StoreLocal;
     }
@@ -1318,7 +1268,7 @@ static IntermediateInstr * emitNewVar(Compiler & compiler, const SyntaxTreeNode 
 
     auto newOp   = compiler.newInstruction(OpCode::NewVar, typeSymbol, Variant::Type::Tid);
     auto storeOp = compiler.newInstruction(op, symbol, varTypeForNodeEval(compiler, root));
-    storeOp->paramIdx = paramIdx;
+    storeOp->stackIndex = stackIndex;
 
     // A load instruction is appended to indicate if we should pop one
     // value from the stack to initialize the new var or if it was left
@@ -1457,12 +1407,10 @@ static IntermediateInstr * emitTypeof(Compiler & compiler, const SyntaxTreeNode 
 // Some will emit instructions and possibly recurse by calling
 // traverseTreeRecursive() again with the child nodes of the subtree.
 // ----------------------------------------------------------------------------
-//TODO note: should avoid emitting those no-ops for type nodes and such...
 static const EmitInstrForNodeCB emitInstrCallbacks[]
 {
     &emitNOOP,                                              // NoOp
     &emitProgStart,                                         // TranslationUnit
-    &emitNOOP,                                              // ModuleDefinition
     &emitStatement,                                         // Statement
     &emitIfThen,                                            // IfThenStatement
     &emitIfThenElse,                                        // IfThenElseStatement
@@ -1726,14 +1674,14 @@ const TypeId * Compiler::findGlobalSymbolTypeId(const Symbol * symbol) const
     return nullptr;
 }
 
-bool Compiler::symbolIsFunctionLocal(const Symbol * symbol, UInt16 & paramIdx) const
+bool Compiler::symbolIsFunctionLocal(const Symbol * symbol, UInt16 & stackIndex) const
 {
     const UInt32 symbolCount = funcLocalIdentifiers.size();
     for (UInt32 index = 0; index < symbolCount; ++index)
     {
         if (funcLocalIdentifiers[index].first == symbol)
         {
-            paramIdx = index;
+            stackIndex = index;
             return true;
         }
     }
@@ -1819,12 +1767,12 @@ void Compiler::createMappings(VM & vm, IntermediateInstr * listHead, const bool 
         if (instr->op != OpCode::NoOp)
         {
             // References any global program data? (Jumps reference other instructions)
-            if (instr->operand.symbol != nullptr && instr->paramIdx == InvalidParamIdx && !isJumpOpCode(instr->op))
+            if (instr->operand.symbol != nullptr && instr->stackIndex == InvalidStackIndex && !isJumpOpCode(instr->op))
             {
                 // Each symbol is added once.
                 if (dataMapping.find(instr->operand.symbol) == std::end(dataMapping))
                 {
-                    auto index = addSymbolToProgData(vm, *(instr->operand.symbol), instr->type);
+                    auto index = addSymbolToProgData(vm, *(instr->operand.symbol), instr->dataType);
                     dataMapping.emplace(instr->operand.symbol, index);
                 }
             }
@@ -1915,10 +1863,10 @@ void Compiler::fixReferences(const IntermediateInstr * instr, VM::CodeVector & p
             // Index of this instruction and its data operand:
             const UInt32 selfCodeIdx = getProgCodeIndex(instrMapping, instr);
 
-            // Either grab the data from global prog memory or function stack (paramIdx):
-            const UInt32 operandDataIndex = ((instr->paramIdx == InvalidParamIdx) ?
+            // Either grab the data from global prog memory or function stack (stackIndex):
+            const UInt32 operandDataIndex = ((instr->stackIndex == InvalidStackIndex) ?
                                              getProgDataIndex(dataMapping, instr->operand.symbol) :
-                                             instr->paramIdx);
+                                             instr->stackIndex);
 
             // Update the references:
             MOON_ASSERT(selfCodeIdx < progCode.size() && "Index out-of-bounds!");
@@ -1942,20 +1890,20 @@ IntermediateInstr * Compiler::newInstruction(const OpCode op)
     instr->next               = nullptr;
     instr->operand.symbol     = nullptr;
     instr->uid                = instructionCount++;
-    instr->paramIdx           = InvalidParamIdx;
-    instr->type               = Variant::Type::Null;
+    instr->stackIndex         = InvalidStackIndex;
+    instr->dataType           = Variant::Type::Null;
     instr->op                 = op;
     return instr;
 }
 
-IntermediateInstr * Compiler::newInstruction(const OpCode op, const Symbol * symbol, const Variant::Type type)
+IntermediateInstr * Compiler::newInstruction(const OpCode op, const Symbol * symbol, const Variant::Type dataType)
 {
     auto instr                = instrPool.allocate();
     instr->next               = nullptr;
     instr->operand.symbol     = symbol;
     instr->uid                = instructionCount++;
-    instr->paramIdx           = InvalidParamIdx;
-    instr->type               = type;
+    instr->stackIndex         = InvalidStackIndex;
+    instr->dataType           = dataType;
     instr->op                 = op;
     return instr;
 }
@@ -1966,8 +1914,8 @@ IntermediateInstr * Compiler::newInstruction(const OpCode op, const Intermediate
     instr->next               = nullptr;
     instr->operand.jumpTarget = jumpTarget;
     instr->uid                = instructionCount++;
-    instr->paramIdx           = InvalidParamIdx;
-    instr->type               = Variant::Type::Null;
+    instr->stackIndex         = InvalidStackIndex;
+    instr->dataType           = Variant::Type::Null;
     instr->op                 = op;
     return instr;
 }

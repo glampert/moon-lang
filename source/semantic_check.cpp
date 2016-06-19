@@ -8,6 +8,7 @@
 // ================================================================================================
 
 #include "semantic_check.hpp"
+#include "compiler.hpp"
 #include "vm.hpp"
 
 namespace moon
@@ -21,7 +22,7 @@ using STEval = SyntaxTreeNode::Eval;
 // Parse-time variable type info:
 // ========================================================
 
-void VarInfoTable::beginFunc(const Symbol * funcNameSymbol)
+void VarInfoTable::beginFunc(ParseContext & ctx, const Symbol * funcNameSymbol)
 {
     if (isParsingFunction())
     {
@@ -32,12 +33,13 @@ void VarInfoTable::beginFunc(const Symbol * funcNameSymbol)
         parserError(ctx, "member functions are currently unsupported");
     }
 
-    localVars.push_back(std::make_pair(funcNameSymbol, VarTable{}));
-    currentFuncLocals = &localVars.back().second;
+    localVars.emplace_back(FuncRecord{ funcNameSymbol, 0, VarTable{} });
+    currentFuncLocals = &localVars.back().localVars;
+    currentStackSize  = &localVars.back().stackSize;
     currentFuncSymbol = funcNameSymbol;
 }
 
-void VarInfoTable::endFunc()
+void VarInfoTable::endFunc(ParseContext & ctx)
 {
     if (expectedReturnType != STEval::Void && !foundReturnStmt)
     {
@@ -47,26 +49,27 @@ void VarInfoTable::endFunc()
 
     currentFuncLocals  = nullptr;
     currentFuncSymbol  = nullptr;
+    currentStackSize   = nullptr;
     foundReturnStmt    = false;
     expectedReturnType = STEval::Void;
 }
 
-void VarInfoTable::beginUDT(const Symbol * typeNameSymbol, const char * elementName)
+void VarInfoTable::beginUDT(ParseContext & ctx, const Symbol * typeNameSymbol, const char * elementName)
 {
     requireGlobalScope(ctx, elementName);
     currentUDTSymbol = typeNameSymbol;
 }
 
-void VarInfoTable::endUDT()
+void VarInfoTable::endUDT(ParseContext & /* ctx */)
 {
     currentUDTSymbol = nullptr;
 }
 
-void VarInfoTable::beginForLoop(const Symbol * iteratorVarSymbol, const SyntaxTreeNode * iterableNode)
+void VarInfoTable::beginForLoop(ParseContext & ctx, const Symbol * iteratorVarSymbol, const SyntaxTreeNode * iterableNode)
 {
     if (forLoopIteratorNode != nullptr)
     {
-        if (forLoopIterStackTop == MaxNestedForLoops)
+        if (forLoopIterStackTop >= MaxNestedForLoops)
         {
             MOON_INTERNAL_EXCEPTION("too many nested for loops!"); // Some nasty loops :P
         }
@@ -77,7 +80,7 @@ void VarInfoTable::beginForLoop(const Symbol * iteratorVarSymbol, const SyntaxTr
     forLoopIteratorNode = newForLoopIteratorNode(ctx, iterableNode, iteratorVarSymbol);
 }
 
-void VarInfoTable::endForLoop()
+void VarInfoTable::endForLoop(ParseContext & /* ctx */)
 {
     insideLoopStmt = false;
     if (forLoopIterStackTop > 0)
@@ -125,6 +128,42 @@ const VarInfo * VarInfoTable::findFuncLocalVar(const Symbol * symbol) const
     return nullptr;
 }
 
+const VarInfo * VarInfoTable::findNamedFuncLocalVar(const Symbol * varSymbol, const Symbol * funcSymbol)
+{
+    if (currentFuncSymbol == funcSymbol)
+    {
+        MOON_ASSERT(currentFuncLocals != nullptr);
+        auto && iter = currentFuncLocals->find(varSymbol);
+        if (iter != currentFuncLocals->end())
+        {
+            return &(iter->second);
+        }
+    }
+    else
+    {
+        for (FuncRecord & funcRecord : localVars)
+        {
+            if (funcRecord.funcName == funcSymbol)
+            {
+                // Cache for subsequent calls.
+                currentFuncSymbol = funcRecord.funcName;
+                currentFuncLocals = &funcRecord.localVars;
+                currentStackSize  = &funcRecord.stackSize;
+
+                auto && iter = currentFuncLocals->find(varSymbol);
+                if (iter != currentFuncLocals->end())
+                {
+                    return &(iter->second);
+                }
+
+                break;
+            }
+        }
+    }
+
+    return nullptr;
+}
+
 const VarInfo * VarInfoTable::findGlobalVar(const Symbol * symbol) const
 {
     MOON_ASSERT(symbol != nullptr);
@@ -137,17 +176,58 @@ const VarInfo * VarInfoTable::findGlobalVar(const Symbol * symbol) const
     return nullptr;
 }
 
-void VarInfoTable::addGlobalVar(const Symbol * varNameSymbol, const VarInfo & vi)
+void VarInfoTable::addGlobalVar(const Symbol * varNameSymbol, VarInfo vi)
 {
     MOON_ASSERT(varNameSymbol != nullptr);
+
+    vi.stackIndex = InvalidStackIndex;
     globalVars.insert(std::make_pair(varNameSymbol, vi));
 }
 
-void VarInfoTable::addFuncLocalVar(const Symbol * varNameSymbol, const VarInfo & vi)
+void VarInfoTable::addFuncLocalVar(const Symbol * varNameSymbol, VarInfo vi)
 {
-    MOON_ASSERT(varNameSymbol != nullptr);
+    MOON_ASSERT(varNameSymbol     != nullptr);
     MOON_ASSERT(currentFuncLocals != nullptr);
+    MOON_ASSERT(currentStackSize  != nullptr);
+
+    // Up to 64K function parameters + local vars.
+    if (*currentStackSize >= UINT16_MAX)
+    {
+        MOON_INTERNAL_EXCEPTION("maximum number of local variables and function parameters exceeded in '" +
+                                toString(currentFuncSymbol->name) + "'");
+    }
+
+    vi.stackIndex = static_cast<UInt16>(*currentStackSize);
+    (*currentStackSize)++; // Only grows. removeFuncLocalVar() does not decrement it.
+
     currentFuncLocals->insert(std::make_pair(varNameSymbol, vi));
+}
+
+int VarInfoTable::getFuncStackSize(const Symbol * funcSymbol)
+{
+    MOON_ASSERT(funcSymbol != nullptr);
+
+    if (currentFuncSymbol == funcSymbol)
+    {
+        MOON_ASSERT(currentStackSize != nullptr);
+        return static_cast<int>(*currentStackSize);
+    }
+    else
+    {
+        for (FuncRecord & funcRecord : localVars)
+        {
+            if (funcRecord.funcName == funcSymbol)
+            {
+                // Cache for subsequent calls.
+                currentFuncSymbol = funcRecord.funcName;
+                currentFuncLocals = &funcRecord.localVars;
+                currentStackSize  = &funcRecord.stackSize;
+                return static_cast<int>(*currentStackSize);
+            }
+        }
+    }
+
+    return 0;
 }
 
 bool VarInfoTable::removeVar(const Symbol * symbol)
@@ -187,9 +267,19 @@ bool VarInfoTable::removeFuncLocalVar(const Symbol * symbol)
 
 void beginTranslationUnit(ParseContext & ctx, const SyntaxTreeNode * statements)
 {
-    ctx.syntTree->setRoot(ctx.syntTree->newNode(STNode::TranslationUnit,
-                                                statements, nullptr, nullptr,
-                                                STEval::Void));
+    const Symbol * tuFileName = ctx.symTable->findOrDefineStrLiteral(ctx.srcFile != nullptr ? ctx.srcFile->c_str() : "???");
+    SyntaxTreeNode * tuNode   = ctx.syntTree->newNodeWithSymbol(STNode::TranslationUnit, tuFileName,
+                                                                statements, nullptr, nullptr, STEval::Void);
+
+    if (ctx.importDepth == 0) // First script
+    {
+        ctx.syntTree->setRoot(tuNode);
+        ctx.treeRoot = tuNode;
+    }
+    else // An import
+    {
+        ctx.treeRoot = tuNode;
+    }
 }
 
 void requireGlobalScope(ParseContext & ctx, const char * elementName)
@@ -202,15 +292,29 @@ void requireGlobalScope(ParseContext & ctx, const char * elementName)
 
 SyntaxTreeNode * handleImportDirective(ParseContext & ctx, const Symbol * importFileSymbol)
 {
-    //TODO
-    (void)ctx;
-    logStream() << "importing " << importFileSymbol->name->chars << "\n";
-    return ctx.syntTree->newNode(STNode::NoOp, nullptr, nullptr, nullptr, STEval::Void);
+    MOON_ASSERT(ctx.compiler    != nullptr);
+    MOON_ASSERT(ctx.importTable != nullptr);
+
+    if (ctx.importTable->isImported(importFileSymbol->value.asString))
+    {
+        // Script already imported before. Ignore this import directive.
+        return ctx.syntTree->newNode(STNode::NoOp, nullptr, nullptr, nullptr, STEval::Void);
+    }
+
+    const std::string filename{ importFileSymbol->value.asString->chars };
+    SyntaxTreeNode * importRoot = nullptr;
+
+    ctx.importDepth++;
+    ctx.compiler->parseScriptImport(ctx.vm, filename, &importRoot);
+    ctx.importDepth--;
+
+    ctx.importTable->addImport(importFileSymbol->value.asString);
+    return importRoot; // This is the root of the newly imported script.
 }
 
-using AddVarCallback = void (VarInfoTable::*)(const Symbol *, const VarInfo &);
-static void registerVariable(ParseContext & ctx, const Symbol * varNameSymbol, const SyntaxTreeNode * initNode,
-                             const SyntaxTreeNode * typeNode, const STEval stEval, AddVarCallback addVarMethod)
+static void registerVariable(ParseContext & ctx, const Symbol * varNameSymbol,
+                             const SyntaxTreeNode * initNode, const SyntaxTreeNode * typeNode,
+                             const STEval stEval, void (VarInfoTable::*pAddVarMethod)(const Symbol *, VarInfo))
 {
     const SyntaxTreeNode * tidNode = nullptr;
 
@@ -231,12 +335,20 @@ static void registerVariable(ParseContext & ctx, const Symbol * varNameSymbol, c
         parserError(ctx, "variable declaration requires an initializer");
     }
 
-    const TypeId * typeId = ((stEval == STEval::UDT) ?
-        ctx.vm->types.findTypeId(tidNode->symbol->name) :
-        eval2TypeId(ctx.vm->types, stEval));
+    const TypeId * typeId;
+    if (stEval == STEval::UDT)
+    {
+        MOON_ASSERT(tidNode != nullptr && tidNode->symbol != nullptr);
+        typeId = ctx.vm->types.findTypeId(tidNode->symbol->name);
+    }
+    else
+    {
+        typeId = eval2TypeId(ctx.vm->types, stEval);
+    }
 
     if (typeId == nullptr)
     {
+        MOON_ASSERT(tidNode != nullptr && tidNode->symbol != nullptr);
         const std::string tname = color::white() + toString(tidNode->symbol->name) + color::restore();
         parserError(ctx, "cannot declare variable of undefined type '" + tname + "'");
     }
@@ -246,13 +358,14 @@ static void registerVariable(ParseContext & ctx, const Symbol * varNameSymbol, c
                                initNode->getChild(2)->evalType : STEval::Any);
 
     const Function * funcPtr = nullptr;
-    if (varType == Variant::Type::Function && initNode != nullptr && initNode->nodeType != STNode::ExprFuncCall)
+    if (varType == Variant::Type::Function && initNode != nullptr &&
+        initNode->symbol != nullptr && initNode->nodeType != STNode::ExprFuncCall)
     {
         funcPtr = ctx.vm->functions.findFunction(initNode->symbol->name);
         MOON_ASSERT(funcPtr != nullptr); // Already syntax-checked, so this suffices.
     }
 
-    (ctx.varInfo->*addVarMethod)(varNameSymbol, VarInfo{ typeId, funcPtr, varType, arrayEval, stEval });
+    (ctx.varInfo->*pAddVarMethod)(varNameSymbol, VarInfo{ typeId, funcPtr, varType, arrayEval, stEval, InvalidStackIndex });
 }
 
 static STEval registerGlobalOrLocal(ParseContext & ctx, const Symbol * varNameSymbol, SyntaxTreeNode * initNode,
@@ -288,7 +401,7 @@ static STEval registerGlobalOrLocal(ParseContext & ctx, const Symbol * varNameSy
 
         registerVariable(ctx, varNameSymbol, initNode, typeNode, stEval, &VarInfoTable::addGlobalVar);
     }
-    else
+    else // Function scope
     {
         if (stEval == STEval::Undefined)
         {
@@ -323,6 +436,11 @@ static STEval registerGlobalOrLocal(ParseContext & ctx, const Symbol * varNameSy
             const std::string vname = color::white() + toString(varNameSymbol->name) + color::restore();
             parserError(ctx, "redefinition of local variable '" + vname + "'");
         }
+        else if (ctx.varInfo->findGlobalVar(varNameSymbol))
+        {
+            const std::string vname = color::white() + toString(varNameSymbol->name) + color::restore();
+            parserError(ctx, "redefinition of global variable '" + vname + "' as a local variable");
+        }
 
         registerVariable(ctx, varNameSymbol, initNode, typeNode, stEval, &VarInfoTable::addFuncLocalVar);
     }
@@ -338,6 +456,7 @@ SyntaxTreeNode * newVarDeclNode(ParseContext & ctx, const Symbol * varNameSymbol
     {
         stEval = registerGlobalOrLocal(ctx, varNameSymbol, initNode, typeNode, stEval);
     }
+
     return ctx.syntTree->newNodeWithSymbol(STNode::VarDeclStatement,
                                            varNameSymbol, initNode, typeNode,
                                            nullptr, stEval);
@@ -376,7 +495,7 @@ SyntaxTreeNode * newIdentNode(ParseContext & ctx, const Symbol * identifierSymbo
     }
     else if (identifierSymbol->cmpEqual(lineHash))
     {
-        const long srcLineNum = ctx.lexer->lineno();
+        const int srcLineNum = ctx.lexer->lineno();
         return ctx.syntTree->newNodeWithEval(STNode::ExprLiteralConst,
                                              ctx.symTable->findOrDefineIntLiteral(srcLineNum),
                                              STEval::Long);
@@ -877,11 +996,15 @@ SyntaxTreeNode * newForLoopIteratorNode(ParseContext & ctx, const SyntaxTreeNode
         }
     }
 
+    MOON_ASSERT(ctx.lexer   != nullptr);
+    MOON_ASSERT(ctx.varInfo != nullptr);
+
     // These variables are implicitly declared inside every for loop to serve as auxiliary loop counters.
     char tempName1[512];
     char tempName2[512];
     std::snprintf(tempName1, arrayLength(tempName1), "__for_idx_%i_%u__", ctx.lexer->lineno(), ctx.varInfo->forLoopIdCounter++);
     std::snprintf(tempName2, arrayLength(tempName2), "__for_prm_%i_%u__", ctx.lexer->lineno(), ctx.varInfo->forLoopIdCounter++);
+
     const Symbol * internalCounterSymbol = ctx.symTable->findOrDefineIdentifier(tempName1, ctx.lexer->lineno());
     const Symbol * internalParamSymbol   = ctx.symTable->findOrDefineIdentifier(tempName2, ctx.lexer->lineno());
 
@@ -1045,8 +1168,8 @@ SyntaxTreeNode * newFunctionCallNode(ParseContext & ctx, const Symbol * funcName
 {
     MOON_ASSERT(funcNameSymbol != nullptr);
 
-    const auto funcNameStr = funcNameSymbol->name;
-    const Function * func  = ctx.vm->functions.findFunction(funcNameStr);
+    ConstRcString * const funcNameStr = funcNameSymbol->name;
+    const Function * func = ctx.vm->functions.findFunction(funcNameStr);
 
     if (func == nullptr)
     {
@@ -1073,8 +1196,32 @@ SyntaxTreeNode * newFunctionCallNode(ParseContext & ctx, const Symbol * funcName
         }
         else
         {
-            const std::string fname = color::white() + toString(funcNameStr) + color::restore();
-            parserError(ctx, "attempting to call undefined function '" + fname + "'");
+            bool inMemberRef = false;
+
+            // Hack to guess if this was an attempt at calling a function like
+            // a member method. We have a custom error message for that.
+            if (ctx.currText != nullptr && !ctx.currText->empty())
+            {
+                // Check if the name was preceded by a '.'
+                const auto index = ctx.currText->rfind(funcNameStr->chars);
+                if (index != std::string::npos && index != 0)
+                {
+                    if (ctx.currText->at(index - 1) == '.')
+                    {
+                        inMemberRef = true;
+                    }
+                }
+            }
+
+            if (inMemberRef)
+            {
+                parserError(ctx, "object member methods are not supported. Assign member function variable to a temp before calling it.");
+            }
+            else
+            {
+                const std::string fname = color::white() + toString(funcNameStr) + color::restore();
+                parserError(ctx, "attempting to call undefined function '" + fname + "'");
+            }
         }
     }
 
@@ -1103,7 +1250,7 @@ SyntaxTreeNode * newFunctionCallNode(ParseContext & ctx, const Symbol * funcName
     // Functions like assert() and panic() prepend source location to the call.
     if (func->hasCallerInfo())
     {
-        const long srcLineNum = ctx.lexer->lineno();
+        const int srcLineNum = ctx.lexer->lineno();
 
         const char * srcFileName = ((ctx.srcFile != nullptr) ?
                                      ctx.srcFile->c_str() :

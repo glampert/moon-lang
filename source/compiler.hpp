@@ -14,6 +14,8 @@
 #include "syntax_tree.hpp"
 #include "vm.hpp"
 
+#include "semantic_check.hpp"
+
 //TODO maybe gather all these pool size constants and the like into a build_config.hpp?
 #ifndef MOON_INTERMEDIATE_INSTR_POOL_GRANULARITY
     #define MOON_INTERMEDIATE_INSTR_POOL_GRANULARITY 1024
@@ -21,6 +23,38 @@
 
 namespace moon
 {
+
+// ========================================================
+// struct IntermediateInstr:
+// ========================================================
+
+struct IntermediateInstr final
+{
+    union Operand
+    {
+        const Symbol            * symbol;
+        const IntermediateInstr * jumpTarget;
+    };
+
+    IntermediateInstr * next;
+    Operand             operand;
+    UInt32              uid;
+    UInt16              stackIndex;
+    Variant::Type       dataType;
+    OpCode              op;
+};
+
+constexpr UInt16 InvalidStackIndex = UInt16(-1);
+using InstrPool = Pool<IntermediateInstr, MOON_INTERMEDIATE_INSTR_POOL_GRANULARITY>;
+
+// ================================================================================================
+
+namespace new_
+{
+
+// ========================================================
+// class FileIOCallbacks:
+// ========================================================
 
 class FileIOCallbacks
 {
@@ -42,77 +76,83 @@ public:
     virtual void closeScript(std::istream ** stream) = 0;
 };
 
-// Relies on the Standard C++ streams library. Accesses the local File System.
-class DefaultFileIOCallbacks final
-    : public FileIOCallbacks
+// ========================================================
+// class Compiler:
+// ========================================================
+
+class Compiler final
 {
 public:
-    DefaultFileIOCallbacks() = default;
-    bool openScript(const std::string & scriptFile, std::istream ** streamOut) override;
-    bool openScriptImport(const std::string & importFile, std::istream ** streamOut) override;
-    void closeScript(std::istream ** stream) override;
+
+    //
+    // Public compiler interface:
+    //
+
+    Compiler();
+    explicit Compiler(FileIOCallbacks * newIOCallbacks);
+
+    // Not copyable.
+    Compiler(const Compiler &) = delete;
+    Compiler & operator = (const Compiler &) = delete;
+
+    // Opens the given file to parse the script source code and generate a syntax tree
+    // from it. This will also perform semantic validation in the source and throw parse
+    // errors if there are any. Bytecode is only generated later when compile() is called.
+    // Functions and types will be registered with the given VM instance. You should pass
+    // the same pointer again when calling compile().
+    void parseScript(VM * vm, const std::string & filename,
+                     SyntaxTreeNode ** outTreeRoot = nullptr);
+
+    // Same as the above, but takes an already opened file stream,
+    // so the FileIOCallbacks are not used.
+    void parseScript(VM * vm, std::istream * source,
+                     const std::string & filename,
+                     SyntaxTreeNode ** outTreeRoot = nullptr);
+
+    // This one opens the script using FileIOCallbacks::openScriptImport(), so it is
+    // meant for internal parser use to handle the import directives in the scripts.
+    void parseScriptImport(VM * vm, const std::string & filename,
+                           SyntaxTreeNode ** outImportRoot = nullptr);
+
+    // Runs the compilation process to produce bytecode and data from the syntax tree built during
+    // parsing, which is then ready to be run on a Moon VM instance. Might throw compiler errors.
+    void compile(VM * vm);
+
+    // Set the FileIOCallbacks used by this compiler.
+    // The IO callbacks are used to open the script file on parseScript() and
+    // also to open subsequent imports found while parsing the initial script.
+    // By default the compiler will use the Standard <fstream> C++ API to open files.
+    // Passing null to set() will restore the default callbacks.
+    void setFileIOCallbacks(FileIOCallbacks * newIOCallbacks) noexcept;
+
+    // Debug printing for the generated intermediate code.
+    void print(std::ostream & os) const;
+
+    //
+    // Compiler internals:
+    //
+
+    SymbolTable         symTable;
+    SyntaxTree          syntTree;
+    VarInfoTable        varInfo;
+    ImportTable         importTable;
+    InstrPool           instrPool;
+    UInt32              instrCount       = 0;
+    IntermediateInstr * globCodeListHead = nullptr;
+    IntermediateInstr * funcCodeListHead = nullptr;
+    FileIOCallbacks   * fileIOCallbacks  = nullptr;
 };
 
-//TODO this is implementation detail. doesn't have to be exposed in a header file.
-struct OpenScriptRAII final
+inline std::ostream & operator << (std::ostream & os, const Compiler & compiler)
 {
-    using OpenMethod = bool (FileIOCallbacks::*)(const std::string &, std::istream **);
+    // Prints the globCodeListHead and funcCodeListHead.
+    compiler.print(os);
+    return os;
+}
 
-    FileIOCallbacks * callbacks;
-    std::istream    * stream;
+} // namespace new_ {}
 
-    OpenScriptRAII(const std::string & filename, FileIOCallbacks * iocb, OpenMethod openMethod)
-        : callbacks{ iocb }
-        , stream{ doOpen(filename, openMethod) }
-    { }
-
-    ~OpenScriptRAII()
-    {
-        if (stream != nullptr)
-        {
-            callbacks->closeScript(&stream);
-        }
-    }
-
-    bool isOpen() const noexcept { return stream != nullptr; }
-
-private:
-
-    std::istream * doOpen(const std::string & filename, OpenMethod openMethod) const
-    {
-        MOON_ASSERT(callbacks != nullptr);
-        std::istream * outStr = nullptr;
-        const bool succeeded = (callbacks->*openMethod)(filename, &outStr);
-        return (succeeded ? outStr : nullptr);
-    }
-};
-
-// ========================================================
-// struct IntermediateInstr:
-// ========================================================
-
-//TODO IntermediateInstr is an implementation detail. Should not be exposed on a public header.
-struct IntermediateInstr final
-{
-    union Operand
-    {
-        const Symbol            * symbol;
-        const IntermediateInstr * jumpTarget;
-    };
-
-    IntermediateInstr * next;
-    Operand             operand;
-    UInt32              uid;
-    UInt16              paramIdx; // rename to stackIndex?
-    Variant::Type       type;     // rename to varType or dataType?
-    OpCode              op;
-};
-
-constexpr UInt16 InvalidParamIdx = UInt16(-1);
-using DataMap  = HashTable<const Symbol *, UInt32>;
-using InstrMap = HashTable<const IntermediateInstr *, UInt32>;
-//TODO maps are not working properly. We must also segregate symbols by type.
-//consider another data structure when we get to the compiler refactoring.
+// ================================================================================================
 
 // ========================================================
 // class Compiler:
@@ -187,7 +227,7 @@ public:
 
     const TypeId * guessTypeId(const SyntaxTreeNode * node);
 
-    bool symbolIsFunctionLocal(const Symbol * symbol, UInt16 & paramIdx) const;
+    bool symbolIsFunctionLocal(const Symbol * symbol, UInt16 & stackIndex) const;
     const TypeId * symbolToTypeId(const Symbol * symbol) const;
 
     const TypeId * findFunctionLocalSymbolTypeId(const Symbol * symbol) const;
@@ -200,7 +240,7 @@ public:
     void endFunction();
 
     IntermediateInstr * newInstruction(OpCode op);
-    IntermediateInstr * newInstruction(OpCode op, const Symbol * symbol, Variant::Type type = Variant::Type::Null);//FIXME no default value in here!
+    IntermediateInstr * newInstruction(OpCode op, const Symbol * symbol, Variant::Type dataType = Variant::Type::Null);//FIXME no default value in here!
     IntermediateInstr * newInstruction(OpCode op, const IntermediateInstr * jumpTarget);
     IntermediateInstr * newInstruction(const IntermediateInstr * copy); // clone the input into a new instr
 
@@ -236,6 +276,9 @@ private:
 
     // Temp for the globals found so far in a translation unit.
     std::vector<TypedSymbol> globalIdentifiers;
+
+using DataMap  = HashTable<const Symbol *, UInt32>;
+using InstrMap = HashTable<const IntermediateInstr *, UInt32>;
 
     // These are used to combine repeated program data/symbols
     // and to optimize away noops in the intermediateToVM step.

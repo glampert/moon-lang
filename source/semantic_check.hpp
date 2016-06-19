@@ -24,39 +24,39 @@ namespace moon
 
 struct VarInfo final
 {
-    const TypeId   *     typeId;    // Runtime TypeId for UDTs and native types alike.
-    const Function *     funcPtr;   // If the var is a pointer-to-function, we can resolve it at compile-time.
-    Variant::Type        varType;   // Final Variant type. Matches stEval.
-    SyntaxTreeNode::Eval arrayEval; // Only relevant if varType=Array. Data type stored in an array var.
-    SyntaxTreeNode::Eval stEval;    // Matches varType; Cached conversion for frequent use.
+    const TypeId   *     typeId;     // Runtime TypeId for UDTs and native types alike.
+    const Function *     funcPtr;    // If the var is a pointer-to-function, we can resolve it at compile-time.
+    Variant::Type        varType;    // Final Variant type. Matches stEval.
+    SyntaxTreeNode::Eval arrayEval;  // Only relevant if varType=Array. Data type stored in an array var.
+    SyntaxTreeNode::Eval stEval;     // Matches varType; Cached conversion for frequent use.
+    UInt16               stackIndex; // Used for local variables, InvalidStackIndex otherwise.
 };
 
 class VarInfoTable final
 {
 public:
 
-    explicit VarInfoTable(ParseContext & parseCtx)
-        : ctx{ parseCtx }
-    { }
-
+    VarInfoTable() = default;
     VarInfoTable(const VarInfoTable &) = delete;
     VarInfoTable & operator = (const VarInfoTable &) = delete;
 
-    void beginFunc(const Symbol * funcNameSymbol);
-    void endFunc();
+    void beginFunc(ParseContext & ctx, const Symbol * funcNameSymbol);
+    void endFunc(ParseContext & ctx);
 
-    void beginUDT(const Symbol * typeNameSymbol, const char * elementName);
-    void endUDT();
+    void beginUDT(ParseContext & ctx, const Symbol * typeNameSymbol, const char * elementName);
+    void endUDT(ParseContext & ctx);
 
-    void beginForLoop(const Symbol * iteratorVarSymbol, const SyntaxTreeNode * iterableNode);
-    void endForLoop();
+    void beginForLoop(ParseContext & ctx, const Symbol * iteratorVarSymbol, const SyntaxTreeNode * iterableNode);
+    void endForLoop(ParseContext & ctx);
 
     const VarInfo * findVar(const Symbol * symbol) const;
     const VarInfo * findGlobalVar(const Symbol * symbol) const;
     const VarInfo * findFuncLocalVar(const Symbol * symbol) const;
+    const VarInfo * findNamedFuncLocalVar(const Symbol * varSymbol, const Symbol * funcSymbol);
 
-    void addGlobalVar(const Symbol * varNameSymbol, const VarInfo & vi);
-    void addFuncLocalVar(const Symbol * varNameSymbol, const VarInfo & vi);
+    void addGlobalVar(const Symbol * varNameSymbol, VarInfo vi);
+    void addFuncLocalVar(const Symbol * varNameSymbol, VarInfo vi);
+    int  getFuncStackSize(const Symbol * funcSymbol);
 
     bool removeVar(const Symbol * symbol);
     bool removeGlobalVar(const Symbol * symbol);
@@ -66,40 +66,36 @@ public:
     bool isParsingUDT()      const noexcept { return currentUDTSymbol  != nullptr; }
 
     // Transient states:
-    const TypeId * lastRhsTypeId     = nullptr;
-    const Symbol * currentFuncSymbol = nullptr;
-    const Symbol * currentUDTSymbol  = nullptr;
+    const TypeId *          lastRhsTypeId       = nullptr;
+    const Symbol *          currentFuncSymbol   = nullptr;
+    const Symbol *          currentUDTSymbol    = nullptr;
 
     // Stuff use only inside loops/functions:
-    bool                   insideLoopStmt      = false;
-    bool                   foundReturnStmt     = false;
-    SyntaxTreeNode::Eval   expectedReturnType  = SyntaxTreeNode::Eval::Void;
-    std::uint32_t          forLoopIdCounter    = 0;
-    const SyntaxTreeNode * forLoopIteratorNode = nullptr;
+    bool                    insideLoopStmt      = false;
+    bool                    foundReturnStmt     = false;
+    SyntaxTreeNode::Eval    expectedReturnType  = SyntaxTreeNode::Eval::Void;
+    std::uint32_t           forLoopIdCounter    = 0;
+    const SyntaxTreeNode *  forLoopIteratorNode = nullptr;
 
 private:
-
-    // To call the error handlers.
-    ParseContext & ctx;
 
     // [var_name_symbol, var_info_record]
     using VarTable = HashTable<const Symbol *, VarInfo>;
 
-    // [func_name_symbol, table_of_local_vars]
-    using FuncRecord = std::pair<const Symbol *, VarTable>;
+    struct FuncRecord
+    {
+        const Symbol *      funcName;
+        int                 stackSize;
+        VarTable            localVars;
+    };
 
-    // All globals in a translation unit or program.
-    VarTable globalVars;
-
-    // All functions in a translation unit or program. Each function
-    // has a HashTable with a record for every local var + parameters.
+    VarTable                globalVars;
     std::vector<FuncRecord> localVars;
-    VarTable * currentFuncLocals = nullptr;
-
-    // Small stack for nested for-loops:
-    static constexpr int MaxNestedForLoops = 64;
-    const SyntaxTreeNode * forLoopIterStack[MaxNestedForLoops];
-    int forLoopIterStackTop = 0;
+    VarTable *              currentFuncLocals   = nullptr;
+    int *                   currentStackSize    = nullptr;
+    int                     forLoopIterStackTop = 0;
+    static constexpr int    MaxNestedForLoops   = 64;
+    const SyntaxTreeNode *  forLoopIterStack[MaxNestedForLoops]; // Small stack of nested for-loops
 };
 
 // ========================================================
@@ -109,8 +105,41 @@ private:
 class ImportTable final
 {
 public:
-    //TODO
+
+    ImportTable() = default;
+    ImportTable(const ImportTable &) = delete;
+    ImportTable & operator = (const ImportTable &) = delete;
+
+    ~ImportTable()
+    {
+        for (auto import : importedFileNames)
+        {
+            releaseRcString(import);
+        }
+    }
+
+    bool isImported(const ConstRcString * const filename) const
+    {
+        for (const auto import : importedFileNames)
+        {
+            if (cmpRcStringsEqual(import, filename))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void addImport(ConstRcString * filename)
+    {
+        MOON_ASSERT(isRcStringValid(filename));
+        importedFileNames.push_back(filename);
+        addRcStringRef(filename);
+    }
+
 private:
+
+    std::vector<ConstRcString *> importedFileNames;
 };
 
 // ========================================================

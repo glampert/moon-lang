@@ -211,13 +211,13 @@ SymbolTable::SymbolTable()
     v[5].asFloat   = 0.0;
     v[6].asFloat   = 1.0;
 
-    addSymbol(generateSymbolName(Symbol::Type::StrLiteral),   Symbol::LineNumBuiltIn, Symbol::Type::StrLiteral,   v[0]);
-    addSymbol(generateSymbolName(Symbol::Type::IntLiteral),   Symbol::LineNumBuiltIn, Symbol::Type::IntLiteral,   v[1]);
-    addSymbol(generateSymbolName(Symbol::Type::IntLiteral),   Symbol::LineNumBuiltIn, Symbol::Type::IntLiteral,   v[2]);
-    addSymbol(generateSymbolName(Symbol::Type::BoolLiteral),  Symbol::LineNumBuiltIn, Symbol::Type::BoolLiteral,  v[3]);
-    addSymbol(generateSymbolName(Symbol::Type::BoolLiteral),  Symbol::LineNumBuiltIn, Symbol::Type::BoolLiteral,  v[4]);
-    addSymbol(generateSymbolName(Symbol::Type::FloatLiteral), Symbol::LineNumBuiltIn, Symbol::Type::FloatLiteral, v[5]);
-    addSymbol(generateSymbolName(Symbol::Type::FloatLiteral), Symbol::LineNumBuiltIn, Symbol::Type::FloatLiteral, v[6]);
+    addSymbol(generateSymbolName(Symbol::Type::StrLiteral).get(),   Symbol::LineNumBuiltIn, Symbol::Type::StrLiteral,   v[0]);
+    addSymbol(generateSymbolName(Symbol::Type::IntLiteral).get(),   Symbol::LineNumBuiltIn, Symbol::Type::IntLiteral,   v[1]);
+    addSymbol(generateSymbolName(Symbol::Type::IntLiteral).get(),   Symbol::LineNumBuiltIn, Symbol::Type::IntLiteral,   v[2]);
+    addSymbol(generateSymbolName(Symbol::Type::BoolLiteral).get(),  Symbol::LineNumBuiltIn, Symbol::Type::BoolLiteral,  v[3]);
+    addSymbol(generateSymbolName(Symbol::Type::BoolLiteral).get(),  Symbol::LineNumBuiltIn, Symbol::Type::BoolLiteral,  v[4]);
+    addSymbol(generateSymbolName(Symbol::Type::FloatLiteral).get(), Symbol::LineNumBuiltIn, Symbol::Type::FloatLiteral, v[5]);
+    addSymbol(generateSymbolName(Symbol::Type::FloatLiteral).get(), Symbol::LineNumBuiltIn, Symbol::Type::FloatLiteral, v[6]);
 
     auto builtIns = getBuiltInTypeNames();
     for (int i = 0; builtIns[i].name != nullptr; ++i)
@@ -292,7 +292,7 @@ const Symbol * SymbolTable::findOrDefineLiteral(ConstRcString * valueStr, const 
     {
         addRcStringRef(value.asString); // Must add a ref for storing.
     }
-    return addSymbol(generateSymbolName(typeWanted), declLineNum, typeWanted, value);
+    return addSymbol(generateSymbolName(typeWanted).get(), declLineNum, typeWanted, value);
 }
 
 const Symbol * SymbolTable::findOrDefineLiteral(const char * const valueStr, const int declLineNum, const Symbol::Type typeWanted)
@@ -341,13 +341,14 @@ const Symbol * SymbolTable::findOrDefineLiteral(const char * const valueStr, con
         // Copy the RC string now:
         value.asString = newConstRcString(valueStr); // Ref = 1
     }
-    return addSymbol(generateSymbolName(typeWanted), declLineNum, typeWanted, value);
+    return addSymbol(generateSymbolName(typeWanted).get(), declLineNum, typeWanted, value);
 }
 
 const Symbol * SymbolTable::findOrDefineIdentifier(ConstRcString * name, const int declLineNum)
 {
     if (auto symbol = findSymbol(name))
     {
+        MOON_ASSERT(symbol->type == Symbol::Type::Identifier);
         return symbol;
     }
 
@@ -359,6 +360,7 @@ const Symbol * SymbolTable::findOrDefineIdentifier(const char * const name, cons
 {
     if (auto symbol = findSymbol(name))
     {
+        MOON_ASSERT(symbol->type == Symbol::Type::Identifier);
         return symbol;
     }
 
@@ -391,7 +393,7 @@ const Symbol * SymbolTable::findOrDefineStrLiteral(const char * const valueStr)
     return findOrDefineLiteral(valueStr, Symbol::LineNumBuiltIn, Symbol::Type::StrLiteral);
 }
 
-ConstRcString * SymbolTable::generateSymbolName(const Symbol::Type type)
+ConstRcStrUPtr SymbolTable::generateSymbolName(const Symbol::Type type)
 {
     char tempStr[128];
     switch (type)
@@ -412,7 +414,7 @@ ConstRcString * SymbolTable::generateSymbolName(const Symbol::Type type)
         MOON_UNREACHABLE();
     } // switch (typeWanted)
 
-    return newConstRcString(tempStr);
+    return ConstRcStrUPtr{ newConstRcString(tempStr) };
 }
 
 void SymbolTable::print(std::ostream & os) const

@@ -487,11 +487,11 @@ func_call_expression
     ;
 
 func_declaration
-    : "func" IDENTIFIER { ctx.varInfo->beginFunc($2); } "(" func_parameter_list_declaration ")" optional_return_type
+    : "func" IDENTIFIER { ctx.varInfo->beginFunc(ctx, $2); } "(" func_parameter_list_declaration ")" optional_return_type
     { ctx.varInfo->expectedReturnType = $7->evalType; } optional_statement_list end_statement
         {
             $$ = newFunctionDeclNode(ctx, $2, $5, $7, $9);
-            ctx.varInfo->endFunc();
+            ctx.varInfo->endFunc(ctx);
         }
     ;
 
@@ -635,10 +635,10 @@ while_statement
 
 for_statement
     : "for" IDENTIFIER "in" range_or_array_or_ident_or_call "do"
-    { ctx.varInfo->beginForLoop($2, $4); } optional_statement_list end_statement
+    { ctx.varInfo->beginForLoop(ctx, $2, $4); } optional_statement_list end_statement
         {
             $$ = newLoopNode(ctx, STNode::ForStatement, $4, $7);
-            ctx.varInfo->endForLoop();
+            ctx.varInfo->endForLoop(ctx);
         }
     ;
 
@@ -733,10 +733,10 @@ range_param
 `-----------------*/
 
 enum_declaration
-    : "type" IDENTIFIER "enum" { ctx.varInfo->beginUDT($2, "enum"); } enum_constant_list end_statement
+    : "type" IDENTIFIER "enum" { ctx.varInfo->beginUDT(ctx, $2, "enum"); } enum_constant_list end_statement
         {
             $$ = newEnumDeclNode(ctx, $2, $5);
-            ctx.varInfo->endUDT();
+            ctx.varInfo->endUDT(ctx);
         }
     ;
 
@@ -790,10 +790,10 @@ type_alias_declaration
     ;
 
 struct_declaration
-    : "type" IDENTIFIER "struct" { ctx.varInfo->beginUDT($2, "struct"); } struct_member_list end_statement
+    : "type" IDENTIFIER "struct" { ctx.varInfo->beginUDT(ctx, $2, "struct"); } struct_member_list end_statement
         {
             $$ = newStructDeclNode(ctx, $2, $5);
-            ctx.varInfo->endUDT();
+            ctx.varInfo->endUDT(ctx);
         }
     ;
 

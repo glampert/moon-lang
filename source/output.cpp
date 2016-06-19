@@ -148,7 +148,7 @@ struct LogTest
 {
     LogTest()
     {
-        moon::logStream() << "Moon: This is a debug build.\n";
+        moon::logStream() << "Moon: This is a debug build. Compile without MOON_DEBUG do silence these.\n";
         #if MOON_ENABLE_ASSERT
         moon::logStream() << "Moon: Runtime asserts are enabled.\n";
         #endif // MOON_ENABLE_ASSERT

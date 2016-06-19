@@ -257,8 +257,8 @@ std::string strPrintF(const char * format, ...)
 {
 // Suppress "format string is not a string literal" on GCC and Clang.
 #ifdef __GNUC__
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wformat-nonliteral"
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Wformat-nonliteral"
 #endif // __GNUC__
 
     va_list vaArgs;
@@ -282,7 +282,7 @@ std::string strPrintF(const char * format, ...)
     return buffer;
 
 #ifdef __GNUC__
-#pragma GCC diagnostic pop
+    #pragma GCC diagnostic pop
 #endif // __GNUC__
 }
 

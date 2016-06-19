@@ -494,14 +494,27 @@ Object::~Object()
 void Object::initialize(const Stack::Slice constructorArgs)
 {
     setUpMembersTable();
+
     if (constructorArgs.getSize() != getMemberCount())
     {
-        MOON_RUNTIME_EXCEPTION("'" + getTypeName() + "' constructor requires " +
-                               toString(getMemberCount()) + " arguments, but " +
-                               toString(constructorArgs.getSize()) + " where provided.");
+        bool fail = true;
+
+        #if MOON_ALLOW_UNINITIALIZED_MEMBERS
+        if (constructorArgs.getSize() < getMemberCount())
+        {
+            fail = false;
+        }
+        #endif // MOON_ALLOW_UNINITIALIZED_MEMBERS
+
+        if (fail)
+        {
+            MOON_RUNTIME_EXCEPTION("'" + getTypeName() + "' constructor requires " +
+                                   toString(getMemberCount()) + " arguments, but " +
+                                   toString(constructorArgs.getSize()) + " where provided.");
+        }
     }
 
-    const int memberCount = getMemberCount();
+    const int memberCount = constructorArgs.getSize();
     for (int m = 0; m < memberCount; ++m)
     {
         performAssignmentWithConversion(members[m].data, constructorArgs[m]);
@@ -701,7 +714,7 @@ Str * Str::newFromString(VM & vm, const char * cstr, const UInt32 length, const 
 
     // The size of the small internal buffer of a std::string should be more of less the
     // whole size of the type minus a length and pointer, likely sizeof(size_t) bytes each.
-    constexpr UInt32 minConstStrLen = sizeof(std::string) - (sizeof(std::size_t) * 2);
+    constexpr UInt32 minConstStrLen = UInt32(sizeof(std::string)) - (UInt32(sizeof(std::size_t)) * 2);
 
     // If the string is short enough to fit in the small string buffer of
     // std::string we ignore the user hint and avoid the extra allocation.

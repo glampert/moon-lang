@@ -19,11 +19,11 @@ namespace moon
 // ========================================================
 
 // Function signature of an opcode handler. See the array of handlers below.
-using OpCodeHandlerCB = void (*)(VM & vm, UInt32 operandIndex);
+using OpCodeHandlerCB = void (*)(VM &, UInt32);
 
 static void opNOOP(VM &, UInt32)
 {
-    // Surprisingly, a no-op does nothing :P
+    // Unsurprisingly, a no-op does nothing.
 }
 
 static void opProgEnd(VM & vm, UInt32)
@@ -81,6 +81,7 @@ static void opLoadLocal(VM & vm, const UInt32 operandIndex)
 {
     const auto argc = vm.locals.getTopVar().getAsInteger();
     const auto args = vm.locals.slice(vm.locals.getCurrSize() - argc - 1, argc);
+
     vm.stack.push(args[operandIndex]);
 }
 
@@ -166,6 +167,23 @@ static void opStoreArraySubGlobal(VM & vm, const UInt32 operandIndex)
     destArray->setIndex(index, assignedValVar);
 }
 
+static void opStoreArraySubStk(VM & vm, UInt32)
+{
+    const Variant subscriptVar   = vm.stack.pop();
+    const Variant assignedValVar = vm.stack.pop();
+    const Variant arrayObjVar    = vm.stack.pop();
+
+    if (arrayObjVar.type != Variant::Type::Array)
+    {
+        MOON_RUNTIME_EXCEPTION("opStoreArraySubStk: expected an array object!");
+    }
+
+    Array * destArray = arrayObjVar.getAsArray();
+
+    const int index = static_cast<int>(subscriptVar.getAsInteger());
+    destArray->setIndex(index, assignedValVar);
+}
+
 static void opStoreSetTypeLocal(VM & vm, const UInt32 operandIndex)
 {
     const auto argc = vm.locals.getTopVar().getAsInteger();
@@ -174,8 +192,22 @@ static void opStoreSetTypeLocal(VM & vm, const UInt32 operandIndex)
     if (operandIndex >= argc)
     {
         Variant argcVar = vm.locals.pop();
-        argcVar.value.asInteger += 1;
 
+        // Padding is needed mostly for the for-loops that can reuse
+        // local stack indexes, so we might be reusing a higher index
+        // that is not yet allocated, so pad with nulls.
+        if ((operandIndex - argc) > 1)
+        {
+            auto diff = operandIndex - argc;
+            argcVar.value.asInteger += diff;
+
+            while (diff--)
+            {
+                vm.locals.push(Variant{});
+            }
+        }
+
+        argcVar.value.asInteger += 1;
         vm.locals.push(vm.stack.pop());
         vm.locals.push(argcVar);
     }
@@ -571,7 +603,7 @@ static void opMatchEnd(VM & vm, UInt32)
 static const OpCodeHandlerCB opHandlerCallbacks[]
 {
     &opNOOP,                            // NoOp
-    &opNOOP,                            // ProgStart TODO: allow user hooking up some callback?
+    &opNOOP,                            // ProgStart
     &opProgEnd,                         // ProgEnd
     &opJump,                            // Jmp
     &opJumpIfTrue,                      // JmpIfTrue
@@ -604,6 +636,7 @@ static const OpCodeHandlerCB opHandlerCallbacks[]
     &opMemberStoreLocal,                // MemberStoreLocal
     &opStoreArraySubLocal,              // StoreArraySubLocal
     &opStoreArraySubGlobal,             // StoreArraySubGlobal
+    &opStoreArraySubStk,                // StoreArraySubStk
     &opStoreSetTypeLocal,               // StoreSetTypeLocal
     &opStoreSetTypeGlobal,              // StoreSetTypeGlobal
     &opBinary<OpCode::CmpNotEqual>,     // CmpNotEqual
@@ -808,6 +841,7 @@ std::string toString(const OpCode op)
         "MEMBER_STORE_LOCAL",
         "STORE_ARRAYSUB_LOCAL",
         "STORE_ARRAYSUB_GLOBAL",
+        "STORE_ARRAYSUB_STK",
         "STORE_SETTYPE_LOCAL",
         "STORE_SETTYPE_GLOBAL",
         "CMP_NOT_EQUAL",

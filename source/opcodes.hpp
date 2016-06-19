@@ -105,6 +105,9 @@ enum class OpCode : UInt8
     StoreArraySubLocal,
     StoreArraySubGlobal,
 
+    // pops 3 from stack (obj,value,subscript) and writes to the array. pushes nothing.
+    StoreArraySubStk,
+
     // Same as StoreLocal/StoreGlobal, but overrides the type of the operand instead of assigning with conversion/checking.
     StoreSetTypeLocal,
     StoreSetTypeGlobal,

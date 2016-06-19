@@ -125,7 +125,7 @@ public:
     void print(std::ostream & os) const;
 
     // Auto-generated name for literal symbol types (IntLiteral, FloatLiteral, BoolLiteral, StrLiteral only).
-    ConstRcString * generateSymbolName(Symbol::Type type);
+    ConstRcStrUPtr generateSymbolName(Symbol::Type type);
 
 private:
 

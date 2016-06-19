@@ -60,7 +60,6 @@ struct SyntaxTreeNode final
         // Other:
         NoOp,
         TranslationUnit,
-        ModuleDefinition,
 
         // Statements/declarations:
         Statement,

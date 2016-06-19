@@ -10,7 +10,7 @@ This is mainly a toy/hobby project to learn more about compiler design, Virtual 
 
 The name is just a play on the meaning of Lua (Moon in Portuguese). I chose the name on purpose
 to leave it clear this is a lame rip-off on the syntax of the popular scripting language.
-This project is also in no way affiliated to [MoonScript](https://github.com/leafo/moonscript).
+This project is not affiliated to [MoonScript](https://github.com/leafo/moonscript).
 
 ### Building
 

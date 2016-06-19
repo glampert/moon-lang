@@ -69,11 +69,6 @@ public:
     static constexpr int DefaultStackSize = 8192;
 
     // Helper types:
-    //
-    // TODO NOTES: in the compilation stage these get filled
-    // with push_backs. We should optimize to allocate the
-    // exact size beforehand.
-    //
     using DataVector = std::vector<Variant>;
     using CodeVector = std::vector<Instruction>;
 

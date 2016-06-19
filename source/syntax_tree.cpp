@@ -23,7 +23,6 @@ std::string toString(const SyntaxTreeNode::Type nodeType)
     {
         color::green()   + std::string("NOOP")                      + color::restore(),
         color::magenta() + std::string("TRANSLATION_UNIT")          + color::restore(),
-        color::magenta() + std::string("MODULE_DEFINITION")         + color::restore(),
         color::green()   + std::string("STATEMENT")                 + color::restore(),
         color::red()     + std::string("IF_THEN_STATEMENT")         + color::restore(),
         color::red()     + std::string("IF_THEN_ELSE_STATEMENT")    + color::restore(),

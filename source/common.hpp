@@ -58,8 +58,10 @@ struct SyntaxTreeNode;
 class  SymbolTable;
 class  SyntaxTree;
 class  VarInfoTable;
+class  ImportTable;
 class  Parser;
 class  Lexer;
+namespace new_ { class  Compiler; }//TODO temp
 class  VM;
 
 // ========================================================
@@ -108,18 +110,22 @@ union SemanticVal
 // resorting to globals.
 struct ParseContext final
 {
-    // Internal parse states:
-    SemanticVal       * yylval   = nullptr;
-    Lexer             * lexer    = nullptr;
-    Parser            * parser   = nullptr;
-    SymbolTable       * symTable = nullptr;
-    SyntaxTree        * syntTree = nullptr;
-    VarInfoTable      * varInfo  = nullptr;
-    VM                * vm       = nullptr;
-    std::string       * currText = nullptr; // [optional]
-    const std::string * srcFile  = nullptr; // [optional]
+    // Internal parse/compile states:
+    SemanticVal       * yylval      = nullptr;
+    Lexer             * lexer       = nullptr;
+    Parser            * parser      = nullptr;
+    SymbolTable       * symTable    = nullptr;
+    SyntaxTree        * syntTree    = nullptr;
+    VarInfoTable      * varInfo     = nullptr;
+    VM                * vm          = nullptr;
+    new_::Compiler    * compiler    = nullptr;
+    std::string       * currText    = nullptr; // [optional]
+    const std::string * srcFile     = nullptr; // [optional]
+    SyntaxTreeNode    * treeRoot    = nullptr;
+    ImportTable       * importTable = nullptr;
+    int                 importDepth = 0;
 
-    // Parser/build flags:
+    // Parser/compiler flags:
     bool debugMode      = true;
     bool enableWarnings = true;
 };
