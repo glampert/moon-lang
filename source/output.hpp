@@ -13,6 +13,7 @@
 #include <string>
 #include <cstdio>
 #include <ostream>
+#include "build_config.hpp"
 
 // ========================================================
 // isatty() only needed if colored text output is desired.

@@ -70,6 +70,9 @@ enum class OpCode : UInt8
     // allocate & call constructor, pushes result into the stack
     NewObj,
 
+    // expects the stack top to be the enum type id
+    EnumDynInit,
+
     // FuncStart has the name of the function as its operand
     FuncStart,
     FuncEnd,

@@ -13,10 +13,6 @@
 #include "common.hpp"
 #include "pool.hpp"
 
-#ifndef MOON_AST_NODE_POOL_GRANULARITY
-    #define MOON_AST_NODE_POOL_GRANULARITY 512
-#endif // MOON_AST_NODE_POOL_GRANULARITY
-
 namespace moon
 {
 
@@ -152,6 +148,7 @@ struct SyntaxTreeNode final
     const Symbol * getChildSymbol(const int index) const
     {
         MOON_ASSERT(index >= 0 && index < 3);
+        MOON_ASSERT(children[index] != nullptr);
         return children[index]->symbol;
     }
 };

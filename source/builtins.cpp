@@ -149,7 +149,6 @@ void to_string(VM & vm, Stack::Slice args) // (varargs) -> string
     const auto fmt = args.next();
     std::string outputStr;
 
-    //TODO need to unwarp Any vars and print the contents!
     if (fmt != nullptr)
     {
         if (fmt->type != Variant::Type::Str || fmt->value.asString == nullptr)
@@ -271,22 +270,6 @@ void to_string(VM & vm, Stack::Slice args) // (varargs) -> string
     vm.setReturnValue(result);
 }
 
-// ========================================================
-// Miscellaneous built-ins:
-// ========================================================
-
-//TODO other nice things to have:
-//
-// - a small strings library (can be based on std::string)
-// - a small array handling library (can be based on std::vector)
-// - a small dictionary library (std::unordered_map based)
-// - expose the C-maths library
-// - small rand gen library
-// - a library for bit manipulation within integers? We don't have the traditional bitshift ops...
-// - env library to get things like cmdline and env vars
-// - parse_int/parse_float functions (str=>int) conversion
-// - console input function
-
 } // namespace native {}
 
 // ========================================================
@@ -306,5 +289,62 @@ void registerNativeBuiltInFunctions(FunctionTable & funcTable)
 
 #undef ADD_VARARGS_FUNC
 #undef ADD_FUNC
+
+// ========================================================
+// TODO other libraries we should have:
+// ========================================================
+
+// ----------------------------------------------
+// - A small strings library:
+//
+// str_new("text" or len + "fill-val")
+// str_length(str)
+// str_set_length(str, len, [fill_char])
+// str_push(str, "test")
+// str_pop(str, num_chars)
+// str_clear(str)
+// str_find_first(str, "pattern")
+// str_find_last(str, "pattern")
+// str_equal_no_case(str1, str2)
+// new_str = str_trim_new(str)
+// str_trim_in_place(str)
+// str_get_char(str, index)
+// str_set_char(str, index)
+//
+// parse_int(str, [base])
+// parse_float(str)
+//
+// ----------------------------------------------
+// - A small array handling library:
+//
+// array_new(store_type_id, initial_size)
+// array_push(arr, val)
+// array_push(arr, other_array)
+// array_pop(arr, [count])
+// array_clear(arr)
+// array_set_capacity(arr, n)
+// array_set_length(arr, n, [fill_val])
+// array_capacity(arr)
+// array_length(arr)
+// array_sort(arr)
+// array_get_index(arr, index)
+// array_set_index(arr, index)
+//
+// ----------------------------------------------
+// - Additional ranges support:
+//
+// range_begin(r)
+// range_end(r)
+// range_length(r)
+//
+// ----------------------------------------------
+// - Other useful stuff:
+//
+// - A small dictionary library (std::unordered_map based).
+// - Expose the C-maths library.
+// - Small random number gen library.
+// - A library for bit manipulation within integers? We don't have the traditional bitshift ops in the language...
+// - Env library to get things like cmdline and environment vars.
+// - Console input functions.
 
 } // namespace moon {}

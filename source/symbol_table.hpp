@@ -14,10 +14,6 @@
 #include "registry.hpp"
 #include "pool.hpp"
 
-#ifndef MOON_SYMBOL_POOL_GRANULARITY
-    #define MOON_SYMBOL_POOL_GRANULARITY 512
-#endif // MOON_SYMBOL_POOL_GRANULARITY
-
 namespace moon
 {
 

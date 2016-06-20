@@ -527,8 +527,9 @@ SyntaxTreeNode * newIdentNode(ParseContext & ctx, const Symbol * identifierSymbo
                 identNode->evalType = STEval::Array;
             }
         }
-        else // Could be a function (in a 'var = function' kind of expression)
+        else
         {
+            // Could be a function (in a 'var = function' kind of expression)
             if (ctx.vm->functions.findFunction(identifierSymbol->name))
             {
                 identNode->evalType = STEval::Func;
@@ -747,7 +748,11 @@ SyntaxTreeNode * newBinaryOpNode(ParseContext & ctx, const STNode type,
                 const std::string oname = color::white() + toString(lhs->symbol->name) + color::restore();
                 parserError(ctx, "reference to member of undefined object '" + oname + "'");
             }
-            lhsTypeId = vi->typeId;
+            else
+            {
+                lhsTypeId = vi->typeId;
+            }
+            ctx.varInfo->lastRhsParentTypeId = lhsTypeId;
         }
         else // Going down a recursive MemberRef chain
         {
@@ -818,10 +823,19 @@ SyntaxTreeNode * newBinaryOpNode(ParseContext & ctx, const STNode type,
 
         if (binOp == OpCode::StoreGlobal) // Generic assignment tag
         {
+            if (ctx.varInfo->lastRhsParentTypeId != nullptr && ctx.varInfo->lastRhsParentTypeId->templateObject != nullptr)
+            {
+                if (ctx.varInfo->lastRhsParentTypeId->templateObject->flags.isEnumType)
+                {
+                    parserError(ctx, "assigning to enum constant");
+                }
+            }
+
             if (!isAssignmentValid(lhsVarType, rhsVarType))
             {
                 parserError(ctx, "cannot assign " + toString(rhsVarType) + " to " + toString(lhsVarType));
             }
+
             resultType = lhsVarType; // Assignment doesn't change the left-hand-side type.
         }
         else // Comparison, sum, division, etc...
@@ -1519,6 +1533,10 @@ static void initEnumMembers(ParseContext & ctx, const SyntaxTreeNode * root,
         return;
     }
 
+    MOON_ASSERT(objOut != nullptr);
+    MOON_ASSERT(root->symbol != nullptr);
+    MOON_ASSERT(root->symbol->name != nullptr);
+
     const STEval stEval = root->evalType;
     const auto varName  = root->symbol->name;
 
@@ -1535,6 +1553,8 @@ static void initEnumMembers(ParseContext & ctx, const SyntaxTreeNode * root,
     {
         if (initExprNode->nodeType == STNode::ExprLiteralConst)
         {
+            MOON_ASSERT(initExprNode->symbol != nullptr);
+
             if (initExprNode->evalType == STEval::Int ||
                 initExprNode->evalType == STEval::Long)
             {
@@ -1557,6 +1577,7 @@ static void initEnumMembers(ParseContext & ctx, const SyntaxTreeNode * root,
         {
             if (initExprNode->nodeType == STNode::ExprNameIdent)
             {
+                MOON_ASSERT(initExprNode->symbol != nullptr);
                 const Variant initVal = objOut->findMemberVar(initExprNode->symbol->name);
                 MOON_ASSERT(data.type == initVal.type);
                 data = initVal;
@@ -1566,10 +1587,13 @@ static void initEnumMembers(ParseContext & ctx, const SyntaxTreeNode * root,
                 MOON_ASSERT(initExprNode->nodeType == STNode::ExprMemberRef);
 
                 // Already checked when parsing, so an assert suffices.
-                const TypeId * otherEnum = ctx.vm->types.findTypeId(initExprNode->getChildSymbol(0)->name);
+                MOON_ASSERT(initExprNode->getChildSymbol(1) != nullptr);
+                const Symbol * mangled = mangleEnumTypeName(*ctx.symTable, initExprNode->getChildSymbol(1), ctx.lexer->lineno());
+                const TypeId * otherEnum = ctx.vm->types.findTypeId(mangled->name);
                 MOON_ASSERT(otherEnum != nullptr);
 
-                const Variant initVal = otherEnum->templateObject->findMemberVar(initExprNode->getChildSymbol(1)->name);
+                MOON_ASSERT(initExprNode->getChildSymbol(2) != nullptr);
+                const Variant initVal = otherEnum->templateObject->findMemberVar(initExprNode->getChildSymbol(2)->name);
                 MOON_ASSERT(data.type == initVal.type);
                 data = initVal;
             }
@@ -1646,10 +1670,37 @@ static void checkEnumInitializers(ParseContext & ctx, const SyntaxTreeNode * roo
     checkEnumInitializers(ctx, root, iterNode->getChild(0), numOfNonIntegralConstants);
 }
 
+const Symbol * mangleEnumTypeName(SymbolTable & symTable, const Symbol * enumNameSymbol, int declLineNum)
+{
+    char enumTypeName[256];
+    std::snprintf(enumTypeName, arrayLength(enumTypeName), "__enum__%s", enumNameSymbol->name->chars);
+    return symTable.findOrDefineIdentifier(enumTypeName, declLineNum);
+}
+
+const Symbol * demangleEnumTypeName(SymbolTable & symTable, const Symbol * enumNameSymbol)
+{
+    const char * name    = enumNameSymbol->name->chars;
+    const char * prefix  = "__enum__";
+    const auto prefixLen = std::strlen(prefix);
+
+    if (std::strncmp(name, prefix, prefixLen) != 0)
+    {
+        return enumNameSymbol;
+    }
+
+    char outputName[256];
+    std::snprintf(outputName, arrayLength(outputName), "%s", name + prefixLen);
+    return symTable.findOrDefineIdentifier(outputName, Symbol::LineNumBuiltIn);
+}
+
 SyntaxTreeNode * newEnumDeclNode(ParseContext & ctx, const Symbol * enumNameSymbol, SyntaxTreeNode * enumConstantsListNode)
 {
+    // The enum type name is mangled, so we can declare a global variable with the name
+    // given in the source code. Enums will then be handled just as global variables would.
+    const Symbol * enumTypeNameSymbol = mangleEnumTypeName(*ctx.symTable, enumNameSymbol, ctx.lexer->lineno());
+
     // Redefinition not allowed.
-    const auto typeName = enumNameSymbol->name;
+    const auto typeName = enumTypeNameSymbol->name;
     if (ctx.vm->types.findTypeId(typeName))
     {
         const std::string tname = color::white() + toString(typeName) + color::restore();
@@ -1661,6 +1712,12 @@ SyntaxTreeNode * newEnumDeclNode(ParseContext & ctx, const Symbol * enumNameSymb
     templateObj->setTypeId(newTypeId);
     templateObj->markTypeTemplate();
 
+    // The enum instance becomes a global object, while the type is stored with a mangled name.
+    SyntaxTreeNode * initNode = nullptr;
+    SyntaxTreeNode * typeNode = ctx.syntTree->newNodeWithSymbol(STNode::ExprTypeIdent,
+                          enumTypeNameSymbol, nullptr, nullptr, nullptr, STEval::UDT);
+    registerGlobalOrLocal(ctx, enumNameSymbol, initNode, typeNode, STEval::UDT);
+
     // This will search for undefined STEvals in the initializers and update
     // them if the enum const references a global constant or a previously
     // defined sibling constant in this enum. It also checks that uninitialized
@@ -1671,7 +1728,7 @@ SyntaxTreeNode * newEnumDeclNode(ParseContext & ctx, const Symbol * enumNameSymb
     Int64 nextEnumIntVal = 0;
     initEnumMembers(ctx, enumConstantsListNode, templateObj, nextEnumIntVal);
 
-    return ctx.syntTree->newNodeWithSymbol(STNode::EnumDeclStatement, enumNameSymbol,
+    return ctx.syntTree->newNodeWithSymbol(STNode::EnumDeclStatement, enumTypeNameSymbol,
                                            enumConstantsListNode, nullptr, nullptr, STEval::UDT);
 }
 
@@ -1687,12 +1744,12 @@ STEval enumMemberConstantReference(ParseContext & ctx, SyntaxTreeNode * eTypeNod
     MOON_ASSERT(eTypeNode->symbol  != nullptr);
     MOON_ASSERT(eConstNode->symbol != nullptr);
 
-    const auto typeName = eTypeNode->symbol->name;
-    const TypeId * enumType = ctx.vm->types.findTypeId(typeName);
+    const Symbol * typeName = mangleEnumTypeName(*ctx.symTable, eTypeNode->symbol, ctx.lexer->lineno());
+    const TypeId * enumType = ctx.vm->types.findTypeId(typeName->name);
 
     if (enumType == nullptr)
     {
-        const std::string ename = color::white() + toString(typeName) + color::restore();
+        const std::string ename = color::white() + toString(eTypeNode->symbol->name) + color::restore();
         parserError(ctx, "reference to undefined enum type '" + ename + "'");
     }
     MOON_ASSERT(enumType->templateObject != nullptr);
@@ -1702,7 +1759,7 @@ STEval enumMemberConstantReference(ParseContext & ctx, SyntaxTreeNode * eTypeNod
 
     if (enumConst < 0)
     {
-        const std::string cname = color::white() + toString(typeName) + "." + toString(constName) + color::restore();
+        const std::string cname = color::white() + toString(eTypeNode->symbol->name) + "." + toString(constName) + color::restore();
         parserError(ctx, "reference to undefined enum constant '" + cname + "'");
     }
 

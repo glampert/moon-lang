@@ -120,7 +120,13 @@ static void opMemberStoreCommon(VM & vm, Variant objRef)
     // of this store instruction.
     for (int o = 0; o < offsets.getSize(); ++o)
     {
-        memberRef = &objRef.getAsObject()->getMemberAt(offsets[o].getAsInteger());
+        Object * thisObj = objRef.getAsObject();
+        if (thisObj == nullptr)
+        {
+            MOON_RUNTIME_EXCEPTION("opMemberStore: trying to access member of a null object!");
+        }
+
+        memberRef = &thisObj->getMemberAt(offsets[o].getAsInteger());
         objRef = memberRef->data;
     }
 
@@ -357,6 +363,26 @@ static void opNewObj(VM & vm, const UInt32 operandIndex)
     vm.stack.push(newObj);
 }
 
+static void opEnumDynInit(VM & vm, const UInt32 operandIndex)
+{
+    const Variant tidVar = vm.stack.pop();
+    if (tidVar.type != Variant::Type::Tid || tidVar.value.asTypeId == nullptr)
+    {
+        MOON_RUNTIME_EXCEPTION("opEnumDynInit: expected a type id!");
+    }
+
+    const TypeId * tid = tidVar.getAsTypeId();
+    if (tid->templateObject == nullptr || !tid->templateObject->flags.isEnumType)
+    {
+        MOON_RUNTIME_EXCEPTION("opEnumDynInit: invalid enum TypeId!");
+    }
+
+    Variant enumInstance{ Variant::Type::Object };
+    enumInstance.value.asObject = const_cast<Object *>(tid->templateObject);
+
+    vm.data[operandIndex] = enumInstance;
+}
+
 static void opMemberRef(VM & vm, UInt32)
 {
     // Pop the object and its member index from
@@ -364,7 +390,13 @@ static void opMemberRef(VM & vm, UInt32)
     const Variant memberIdx = vm.stack.pop();
     const Variant objRef    = vm.stack.pop();
 
-    const auto member = objRef.getAsObject()->getMemberAt(memberIdx.getAsInteger());
+    const Object * thisObj = objRef.getAsObject();
+    if (thisObj == nullptr)
+    {
+        MOON_RUNTIME_EXCEPTION("opMemberRef: trying to access member of a null object!");
+    }
+
+    const Object::Member member = thisObj->getMemberAt(memberIdx.getAsInteger());
     vm.stack.push(member.data);
 }
 
@@ -617,6 +649,7 @@ static const OpCodeHandlerCB opHandlerCallbacks[]
     &opNewRange,                        // NewRange
     &opNewArray,                        // NewArray
     &opNewObj,                          // NewObj
+    &opEnumDynInit,                     // EnumDynInit
     &opFuncStart,                       // FuncStart
     &opFuncEnd,                         // FuncEnd
     &opForLoopPrep,                     // ForLoopPrep
@@ -822,6 +855,7 @@ std::string toString(const OpCode op)
         "NEW_RANGE",
         "NEW_ARRAY",
         "NEW_OBJ",
+        "ENUM_DYN_INIT",
         "FUNC_START",
         "FUNC_END",
         "FOR_LOOP_PREP",

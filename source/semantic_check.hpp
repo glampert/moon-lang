@@ -67,6 +67,7 @@ public:
 
     // Transient states:
     const TypeId *          lastRhsTypeId       = nullptr;
+    const TypeId *          lastRhsParentTypeId = nullptr;
     const Symbol *          currentFuncSymbol   = nullptr;
     const Symbol *          currentUDTSymbol    = nullptr;
 
@@ -231,6 +232,9 @@ SyntaxTreeNode * newObjConstructorCallNode(ParseContext & ctx, const SyntaxTreeN
 //
 // Enums:
 //
+const Symbol * mangleEnumTypeName(SymbolTable & symTable, const Symbol * enumNameSymbol, int declLineNum);
+const Symbol * demangleEnumTypeName(SymbolTable & symTable, const Symbol * enumNameSymbol);
+
 SyntaxTreeNode * newEnumDeclNode(ParseContext & ctx,
                                  const Symbol * enumNameSymbol,
                                  SyntaxTreeNode * enumConstantsListNode);

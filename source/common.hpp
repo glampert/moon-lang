@@ -14,7 +14,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <cinttypes>
 
 #include <utility>
 #include <string>
@@ -22,29 +21,13 @@
 #include <exception>
 #include <unordered_map>
 
+#include "build_config.hpp"
 #include "output.hpp"
 
 #ifndef INC_LEXER
     // This header file is a built-in that comes bundled with the Flex install.
     #include <FlexLexer.h>
 #endif // INC_LEXER
-
-// Portability macros for printf-like functions printing 64bits integers:
-#ifndef MOON_I64_PRINT_FMT
-    #ifdef PRIi64
-        #define MOON_I64_PRINT_FMT "%" PRIi64
-    #else // PRIi64 not defined
-        #define MOON_I64_PRINT_FMT "%lli"
-    #endif // PRIi64
-#endif // MOON_I64_PRINT_FMT
-
-#ifndef MOON_X64_PRINT_FMT
-    #ifdef PRIX64
-        #define MOON_X64_PRINT_FMT "0x%016" PRIX64
-    #else // PRIX64 not defined
-        #define MOON_X64_PRINT_FMT "0x%016llX"
-    #endif // PRIX64
-#endif // MOON_X64_PRINT_FMT
 
 namespace moon
 {
@@ -61,7 +44,7 @@ class  VarInfoTable;
 class  ImportTable;
 class  Parser;
 class  Lexer;
-namespace new_ { class  Compiler; }//TODO temp
+class  Compiler;
 class  VM;
 
 // ========================================================
@@ -118,7 +101,7 @@ struct ParseContext final
     SyntaxTree        * syntTree    = nullptr;
     VarInfoTable      * varInfo     = nullptr;
     VM                * vm          = nullptr;
-    new_::Compiler    * compiler    = nullptr;
+    Compiler          * compiler    = nullptr;
     std::string       * currText    = nullptr; // [optional]
     const std::string * srcFile     = nullptr; // [optional]
     SyntaxTreeNode    * treeRoot    = nullptr;

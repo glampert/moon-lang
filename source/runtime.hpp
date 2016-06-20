@@ -16,19 +16,6 @@
 #include "pool.hpp"
 #include <vector>
 
-#ifndef MOON_TYPEID_POOL_GRANULARITY
-    #define MOON_TYPEID_POOL_GRANULARITY 256
-#endif // MOON_TYPEID_POOL_GRANULARITY
-
-//TODO find a place for this
-//
-// When defined to nonzero, constructor calls are allowed to not
-// initialize all members. The uninitialized members will be set
-// to defaults. If not defined or if = 0, not providing all the
-// initializer is a runtime error.
-//
-#define MOON_ALLOW_UNINITIALIZED_MEMBERS 1
-
 namespace moon
 {
 
