@@ -304,6 +304,10 @@ static void opFuncStart(VM & vm, const UInt32 operandIndex)
     Variant retAddr{ Variant::Type::Integer };
     retAddr.value.asInteger = vm.getReturnAddress();
     vm.stack.push(retAddr);
+
+    #if MOON_SAVE_SCRIPT_CALLSTACK
+    vm.callstack.push(funcVar);
+    #endif // MOON_SAVE_SCRIPT_CALLSTACK
 }
 
 static void opFuncEnd(VM & vm, const UInt32 operandIndex)
@@ -311,7 +315,7 @@ static void opFuncEnd(VM & vm, const UInt32 operandIndex)
     const auto argc = vm.locals.getTopVar().getAsInteger();
     vm.locals.popN(argc + 1); // +1 to also pop the argCount
 
-    // Pop the return address pushed by FuncStart and jump to it.
+    // Pop the return address pushed by FuncStart and jump to it on the next instruction.
     const Variant retAddr = vm.stack.pop();
     vm.setProgramCounter(retAddr.getAsInteger());
 
@@ -319,6 +323,10 @@ static void opFuncEnd(VM & vm, const UInt32 operandIndex)
     // already validated the return type against the return statements.
     const Variant funcVar = vm.data[operandIndex];
     funcVar.getAsFunction()->validateReturnValue(vm.getReturnValue());
+
+    #if MOON_SAVE_SCRIPT_CALLSTACK
+    vm.callstack.pop();
+    #endif // MOON_SAVE_SCRIPT_CALLSTACK
 }
 
 static void opNewVar(VM & vm, const UInt32 operandIndex)
@@ -456,8 +464,7 @@ static void opTypeof(VM & vm, UInt32)
     const Variant::Type varType = (operand.isAny() ? operand.anyType : operand.type);
 
     Variant tidVar{ Variant::Type::Tid };
-    if (varType == Variant::Type::Object &&
-        operand.value.asObject != nullptr)
+    if (varType == Variant::Type::Object && operand.value.asObject != nullptr)
     {
         // For objects we can get the precise type
         tidVar.value.asTypeId = operand.value.asObject->getTypeId();
@@ -697,11 +704,15 @@ static_assert(arrayLength(opHandlerCallbacks) == UInt32(OpCode::Count),
 // ========================================================
 
 VM::VM(const bool loadBuiltIns, const int stackSize)
-    : stack   { stackSize }
-    , locals  { stackSize }
-    , types   { *this     }
-    , pc      { 0         }
-    , retAddr { 0         }
+    : stack{ stackSize }
+    , locals{ stackSize }
+    , types{ *this }
+    #if MOON_GLOBALS_TABLE
+    , globals{ data }
+    #endif // MOON_GLOBALS_TABLE
+    #if MOON_SAVE_SCRIPT_CALLSTACK
+    , callstack{ stackSize }
+    #endif // MOON_SAVE_SCRIPT_CALLSTACK
 {
     if (loadBuiltIns)
     {
@@ -734,6 +745,13 @@ void VM::setReturnAddress(const int target)
     retAddr = target;
 }
 
+void VM::executeSingleInstruction(const OpCode op, const UInt32 operandIndex)
+{
+    const UInt32 handlerIndex = static_cast<UInt32>(op);
+    MOON_ASSERT(handlerIndex < static_cast<UInt32>(OpCode::Count));
+    return opHandlerCallbacks[handlerIndex](*this, operandIndex);
+}
+
 void VM::execute()
 {
     const int instructionCount = static_cast<int>(code.size());
@@ -750,12 +768,105 @@ void VM::execute()
     MOON_ASSERT(locals.isEmpty() && "Function stack should be empty at the end of a program!");
 }
 
-void VM::executeSingleInstruction(const OpCode op, const UInt32 operandIndex)
+void VM::execute(const int firstInstruction, const int maxInstructionsToExec)
 {
-    const auto handlerIndex  = static_cast<UInt32>(op);
-    MOON_ASSERT(handlerIndex < static_cast<UInt32>(OpCode::Count));
-    return opHandlerCallbacks[handlerIndex](*this, operandIndex);
+    int n = 0;
+    const int instructionCount = static_cast<int>(code.size());
+
+    for (pc = firstInstruction; pc < instructionCount && n < maxInstructionsToExec; ++pc, ++n)
+    {
+        OpCode op;
+        UInt32 operandIndex;
+        unpackInstruction(code[pc], op, operandIndex);
+        executeSingleInstruction(op, operandIndex);
+    }
 }
+
+void VM::executeWithCallback(const std::function<bool(VM & vm, OpCode, UInt32)> & callback, const int firstInstruction)
+{
+    const int instructionCount = static_cast<int>(code.size());
+    for (pc = firstInstruction; pc < instructionCount; ++pc)
+    {
+        OpCode op;
+        UInt32 operandIndex;
+        unpackInstruction(code[pc], op, operandIndex);
+
+        if (!callback(*this, op, operandIndex))
+        {
+            break;
+        }
+
+        executeSingleInstruction(op, operandIndex);
+    }
+}
+
+Variant VM::call(const char * funcName, const std::initializer_list<Variant> & arguments)
+{
+    MOON_ASSERT(funcName != nullptr && *funcName != '\0');
+
+    const Function * const funcPtr = functions.findFunction(funcName);
+    if (funcPtr == nullptr)
+    {
+        MOON_RUNTIME_EXCEPTION("attempting to call undefined function \'" + toString(funcName) + "\'!");
+    }
+
+    Variant funcVar{ Variant::Type::Function };
+    Variant argcVar{ Variant::Type::Integer  };
+
+    funcVar.value.asFunction = funcPtr;
+    argcVar.value.asInteger  = arguments.size();
+
+    for (const Variant & arg : arguments)
+    {
+        stack.push(arg);
+    }
+
+    const int savedPC = pc;
+    pc = 0;
+
+    stack.push(argcVar);
+    opCallCommon(*this, funcVar);
+
+    executeWithCallback(
+        [funcPtr](VM & vm, const OpCode op, const UInt32 operandIndex)
+        {
+            if (op == OpCode::FuncEnd)
+            {
+                if (vm.data[operandIndex].getAsFunction() == funcPtr)
+                {
+                    // Execute the FuncEnd and stop.
+                    vm.executeSingleInstruction(op, operandIndex);
+                    return false;
+                }
+            }
+            // Continue the execution.
+            return true;
+        }, pc + 1);
+
+    pc = savedPC;
+    return funcPtr->hasReturnVal() ? rvr : Variant{};
+}
+
+#if MOON_SAVE_SCRIPT_CALLSTACK
+void VM::printStackTrace(std::ostream & os) const
+{
+    os << color::white() << "[[ stack trace ]]" << color::restore() << "\n";
+
+    if (callstack.isEmpty())
+    {
+        os << "(empty)\n";
+        return;
+    }
+
+    int index = 0;
+    auto s = callstack.slice(0, callstack.getCurrSize());
+
+    for (auto var = s.first(); var != nullptr; var = s.next(), ++index)
+    {
+        os << std::setw(3) << index << ": " << var->getAsFunction()->name->chars << "\n";
+    }
+}
+#endif // MOON_SAVE_SCRIPT_CALLSTACK
 
 // ========================================================
 // Debug printing helpers:
@@ -777,7 +888,7 @@ static void dumpVariant(const Variant var, const int index, std::ostream & os)
                     color::red(), valStr.c_str(), color::restore(), typeStr.c_str());
 }
 
-void printCodeVector(const VM::CodeVector & code, std::ostream & os)
+void printCodeVector(const CodeVector & code, std::ostream & os)
 {
     OpCode op = OpCode::NoOp;
     UInt32 operandIndex = 0;
@@ -798,7 +909,7 @@ void printCodeVector(const VM::CodeVector & code, std::ostream & os)
     os << color::white() << "[[ listed " << code.size() << " instructions ]]" << color::restore() << "\n";
 }
 
-void printDataVector(const VM::DataVector & data, std::ostream & os)
+void printDataVector(const DataVector & data, std::ostream & os)
 {
     os << color::white() << "[[ begin data vector dump ]]" << color::restore() << "\n";
 

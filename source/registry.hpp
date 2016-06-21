@@ -89,20 +89,20 @@ protected:
     // Lookup by key:
     //
 
-    StoredType findInternal(ConstRcString * const key) const
+    StoredType findInternal(ConstRcString * const key, StoredType notFoundValue = StoredType{}) const
     {
         MOON_ASSERT(isRcStringValid(key));
 
-        const auto iter = table.find(key);
+        auto && iter = table.find(key);
         if (iter != std::end(table))
         {
             return iter->second;
         }
 
-        return StoredType{}; // Not found.
+        return notFoundValue;
     }
 
-    StoredType findInternal(const char * key) const
+    StoredType findInternal(const char * key, StoredType notFoundValue = StoredType{}) const
     {
         // We can get away with a cheap temp because find()
         // will never add ref to the input string.
@@ -111,7 +111,7 @@ protected:
         /* length   = */ static_cast<UInt32>(std::strlen(key)),
         /* hashVal  = */ hashCString(key),
         /* refCount = */ 1 };
-        return findInternal(&tempRcStr);
+        return findInternal(&tempRcStr, notFoundValue);
     }
 };
 

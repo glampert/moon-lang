@@ -127,10 +127,22 @@ void Function::invoke(VM & vm, const Stack::Slice args) const
     // Dispatch to the appropriate handler:
     if (isNative())
     {
+        #if MOON_SAVE_SCRIPT_CALLSTACK
+        Variant funcVar{ Variant::Type::Function };
+        funcVar.value.asFunction = this;
+        vm.callstack.push(funcVar);
+        #endif // MOON_SAVE_SCRIPT_CALLSTACK
+
+        // Call in the native code:
         nativeCallback(vm, args);
+
         // Validate the return value here because we will not hit
         // a FuncEnd instruction when returning from a native call.
         validateReturnValue(vm.getReturnValue());
+
+        #if MOON_SAVE_SCRIPT_CALLSTACK
+        vm.callstack.pop();
+        #endif // MOON_SAVE_SCRIPT_CALLSTACK
     }
     else if (isScript())
     {
@@ -282,8 +294,8 @@ const Function * FunctionTable::addFunction(ConstRcString * funcName, const Vari
     if (returnType != nullptr)
     {
         funcRet = reinterpret_cast<Variant::Type *>(memPtr);
-        memPtr += sizeof(Variant::Type);
-        *funcRet = *returnType;
+        (*funcRet) = (*returnType);
+        /*memPtr += sizeof(Variant::Type);*/
     }
     else
     {

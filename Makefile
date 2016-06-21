@@ -78,6 +78,9 @@ CXXFLAGS += -std=c++11           \
 # For ad hoc static analysis with Clang, uncomment the following:
 #CXX += --analyze -Xanalyzer -analyzer-output=text
 
+# Clang address sanitizer:
+#CXX += -O1 -g -fno-omit-frame-pointer -fsanitize=address
+
 #------------------------------------------------
 # CPlusPlus rules:
 

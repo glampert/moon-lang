@@ -38,7 +38,7 @@ struct IntermediateInstr final
     OpCode              op;
 };
 
-constexpr UInt16 InvalidStackIndex = UInt16(-1);
+constexpr UInt16 InvalidStackIndex = UInt16(~0);
 using InstrPool = Pool<IntermediateInstr, MOON_INTERMEDIATE_INSTR_POOL_GRANULARITY>;
 
 // ========================================================

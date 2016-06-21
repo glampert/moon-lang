@@ -19,14 +19,16 @@ namespace moon
 // OpCode constants:
 // ========================================================
 
-//TODO provide more descriptive comments on each op
 enum class OpCode : UInt8
 {
+    // Do nothing for a cycle.
     NoOp = 0,
 
     // Nothing right now. In the future we might
     // use them for global initialization/shutdown.
     ProgStart,
+
+    // Sets the PC to one instruction past the end, terminating a program.
     ProgEnd,
 
     // Unconditional jump to target instruction.
@@ -41,24 +43,27 @@ enum class OpCode : UInt8
     // Pops 1 value from the VM stack.
     JmpIfFalse,
 
-    // Jumps to the end of a function taking with it the return value, if any.
+    // Jumps to the end of a function (currently no difference from a regular jump).
     JmpReturn,
 
-    Typeof, // pops 1, pushes a tid
-    Typecast, // pops 2, pushes the result
+    Typeof,   // Pops 1 value, pushes a TypeId.
+    Typecast, // Pops 2 value, target TypeId and value. Pushes the result of the cast.
 
     // Call a script function.
+    // Operand is the global Function object.
+    // Pops the function arguments from the VM stack upon completion.
     Call,
 
-    // indirect call (via func pointer) from local function parameter or var
+    // Indirect call (via function pointer) from local function parameter or var.
+    // Operand pointers to the local stack.
     CallLocal,
 
-    // creates a new typed Variant, pushes into the stack
-    // assumes the previous load is the argument count, e.g.:
-    // 0=uninitialized var; 1=pops one value for the initializer
+    // Creates a new typed Variant, pushes the result into the stack.
+    // Assumes the top of the stack is the argument count, e.g.:
+    // 0=uninitialized var; 1=pops one more value for the initializer.
     NewVar,
 
-    // allocate new range object from the previous 2 values in the stack.
+    // Allocate new range object from the previous 2 values in the stack.
     // Pushes the result.
     NewRange,
 
@@ -67,71 +72,96 @@ enum class OpCode : UInt8
     // Pushes the result.
     NewArray,
 
-    // allocate & call constructor, pushes result into the stack
+    // Allocate & call constructor, pushes the resulting object into the stack.
     NewObj,
 
-    // expects the stack top to be the enum type id
+    // Expects the stack top to be the enum type id.
+    // Operand is the enum instance to be initialized.
     EnumDynInit,
 
-    // FuncStart has the name of the function as its operand
+    // FuncStart/FuncEnd has the name of the function as its operand.
+    // The return address is pushed/pop from the VM stack.
     FuncStart,
     FuncEnd,
 
-    // operand is the name of the iterator
+    // Pops 3 values (parameter, iterator, index) and pushes the
+    // updated iterator and index back (2 values).
     ForLoopPrep,
-    ForLoopTest, // pushes true if the loop is NOT done, false if finished
+
+    // Pops the loop condition and current index, pushes
+    // true if the loop is NOT done, false if finished.
+    ForLoopTest,
+
+    // Pops 3 values (parameter, iterator, index) and pushes the
+    // updated iterator and index back (2 values).
     ForLoopStep,
 
-    MatchTest, // pushes the result of the test
+    // Pops the test value, performs the test and puts it back into
+    // the stack along with the result of the test.
+    MatchTest,
+
+    // Pops the test value from the VM stack.
     MatchEnd,
 
-    ArraySubscript, // pops the array ref and subscript from the stack[array_ref, sub]
-                    // pushes the resulting value into the stack
+    // Pops the array_ptr and subscript from the stack [array, sub]
+    // and pushes the resulting value into the stack.
+    ArraySubscript,
 
-    MemberRef, // pops 2 from the stack, [obj, member_idx] and pushes the resulting member var
+    // Pops 2 values from the stack, [obj, member_idx]
+    // and pushes the resulting member var.
+    MemberRef,
 
-    // Return Value Register
-    LoadRVR,  // push RVR into stack
-    StoreRVR, // store stack top into RVR
+    // Return Value Register:
+    LoadRVR,  // Push the RVR into the stack.
+    StoreRVR, // Store the stack top into the RVR.
 
-    // global variable/constant
-    LoadGlobal,  // push operand into stack
-    StoreGlobal, // store stack top into operand and pop
-    MemberStoreGlobal, // pops 2 from the stack, [obj, member_idx] and writes to member variable
+    // Global variables/constants:
+    LoadGlobal,  // Push operand into stack.
+    StoreGlobal, // Store stack top into operand and pop.
 
-    // local variable (function scope)
+    // Resolves a chain of member references. Operand is in the prog data.
+    MemberStoreGlobal,
+
+    // Local variables (function scope):
+    // Both will access the VM::locals and the VM::stack.
+    // The operand index points to the locals stack.
     LoadLocal,
     StoreLocal,
+
+    // Resolves a chain of member references. Operand is in the locals stack.
     MemberStoreLocal,
 
     // Pops the value and subscript, write to the array operand.
     StoreArraySubLocal,
     StoreArraySubGlobal,
 
-    // pops 3 from stack (obj,value,subscript) and writes to the array. pushes nothing.
+    // Pops 3 values from stack [array_ptr, value, subscript]
+    // and writes to the array. Pushes nothing back.
     StoreArraySubStk,
 
-    // Same as StoreLocal/StoreGlobal, but overrides the type of the operand instead of assigning with conversion/checking.
+    // Same as StoreLocal/StoreGlobal, but overrides the type of
+    // the operand instead of assigning with conversion/checking.
     StoreSetTypeLocal,
     StoreSetTypeGlobal,
 
+    // Binary operators:
+    // Two values popped from the stack and result pushed.
     CmpNotEqual,
     CmpEqual,
     CmpGreaterEqual,
     CmpGreater,
     CmpLessEqual,
     CmpLess,
-
     LogicOr,
     LogicAnd,
-
     Sub,
     Add,
     Mod,
     Div,
     Mul,
 
-    // Unary ops:
+    // Unary operators:
+    // Pop one value from the stack and push the result.
     LogicNot,
     Negate,
     Plus,
@@ -163,14 +193,15 @@ inline bool isJumpOpCode(const OpCode op) noexcept
 // Each instruction is a 32-bits unsigned integer.
 //
 // The top byte is the opcode. The next 24-bits are the index
-// to its operand in the `progData` or the index to its jump
-// target in `progCode` if it is a jump or call instruction.
+// to its operand in the 'prog data' or the index to its jump
+// target in the 'prog code' if it is a jump or call instruction.
 //
 // For an instruction that takes no operands, such as a compare
 // instruction, then the operand index will be zero.
 //
-// A store instruction will write the top of the `progStack`
-// to its operand index.
+// A store instruction will write the top of the VM stack
+// to its operand index. Jump instructions will set the PC
+// from its operand.
 //
 // VM instruction word:
 //  +-------------+--------------------------+

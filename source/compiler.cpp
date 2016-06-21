@@ -905,9 +905,8 @@ static IntermediateInstr * emitNewVar(Compiler & compiler, CodeGenContext & code
 {
     EXPECT_SYMBOL(root); // The var name.
 
-    const Symbol * typeSymbol       = nullptr;
-    const Symbol * objectTypeSymbol = nullptr;
-    IntermediateInstr * argument    = nullptr;
+    const Symbol * typeSymbol    = nullptr;
+    IntermediateInstr * argument = nullptr;
 
     if (root->getChild(1) != nullptr) // Type node
     {
@@ -926,22 +925,6 @@ static IntermediateInstr * emitNewVar(Compiler & compiler, CodeGenContext & code
     if (typeSymbol == nullptr)
     {
         typeSymbol = eval2Symbol(compiler.symTable, root->evalType);
-        if (root->evalType == SyntaxTreeNode::Eval::UDT)
-        {
-            // Find out the exact type of the UDT by looking at the constructor call:
-            const SyntaxTreeNode * initExpr = root->getChild(0);
-            if (initExpr == nullptr)
-            {
-                MOON_INTERNAL_EXCEPTION("expected a constructor call!");
-            }
-
-            objectTypeSymbol = initExpr->symbol;
-        }
-    }
-
-    if (objectTypeSymbol == nullptr)
-    {
-        objectTypeSymbol = typeSymbol;
     }
 
     int           argumentCount = 0;
@@ -1431,6 +1414,7 @@ static IntermediateInstr * emitCompoundBinaryOp(Compiler & compiler, CodeGenCont
 
         lhsSymbol = codeGen.memberRefList[0];
         numMemberOffsets = static_cast<int>(codeGen.memberRefList.size() - 1);
+        lhsIsArraySubscript = false;
     }
     else if (root->getChild(1)->nodeType == SyntaxTreeNode::Type::ExprArraySubscript)
     {
@@ -1667,7 +1651,16 @@ static UInt32 addSymbolToProgData(VM & vm, const Symbol * const symbol, const Va
     }
 
     vm.data.push_back(var);
-    return static_cast<UInt32>(vm.data.size() - 1);
+    const auto varIndex = static_cast<UInt32>(vm.data.size() - 1);
+
+    #if MOON_GLOBALS_TABLE
+    if (symbol->type == Symbol::Type::Identifier && !symbol->isBuiltInTypeId())
+    {
+        vm.globals.addGlobal(symbol->name, varIndex);
+    }
+    #endif // MOON_GLOBALS_TABLE
+
+    return varIndex;
 }
 
 static void createMappings(Compiler & compiler, CodeGenContext & codeGen, VM & vm,
@@ -1739,7 +1732,7 @@ static void createMappings(Compiler & compiler, CodeGenContext & codeGen, VM & v
 }
 
 static void fixReferences(const IntermediateInstr * const instr, const CodeGenContext & codeGen,
-                          VM::CodeVector & progCode, FunctionTable & funcTable)
+                          CodeVector & progCode, FunctionTable & funcTable)
 {
     MOON_ASSERT(instr != nullptr);
     switch (instr->op)

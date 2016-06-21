@@ -69,13 +69,14 @@ void assert(VM &, Stack::Slice args) // (varargs) -> void
 {
     // First three arguments will always be the source location
     // in filename, line num and caller function order.
-    const auto fileName = args.first();
-    const auto lineNum  = args.next();
-    const auto funcName = args.next();
+    const Variant * fileName = args.first();
+    const Variant * lineNum  = args.next();
+    const Variant * funcName = args.next();
+    MOON_ASSERT(fileName != nullptr && lineNum != nullptr && funcName != nullptr);
 
     // Fourth arg is the assert condition.
     // If non-null/non-zero we pass the assertion.
-    const auto cond = args.next();
+    const Variant * cond = args.next();
     if (cond && cond->toBool())
     {
         return;
@@ -89,7 +90,7 @@ void assert(VM &, Stack::Slice args) // (varargs) -> void
 
     // Additional user-provided error message strings:
     std::string userMessage;
-    for (auto var = args.next(); var != nullptr; var = args.next())
+    for (const Variant * var = args.next(); var != nullptr; var = args.next())
     {
         userMessage += toString(*var);
     }
@@ -101,13 +102,14 @@ void assert(VM &, Stack::Slice args) // (varargs) -> void
 void panic(VM &, Stack::Slice args) // (varargs) -> void
 {
     // Same layout of the above assert() function.
-    const auto fileName = args.first();
-    const auto lineNum  = args.next();
-    const auto funcName = args.next();
+    const Variant * fileName = args.first();
+    const Variant * lineNum  = args.next();
+    const Variant * funcName = args.next();
+    MOON_ASSERT(fileName != nullptr && lineNum != nullptr && funcName != nullptr);
 
     // Additional user-provided error message strings:
     std::string userMessage;
-    for (auto var = args.next(); var != nullptr; var = args.next())
+    for (const Variant * var = args.next(); var != nullptr; var = args.next())
     {
         userMessage += toString(*var);
     }
@@ -122,7 +124,7 @@ void panic(VM &, Stack::Slice args) // (varargs) -> void
 
 void print(VM &, Stack::Slice args) // (varargs) -> void
 {
-    for (auto var = args.first(); var != nullptr; var = args.next())
+    for (const Variant * var = args.first(); var != nullptr; var = args.next())
     {
         logStream() << toString(*var);
     }
@@ -130,7 +132,7 @@ void print(VM &, Stack::Slice args) // (varargs) -> void
 
 void println(VM &, Stack::Slice args) // (varargs) -> void
 {
-    for (auto var = args.first(); var != nullptr; var = args.next())
+    for (const Variant * var = args.first(); var != nullptr; var = args.next())
     {
         logStream() << toString(*var);
     }
@@ -145,10 +147,11 @@ void to_string(VM & vm, Stack::Slice args) // (varargs) -> string
     }
 
     // Second argument is the optional formatting flag.
-    const auto var = args.first();
-    const auto fmt = args.next();
+    const Variant * var = args.first();
+    const Variant * fmt = args.next();
     std::string outputStr;
 
+    MOON_ASSERT(var != nullptr);
     if (fmt != nullptr)
     {
         if (fmt->type != Variant::Type::Str || fmt->value.asString == nullptr)
@@ -291,7 +294,7 @@ void registerNativeBuiltInFunctions(FunctionTable & funcTable)
 #undef ADD_FUNC
 
 // ========================================================
-// TODO other libraries we should have:
+// TODO other libraries we should have at some point:
 // ========================================================
 
 // ----------------------------------------------

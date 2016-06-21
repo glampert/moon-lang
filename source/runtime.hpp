@@ -388,7 +388,7 @@ public:
     FunctionTable() = default;
     ~FunctionTable();
 
-    // Find a function by its fully qualified name or returns null.
+    // Find a function by its name or returns null.
     const Function * findFunction(ConstRcString * const name) const { return findInternal(name); }
     const Function * findFunction(const char * name) const          { return findInternal(name); }
 

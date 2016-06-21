@@ -4,7 +4,7 @@
 // File: build_config.hpp
 // Author: Guilherme R. Lampert
 // Created on: 19/06/16
-// Brief: Customizable preprocessors switches.
+// Brief: Customizable preprocessors switches. Reasonable defaults provided for each.
 // ================================================================================================
 
 #ifndef MOON_BUILD_CONFIG_HPP
@@ -49,6 +49,27 @@
 #ifndef MOON_AST_NODE_POOL_GRANULARITY
     #define MOON_AST_NODE_POOL_GRANULARITY 512
 #endif // MOON_AST_NODE_POOL_GRANULARITY
+
+//
+// If this is enabled, the VM class will have a GlobalsTable member
+// that allows accessing all the program globals by name. Functions
+// are also considered globals, so they can be accessed via the
+// globals table too.
+//
+#ifndef MOON_GLOBALS_TABLE
+    #define MOON_GLOBALS_TABLE 1
+#endif // MOON_GLOBALS_TABLE
+
+//
+// If this is enabled, the VM class will have a printStackTrace()
+// method that you can call to dump the current script call stack,
+// including native calls. This functionality requires an additional
+// stack to keep track of the functions names, so you might wish to
+// disable this to save memory in "release" mode.
+//
+#ifndef MOON_SAVE_SCRIPT_CALLSTACK
+    #define MOON_SAVE_SCRIPT_CALLSTACK 1
+#endif // MOON_SAVE_SCRIPT_CALLSTACK
 
 //
 // When defined to nonzero, constructor calls are allowed to not
