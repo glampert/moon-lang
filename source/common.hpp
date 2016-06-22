@@ -274,7 +274,7 @@ inline std::string toString(const Float32 value) { return trimTrailingFloatZeros
 inline std::string toString(const Float64 value) { return trimTrailingFloatZeros(std::to_string(value)); }
 
 // ========================================================
-// Compile-time version of hashCString():
+// Compile-time utilities:
 // ========================================================
 
 namespace ct
@@ -325,6 +325,19 @@ constexpr UInt32 hashCString(const char * cstr)
 {
     return hashOneAtATime(cstr, lengthOfCString(cstr), 0);
 }
+
+//
+// Compile-time maximum of an arbitrary number of values:
+//
+
+template<typename T>
+constexpr T maxOf2(T a, T b) { return (a > b) ? a : b; }
+
+template<typename T>
+constexpr T maxOfN(T x) { return x; }
+
+template<typename T, typename... Args>
+constexpr T maxOfN(T x, Args... args) { return maxOf2(x, maxOfN(args...)); }
 
 } // namespace ct {}
 

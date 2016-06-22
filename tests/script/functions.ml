@@ -184,5 +184,18 @@ var_args_func(33, 44, 55, "hello world", 3.14, my_func1);
 
 // -----------------------------------------------
 
+// Recursive function with stop condition from the passed parameter.
+func test_recursion(num_calls: int)
+    if num_calls == 10 then
+        return;
+    end
+    println("num_calls = ", num_calls);
+    test_recursion(num_calls + 1);
+end
+
+test_recursion(0);
+
+// -----------------------------------------------
+
 println("Finished running test script ", SRC_FILE_NAME);
 

@@ -205,6 +205,11 @@ SyntaxTreeNode * newLoopJumpNode(ParseContext & ctx, SyntaxTreeNode::Type nodeTy
 //
 // Function-related stuff:
 //
+void registerNewFunction(ParseContext & ctx,
+                         const Symbol * funcNameSymbol,
+                         const SyntaxTreeNode * paramListNode,
+                         const SyntaxTreeNode * returnTypeNode);
+
 SyntaxTreeNode * newFunctionDeclNode(ParseContext & ctx,
                                      const Symbol * funcNameSymbol,
                                      const SyntaxTreeNode * paramListNode,

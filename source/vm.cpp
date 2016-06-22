@@ -827,21 +827,25 @@ Variant VM::call(const char * funcName, const std::initializer_list<Variant> & a
     stack.push(argcVar);
     opCallCommon(*this, funcVar);
 
-    executeWithCallback(
-        [funcPtr](VM & vm, const OpCode op, const UInt32 operandIndex)
-        {
-            if (op == OpCode::FuncEnd)
+    // Script-defined functions must run some script code.
+    if (funcPtr->isScript())
+    {
+        executeWithCallback(
+            [funcPtr](VM & vm, const OpCode op, const UInt32 operandIndex)
             {
-                if (vm.data[operandIndex].getAsFunction() == funcPtr)
+                if (op == OpCode::FuncEnd)
                 {
-                    // Execute the FuncEnd and stop.
-                    vm.executeSingleInstruction(op, operandIndex);
-                    return false;
+                    if (vm.data[operandIndex].getAsFunction() == funcPtr)
+                    {
+                        // Execute the FuncEnd and stop.
+                        vm.executeSingleInstruction(op, operandIndex);
+                        return false;
+                    }
                 }
-            }
-            // Continue the execution.
-            return true;
-        }, pc + 1);
+                // Continue the execution.
+                return true;
+            }, pc + 1);
+    }
 
     pc = savedPC;
     return funcPtr->hasReturnVal() ? rvr : Variant{};

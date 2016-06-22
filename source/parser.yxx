@@ -488,7 +488,7 @@ func_call_expression
 
 func_declaration
     : "func" IDENTIFIER { ctx.varInfo->beginFunc(ctx, $2); } "(" func_parameter_list_declaration ")" optional_return_type
-    { ctx.varInfo->expectedReturnType = $7->evalType; } optional_statement_list end_statement
+    { registerNewFunction(ctx, $2, $5, $7); } optional_statement_list end_statement
         {
             $$ = newFunctionDeclNode(ctx, $2, $5, $7, $9);
             ctx.varInfo->endFunc(ctx);

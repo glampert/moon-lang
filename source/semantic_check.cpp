@@ -1321,11 +1321,10 @@ static void collectFunctionArgTypes(ParseContext & ctx, const SyntaxTreeNode * r
     collectFunctionArgTypes(ctx, root->getChild(0), argTypesOut, argCountOut, extraFlagsOut);
 }
 
-SyntaxTreeNode * newFunctionDeclNode(ParseContext & ctx,
-                                     const Symbol * funcNameSymbol,
-                                     const SyntaxTreeNode * paramListNode,
-                                     const SyntaxTreeNode * returnTypeNode,
-                                     const SyntaxTreeNode * bodyStatementListNode)
+void registerNewFunction(ParseContext & ctx,
+                         const Symbol * funcNameSymbol,
+                         const SyntaxTreeNode * paramListNode,
+                         const SyntaxTreeNode * returnTypeNode)
 {
     // Redefinition not allowed. We also don't currently support function overloads.
     const auto funcName = funcNameSymbol->name;
@@ -1357,9 +1356,18 @@ SyntaxTreeNode * newFunctionDeclNode(ParseContext & ctx,
 
     // Register the new function with the runtime:
     ctx.vm->functions.addFunction(funcName, pRetType,
-                                  ((argCount != 0) ? argTypes : nullptr),
+                                  (argCount != 0 ? argTypes : nullptr),
                                   argCount, 0, extraFlags, nullptr);
 
+    ctx.varInfo->expectedReturnType = returnTypeNode->evalType;
+}
+
+SyntaxTreeNode * newFunctionDeclNode(ParseContext & ctx,
+                                     const Symbol * funcNameSymbol,
+                                     const SyntaxTreeNode * paramListNode,
+                                     const SyntaxTreeNode * returnTypeNode,
+                                     const SyntaxTreeNode * bodyStatementListNode)
+{
     // child[0] = parameter list
     // child[1] = function body
     // child[2] = return type
