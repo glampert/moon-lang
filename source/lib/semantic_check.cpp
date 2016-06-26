@@ -1065,7 +1065,7 @@ SyntaxTreeNode * newLoopNode(ParseContext & ctx, const STNode nodeType, SyntaxTr
     }
     else
     {
-        MOON_ASSERT(false && "Bad loop node type!");
+        MOON_INTERNAL_EXCEPTION("bad loop node type!");
     }
 }
 

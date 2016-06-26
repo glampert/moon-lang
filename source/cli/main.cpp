@@ -1,7 +1,7 @@
 
 // ================================================================================================
 // -*- C++ -*-
-// File: cli_main.cpp
+// File: main.cpp
 // Author: Guilherme R. Lampert
 // Created on: 10/03/16
 // Brief: Command-line interpreter entry point.
@@ -16,11 +16,9 @@ TODO LIST:
 
 - Should test this on a tool like Valgrind or Clang Mem Sanitizer to check for possible leaks!!!
 
-- GC
-
-- Organize the makefile.
-
 - Add the generated files to the repo, in case trying to compile without bison&flex.
+
+- GC
 
 =================================================
 */
