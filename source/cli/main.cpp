@@ -4,11 +4,13 @@
 // File: main.cpp
 // Author: Guilherme R. Lampert
 // Created on: 10/03/16
-// Brief: Command-line interpreter entry point.
+// Brief: Command Line Interpreter (CLI) entry point.
 // ================================================================================================
 
 #include "compiler.hpp"
 #include "vm.hpp"
+
+using namespace moon;
 
 /*
 =================================================
@@ -20,216 +22,263 @@ TODO LIST:
 
 - GC
 
+- Add small sample gallery to the README.
+
 =================================================
 */
 
-using namespace moon;
-
-// ================================================================================================
-// TEMP. this will be moved to the CG or runtime.cpp ...
-
-#ifndef MOON_RT_OBJECT_POOL_GRANULARITY
-    #define MOON_RT_OBJECT_POOL_GRANULARITY 256
-#endif // MOON_RT_OBJECT_POOL_GRANULARITY
-
-template<typename... Objects>
-struct RtObjMemoryBlobImpl final
+struct CmdLineFlags final
 {
-    static constexpr UInt32 LargestSize  = ct::maxOfN(sizeof(Objects)...);
-    static constexpr UInt32 LargestAlign = ct::maxOfN(alignof(Objects)...);
+    // Interpreter flags:
+    bool run                  = true;  // <none>
+    bool parse                = true;  // -P
+    bool compile              = true;  // -C
+    bool debug                = false; // -D
+    bool warnings             = false; // -W
+    bool verbose              = false; // -V
 
-    alignas(LargestAlign) UInt8 blob[LargestSize];
+    // Debug visualization flags:
+    bool dumpSymbols          = false; // -dump=symbols
+    bool dumpSyntax           = false; // -dump=syntax
+    bool dumpFuncs            = false; // -dump=funcs
+    bool dumpTypes            = false; // -dump=types
+    bool dumpGCObjs           = false; // -dump=gc
+    bool dumpIntermediateCode = false; // -dump=intrcode
+    bool dumpVMBytecode       = false; // -dump=bytecode
+    bool dumpGlobalData       = false; // -dump=globdata
+
+    void print(std::ostream & os) const
+    {
+        os << "Moon: Command line flags:\n";
+        if (parse   && !run)      { os << "-P\n"; }
+        if (compile && !run)      { os << "-C\n"; }
+        if (debug)                { os << "-D\n"; }
+        if (warnings)             { os << "-W\n"; }
+        if (verbose)              { os << "-V\n"; }
+        if (dumpSymbols)          { os << "-dump=symbols\n";  }
+        if (dumpSyntax)           { os << "-dump=syntax\n";   }
+        if (dumpFuncs)            { os << "-dump=funcs\n";    }
+        if (dumpTypes)            { os << "-dump=types\n";    }
+        if (dumpGCObjs)           { os << "-dump=gc\n";       }
+        if (dumpIntermediateCode) { os << "-dump=intrcode\n"; }
+        if (dumpVMBytecode)       { os << "-dump=bytecode\n"; }
+        if (dumpGlobalData)       { os << "-dump=globdata\n"; }
+        os << "\n";
+    }
 };
 
-using RtObjMemoryBlobSmall   = RtObjMemoryBlobImpl<Object, Struct, Enum>;
-using RtObjMemoryBlobBig     = RtObjMemoryBlobImpl<Str, Array>;
+static void printUsage(const char * const progName, std::ostream & os)
+{
+    os << "usage:\n"
+       << " $ " << progName << " <script> [options]\n"
+       << " options:\n"
+       << "  -C  Compile but don't run. Useful to perform syntax validation on a script.\n"
+       << "  -P  Stop at the parse stage (syntax tree generated and most of the syntax validation done).\n"
+       << "  -D  Compile and run in debug mode.\n"
+       << "  -W  Enable compiler warnings. Warnings are disabled by default.\n"
+       << "  -V  Run the CLI in verbose mode.\n"
+       << "  -dump=[cmd] where 'cmd' is one of:\n"
+       << "    symbols   Dump the symbol table generated during compilation.\n"
+       << "    syntax    Dump the syntax tree generated during compilation.\n"
+       << "    funcs     Dump a list with all the parsed functions.\n"
+       << "    types     Dump a list with all the parsed types plus built-ins.\n"
+       << "    gc        Dump the list of alive CG objects at the end of a program.\n"
+       << "    intrcode  Dump the intermediate code generated during compilation.\n"
+       << "    bytecode  Dump the final VM bytecode.\n"
+       << "    globdata  Dump the global program memory.\n"
+       << "\n";
+}
 
-using SmallRuntimeObjectPool = Pool<RtObjMemoryBlobSmall, MOON_RT_OBJECT_POOL_GRANULARITY>;
-using BigRuntimeObjectPool   = Pool<RtObjMemoryBlobBig,   MOON_RT_OBJECT_POOL_GRANULARITY>;
+static CmdLineFlags scanCmdLineFlags(const int argc, const char * argv[])
+{
+    CmdLineFlags flags;
 
-// ================================================================================================
+    // Skip the first entry (prog name).
+    for (int i = 1; i < argc; ++i)
+    {
+        if (argv[i][0] != '-')
+        {
+            continue;
+        }
+
+        if (std::strcmp(argv[i], "-C") == 0)
+        {
+            flags.parse   = true;
+            flags.compile = true;
+            flags.run     = false;
+        }
+        else if (std::strcmp(argv[i], "-P") == 0)
+        {
+            flags.parse   = true;
+            flags.compile = false;
+            flags.run     = false;
+        }
+        else if (std::strcmp(argv[i], "-D") == 0)
+        {
+            flags.debug = true;
+        }
+        else if (std::strcmp(argv[i], "-W") == 0)
+        {
+            flags.warnings = true;
+        }
+        else if (std::strcmp(argv[i], "-V") == 0)
+        {
+            flags.verbose = true;
+        }
+        else if (std::strncmp(argv[i], "-dump", 5) == 0)
+        {
+            const char * what = argv[i] + 5;
+            if (*what != '=')
+            {
+                logStream() << "invalid command line argument: expected '=' after '-dump' flag\n";
+                continue;
+            }
+            ++what;
+
+            if (std::strcmp(what, "symbols") == 0)
+            {
+                flags.dumpSymbols = true;
+            }
+            else if (std::strcmp(what, "syntax") == 0)
+            {
+                flags.dumpSyntax = true;
+            }
+            else if (std::strcmp(what, "funcs") == 0)
+            {
+                flags.dumpFuncs = true;
+            }
+            else if (std::strcmp(what, "types") == 0)
+            {
+                flags.dumpTypes = true;
+            }
+            else if (std::strcmp(what, "gc") == 0)
+            {
+                flags.dumpGCObjs = true;
+            }
+            else if (std::strcmp(what, "intrcode") == 0)
+            {
+                flags.dumpIntermediateCode = true;
+            }
+            else if (std::strcmp(what, "bytecode") == 0)
+            {
+                flags.dumpVMBytecode = true;
+            }
+            else if (std::strcmp(what, "globdata") == 0)
+            {
+                flags.dumpGlobalData = true;
+            }
+            else
+            {
+                if (*what != '\0')
+                {
+                    logStream() << "unknown '-dump=' flag: " << what << "\n";
+                }
+            }
+        }
+    }
+
+    return flags;
+}
+
+static void vPrint(const CmdLineFlags & flags, const std::string & message)
+{
+    if (flags.verbose)
+    {
+        logStream() << message << "\n";
+    }
+}
 
 int main(const int argc, const char * argv[])
 {
-    moon::VM       vm;       // Executes the bytecode generated by a Compiler.
-    moon::Compiler compiler; // Parses scripts and generates VM bytecode.
+    if (argc <= 1) // Just the program name, apparently.
+    {
+        printUsage(argv[0], logStream());
+        return EXIT_FAILURE;
+    }
 
-    std::cout << "sizeof(RtObjMemoryBlobSmall) = " << sizeof(RtObjMemoryBlobSmall) << "\n";
-    std::cout << "sizeof(RtObjMemoryBlobBig)   = " << sizeof(RtObjMemoryBlobBig) << "\n";
+    const std::string scriptFile = argv[1];
+    const CmdLineFlags flags     = scanCmdLineFlags(argc, argv);
+
+    if (flags.verbose)
+    {
+        flags.print(logStream());
+    }
+
+    Compiler compiler; // Script parsing and bytecode generation.
+    VM       vm;       // Executes the bytecode generation by a Compiler.
 
     try
     {
-        if (argc > 1)
+        compiler.debugMode      = flags.debug;
+        compiler.enableWarnings = flags.warnings;
+
+        // Parse & compile:
+        if (flags.parse)
         {
-            compiler.parseScript(&vm, argv[1]);
+            vPrint(flags, "Moon: Parsing script \"" + scriptFile + "\"...");
+            compiler.parseScript(&vm, scriptFile);
         }
-        else
+        if (flags.compile)
         {
-            compiler.parseScript(&vm, "test.ml");
-        }
-
-        logStream() << compiler.symTable << "\n";
-        logStream() << compiler.syntTree << "\n";
-        logStream() << vm.functions << "\n";
-
-        compiler.compile(&vm);
-        logStream() << compiler << "\n";
-        logStream() << vm.code << "\n";
-
-        vm.execute();
-
-        //vm.execute(11, 8);
-        //logStream() << "PC=" << vm.getProgramCounter() << "\n";
-
-// cpp_call.ml
-#if 0
-        logStream() << "FIRST RUN:\n";
-        vm.execute();
-
-        Variant retVal;
-        Variant arg0, arg1, arg2;
-
-        logStream() << "\nCALLING:\n\n";
-
-        // Void function that returns void:
-        {
-            retVal = vm.call("script_func0");
-            MOON_ASSERT(retVal.isNull());
+            vPrint(flags, "Moon: Compiling...");
+            compiler.compile(&vm);
         }
 
-        // Function taking 1 argument:
+        // Debug printing:
+        if (flags.dumpSyntax)
         {
-            arg0.type = Variant::Type::Integer;
-            arg0.value.asInteger = 1337;
-
-            retVal = vm.call("script_func1", { arg0 });
-            MOON_ASSERT(retVal.type == Variant::Type::Integer && retVal.value.asInteger == 321);
+            logStream() << compiler.syntTree << "\n";
+        }
+        if (flags.dumpSymbols)
+        {
+            logStream() << compiler.symTable << "\n";
+        }
+        if (flags.dumpTypes)
+        {
+            logStream() << vm.types << "\n";
+        }
+        if (flags.dumpFuncs)
+        {
+            logStream() << vm.functions << "\n";
+        }
+        if (flags.dumpIntermediateCode)
+        {
+            logStream() << compiler << "\n";
+        }
+        if (flags.dumpVMBytecode)
+        {
+            logStream() << vm.code << "\n";
+        }
+        if (flags.dumpGlobalData)
+        {
+            logStream() << vm.data << "\n";
         }
 
-        // Function taking 2 arguments:
+        // Exec:
+        if (flags.run)
         {
-            arg0.type = Variant::Type::Integer;
-            arg0.value.asInteger = 42;
-
-            arg1.type = Variant::Type::Float;
-            arg1.value.asFloat = 2.7;
-
-            retVal = vm.call("script_func2", { arg0, arg1 });
-            MOON_ASSERT(retVal.type == Variant::Type::Float && retVal.value.asFloat == -1.5);
+            vPrint(flags, "Moon: Running script program...");
+            vm.execute();
         }
 
-        // Function taking 3 arguments:
+        // Garbage Collector dump:
+        if (flags.dumpGCObjs)
         {
-            arg0.type = Variant::Type::Integer;
-            arg0.value.asInteger = 33;
-
-            arg1.type = Variant::Type::Float;
-            arg1.value.asFloat = -0.5;
-
-            arg2.type = Variant::Type::Str;
-            const char * s = "hello from C++";
-            arg2.value.asString = Str::newFromString(vm, s, std::strlen(s), true);
-
-            retVal = vm.call("script_func3", { arg0, arg1, arg2 });
-            MOON_ASSERT(retVal.type == Variant::Type::Str && std::strcmp("testing, 123", retVal.value.asString->c_str()) == 0);
+            logStream() << vm.gc << "\n";
         }
 
-        // Varargs function:
-        {
-            arg0.type = Variant::Type::Integer;
-            arg0.value.asInteger = 666;
-
-            arg1.type = Variant::Type::Range;
-            arg1.value.asRange.begin = -5;
-            arg1.value.asRange.end   = 10;
-
-            arg2.type = Variant::Type::Str;
-            const char * s = "hello from C++, again";
-            arg2.value.asString = Str::newFromString(vm, s, std::strlen(s), true);
-
-            retVal = vm.call("script_func_varargs", { arg0, arg1, arg2 });
-            MOON_ASSERT(retVal.isNull()); // Returns nothing.
-        }
-
-        // Call a native function by name:
-        {
-            arg0.type = Variant::Type::Str;
-            const char * s = "native function called from C++; ";
-            arg0.value.asString = Str::newFromString(vm, s, std::strlen(s), true);
-
-            arg1.type = Variant::Type::Float;
-            arg1.value.asFloat = 2.345;
-
-            retVal = vm.call("println", { arg0, arg1 });
-            MOON_ASSERT(retVal.isNull());
-        }
-
-#endif // 0
-
-// globals.ml
-#if 0
-        // init the globals
-        logStream() << "FIRST RUN:\n";
-        vm.execute();
-
-        logStream() << "CALLING:\n";
-        vm.call("print_globals");
-
-        //logStream() << "RE-RUN:\n";
-        //vm.execute();
-
-        //*
-        //logStream() << "\nB4:\n";
-        //printDataVector(vm.data, logStream());
-        //vm.globals.print(logStream());
-
-        Variant var;
-
-        var.type = Variant::Type::Integer;
-        var.value.asInteger = 1337;
-        MOON_ASSERT(vm.globals.setGlobal("an_integer", var) == true);
-
-        var.type = Variant::Type::Float;
-        var.value.asFloat = 3.141592;
-        MOON_ASSERT(vm.globals.setGlobal("a_float", var) == true);
-
-        var.type = Variant::Type::Range;
-        var.value.asRange.begin = -5;
-        var.value.asRange.end   = +5;
-        MOON_ASSERT(vm.globals.setGlobal("a_range", var) == true);
-
-        var.type = Variant::Type::Str;
-        const char * s = "hello from C++";
-        var.value.asString = Str::newFromString(vm, s, std::strlen(s), true);
-        MOON_ASSERT(vm.globals.setGlobal("a_string", var) == true);
-
-        //logStream() << "\nAFTER:\n";
-        //printDataVector(vm.data, logStream());
-        //vm.globals.print(logStream());
-        //*/
-
-        //vm.globals.print(logStream());
-        //logStream() << vm << "\n";
-
-        logStream() << "CALLING:\n";
-        vm.call("print_globals");
-#endif // 0
-
-        /*
-        logStream() << "----------------------------------\n";
-        logStream() << "GC OBJECTS:\n\n";
-        for (const Object * obj = vm.gc.getGCListHead(); obj != nullptr; obj = obj->getGCLink())
-        {
-            obj->print(logStream());
-            logStream() << "\n";
-        }
-        logStream() << "----------------------------------\n";
-        //*/
+        vPrint(flags, "Moon: Finished running script program.");
     }
-    catch (const moon::BaseException & e)
+    catch (...)
     {
         #if MOON_SAVE_SCRIPT_CALLSTACK
-        vm.printStackTrace(logStream());
+        if (!vm.callstack.isEmpty())
+        {
+            vm.printStackTrace(logStream());
+        }
         #endif // MOON_SAVE_SCRIPT_CALLSTACK
+
+        logStream() << color::red() << "terminating with error(s)...\n" << color::restore();
+        return EXIT_FAILURE;
     }
 }

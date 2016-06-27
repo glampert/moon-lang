@@ -1,7 +1,7 @@
 
 #------------------------------------------------
 
-# Available build rules/targets:
+# === Available build rules/targets ===
 #
 # - all (default):
 #  $ make
@@ -23,12 +23,24 @@
 #  This will not generate an executable or lib,
 #  so the linking stage will fail.
 #
-# - ASan:
+# - asan:
 #  $ make asan
 #  Build in debug mode and with Clang's address sanitizer.
 #  See: http://clang.llvm.org/docs/AddressSanitizer.html
 #
-# Other global flags:
+# - test:
+#  $ make test
+#  Build the static lib, CLI and test applications in debug mode.
+#
+#
+# === Output ===
+#
+# - moon executable: the Command Line Interpreter (CLI).
+# - libMoon.a: static library with the compiler and VM.
+# - test_XYZ: each of the test executables.
+#
+#
+# === Other global flags ===
 #
 # - Setting the 'VERBOSE' variable causes the whole
 #   commands to be printed. If this is not set,
@@ -45,7 +57,9 @@ STATIC_LIB      = libMoon.a
 GENERATED_DIR   = generated
 OBJ_DIR         = obj
 SOURCE_DIR      = source/lib
-CLI_SRC         = source/cli/main.cpp
+
+CLI_SRC         = $(wildcard source/cli/*.cpp)
+TEST_SRC        = $(wildcard tests/cpp/*.cpp)
 
 MKDIR_CMD       = mkdir -p
 AR_CMD          = ar rcs
@@ -59,6 +73,7 @@ LEX_GENERATED   = $(addprefix $(GENERATED_DIR)/, $(notdir $(patsubst %.lxx, %.cp
 BISON_GENERATED = $(addprefix $(GENERATED_DIR)/, $(notdir $(patsubst %.yxx, %.cpp, $(BISON_SRC))))
 SRC_FILES       = $(BISON_GENERATED) $(LEX_GENERATED) $(CPP_SRC)
 OBJ_FILES       = $(addprefix $(OBJ_DIR)/, $(patsubst %.cpp, %.o, $(SRC_FILES)))
+TEST_OBJ_FILES  = $(addprefix $(OBJ_DIR)/, $(patsubst %.cpp, %.o, $(TEST_SRC)))
 
 # Define 'VERBOSE' to get the full console output.
 # Otherwise print a short message for each rule.
@@ -143,6 +158,16 @@ asan: CXXFLAGS += $(DEBUG_FLAGS) $(ASAN_FLAGS)
 asan: common_rule
 	@echo "Note: Built with address sanitizer enabled and debug settings."
 
+# Static lib + CLI + tests, in debug mode.
+test: CXXFLAGS += $(DEBUG_FLAGS)
+test: common_rule $(TEST_OBJ_FILES)
+
+$(TEST_OBJ_FILES): $(OBJ_DIR)/%.o: %.cpp
+	@echo "-> Building test" $< "..."
+	$(QUIET) $(MKDIR_CMD) $(dir $@)
+	$(QUIET) $(CXX) $(CXXFLAGS) -c $< -o $@
+	$(QUIET) $(CXX) $(CXXFLAGS) $@ -o $(addprefix test_, $(basename $(@F))) $(STATIC_LIB)
+
 #
 # Base rules shared by all the above:
 #
@@ -154,7 +179,7 @@ $(STATIC_LIB): $(OBJ_FILES)
 	@echo "-> Creating static library ..."
 	$(QUIET) $(AR_CMD) $@ $^
 
-$(CLI_BIN): $(STATIC_LIB)
+$(CLI_BIN): $(STATIC_LIB) $(CLI_SRC)
 	@echo "-> Linking executable ..."
 	$(QUIET) $(CXX) $(CXXFLAGS) $(CLI_SRC) -o $@ $(STATIC_LIB)
 
@@ -189,6 +214,7 @@ $(GENERATED_DIR)/%.cpp: $(SOURCE_DIR)/%.lxx
 clean:
 	@echo "-> Cleaning ..."
 	$(QUIET) rm -f $(CLI_BIN) $(STATIC_LIB) $(LEX_GENERATED) $(BISON_GENERATED)
+	$(QUIET) rm -f $(addprefix test_, $(basename $(notdir $(TEST_SRC))))
 	$(QUIET) rm -f $(GENERATED_DIR)/*.hh $(GENERATED_DIR)/*.hpp
 	$(QUIET) rm -rf $(OBJ_DIR) *.dSYM
 

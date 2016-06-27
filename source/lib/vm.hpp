@@ -26,6 +26,28 @@ using CodeVector = std::vector<Instruction>;
 // class GC:
 // ========================================================
 
+//TODO
+/*
+#ifndef MOON_RT_OBJECT_POOL_GRANULARITY
+    #define MOON_RT_OBJECT_POOL_GRANULARITY 256
+#endif // MOON_RT_OBJECT_POOL_GRANULARITY
+
+template<typename... Objects>
+struct RtObjMemoryBlobImpl final
+{
+    static constexpr UInt32 LargestSize  = ct::maxOfN(sizeof(Objects)...);
+    static constexpr UInt32 LargestAlign = ct::maxOfN(alignof(Objects)...);
+
+    alignas(LargestAlign) UInt8 blob[LargestSize];
+};
+
+using RtObjMemoryBlobSmall   = RtObjMemoryBlobImpl<Object, Struct, Enum>;
+using RtObjMemoryBlobBig     = RtObjMemoryBlobImpl<Str, Array>;
+
+using SmallRuntimeObjectPool = Pool<RtObjMemoryBlobSmall, MOON_RT_OBJECT_POOL_GRANULARITY>;
+using BigRuntimeObjectPool   = Pool<RtObjMemoryBlobBig,   MOON_RT_OBJECT_POOL_GRANULARITY>;
+*/
+
 class GC final
 {
 public:
@@ -57,10 +79,32 @@ public:
 
     const Object * getGCListHead() const noexcept { return gcListHead; }
 
+    void print(std::ostream & os) const
+    {
+        //TODO
+        (void)os;
+        /*
+        logStream() << "----------------------------------\n";
+        logStream() << "GC OBJECTS:\n\n";
+        for (const Object * obj = vm.gc.getGCListHead(); obj != nullptr; obj = obj->getGCLink())
+        {
+            obj->print(logStream());
+            logStream() << "\n";
+        }
+        logStream() << "----------------------------------\n";
+        //*/
+    }
+
 private:
 
     Object * gcListHead = nullptr;
 };
+
+inline std::ostream & operator << (std::ostream & os, const GC & gc)
+{
+    gc.print(os);
+    return os;
+}
 
 // ========================================================
 // class GlobalsTable:

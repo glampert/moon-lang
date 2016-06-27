@@ -131,6 +131,8 @@ public:
     IntermediateInstr * globCodeListHead = nullptr;
     IntermediateInstr * funcCodeListHead = nullptr;
     FileIOCallbacks   * fileIOCallbacks  = nullptr;
+    bool                debugMode        = true;
+    bool                enableWarnings   = true;
 };
 
 inline std::ostream & operator << (std::ostream & os, const Compiler & compiler)

@@ -2074,7 +2074,7 @@ void Compiler::parseScriptImport(VM * vm, const std::string & filename, SyntaxTr
 
 void Compiler::parseScript(VM * vm, std::istream * source, const std::string & filename, SyntaxTreeNode ** outTreeRoot)
 {
-    MOON_ASSERT(vm != nullptr);
+    MOON_ASSERT(vm     != nullptr);
     MOON_ASSERT(source != nullptr);
 
     ParseContext parseCtx;
@@ -2082,16 +2082,18 @@ void Compiler::parseScript(VM * vm, std::istream * source, const std::string & f
     Lexer        lexer{ parseCtx, source };
     Parser       parser{ parseCtx };
 
-    parseCtx.lexer       = &lexer;
-    parseCtx.parser      = &parser;
-    parseCtx.symTable    = &symTable;
-    parseCtx.syntTree    = &syntTree;
-    parseCtx.varInfo     = &varInfo;
-    parseCtx.vm          = vm;
-    parseCtx.compiler    = this;
-    parseCtx.importTable = &importTable;
-    parseCtx.currText    = &currText;
-    parseCtx.srcFile     = &filename;
+    parseCtx.lexer          = &lexer;
+    parseCtx.parser         = &parser;
+    parseCtx.symTable       = &symTable;
+    parseCtx.syntTree       = &syntTree;
+    parseCtx.varInfo        = &varInfo;
+    parseCtx.vm             = vm;
+    parseCtx.compiler       = this;
+    parseCtx.importTable    = &importTable;
+    parseCtx.currText       = &currText;
+    parseCtx.srcFile        = &filename;
+    parseCtx.debugMode      = debugMode;
+    parseCtx.enableWarnings = enableWarnings;
 
     const bool finishedOK = (parser.parse() == 0);
     if (finishedOK)
@@ -2115,10 +2117,6 @@ void Compiler::parseScript(VM * vm, std::istream * source, const std::string & f
 void Compiler::compile(VM * vm)
 {
     MOON_ASSERT(vm != nullptr);
-
-    #if MOON_DEBUG
-    logStream() << "Moon: Compiling a script...\n";
-    #endif // MOON_DEBUG
 
     CodeGenContext codeGen;
     codeGen.vm = vm;
