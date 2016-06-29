@@ -46,7 +46,7 @@ using BigRuntimeObjectPool   = Pool<RtObjMemoryBlobBig,   MOON_RT_OBJECT_POOL_GR
 // class GC:
 // ========================================================
 
-// Simple mark-and-seep style Garbage Collector.
+// Simple mark-and-sweep style Garbage Collector.
 //
 // The GC is only run at the end of script functions
 // if there's a minimum number of alive objects, so it
@@ -57,6 +57,7 @@ using BigRuntimeObjectPool   = Pool<RtObjMemoryBlobBig,   MOON_RT_OBJECT_POOL_GR
 //
 // You can manually run the GC in the C++ code by calling
 // GC::collectGarbage() and via script with gc_collect().
+// Script code can also check for GC need with gc_need_to_collect().
 //
 // All objects are always reclaimed when the GC instance dies.
 class GC final
@@ -150,6 +151,9 @@ inline std::ostream & operator << (std::ostream & os, const GC & gc)
 // class GlobalsTable:
 // ========================================================
 
+// The Globals Table allows accessing a script global variable
+// by its name, as declared in the script source code. You can
+// disable this feature to save some memory if this is not needed.
 #if MOON_GLOBALS_TABLE
 class GlobalsTable final
     : public Registry<UInt32>
@@ -253,6 +257,7 @@ inline std::ostream & operator << (std::ostream & os, const GlobalsTable & globa
 // class VM:
 // ========================================================
 
+// The Virtual Machine represents a whole script program.
 class VM final
 {
 public:

@@ -31,6 +31,9 @@ class  Str;
 // Runtime Variant (the common data type):
 // ========================================================
 
+// Every variable in a script is backed by one of this,
+// including member variables. This is a traditional
+// "tagged union" approach.
 struct Variant final
 {
     enum class Type : UInt8
@@ -92,7 +95,7 @@ struct Variant final
     }
 
     //
-    // Miscellaneous helpers:
+    // Accessors:
     //
 
     const void * getAsVoidPointer() const

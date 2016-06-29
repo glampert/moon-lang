@@ -70,6 +70,19 @@ public:
 // class Compiler:
 // ========================================================
 
+// The Compiler performs parsing and VM bytecode generation.
+// We use a three stage compilation process. First, a syntax tree
+// is built from the source code, then a list of Intermediate
+// Instructions is built from the tree. Finally, the Intermediate
+// Instructions are compiled into runnable VM bytecode.
+//
+// Each processed script will spin up a Lexer and a Parser instance.
+// You can parse any number of scripts before calling compile()
+// to generation the final VM bytecode program.
+//
+// Providing a set of custom IO callbacks allows for different
+// script file lookup strategies, such as loading from compressed
+// directories and archives.
 class Compiler final
 {
 public:
