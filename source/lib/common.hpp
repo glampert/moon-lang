@@ -25,8 +25,16 @@
 #include "output.hpp"
 
 #ifndef INC_LEXER
-    // This header file is a built-in that comes bundled with the Flex install.
-    #include <FlexLexer.h>
+    #ifdef MOON_USE_LOCAL_FLEX_LEXER_H
+        // You can fall back to the local built-in copy of FlexLexer.h,
+        // but this will not work if there's a version mismatch between
+        // the generated code and the local copy. Only use this if you're
+        // not generating the Lexer source yourself.
+        #include "generated/FlexLexerLocal.h"
+    #else // !MOON_USE_LOCAL_FLEX_LEXER_H
+        // This header file is a built-in that comes bundled with the Flex install.
+        #include <FlexLexer.h>
+    #endif // MOON_USE_LOCAL_FLEX_LEXER_H
 #endif // INC_LEXER
 
 namespace moon
