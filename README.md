@@ -30,7 +30,7 @@ You might need to download and build Bison yourself if a recent binary image is 
 **Building on Windows** is currently not officially supported. The source code should be fully portable,
 so all that should be required for a Windows build is to create a Visual Studio project. I was not able to
 find a binary distribution or even compilable source for the required Bison & Flex versions for Windows,
-so I have included the generated source files in the `generated/` dir. You'll be able to build on Windows
+so I have included the generated source files in the `generated/local/` dir. You'll be able to build on Windows
 without Bison & Flex, but you won't be able to generate new files if the parser or lexer are changed.
 
 ### Gallery
