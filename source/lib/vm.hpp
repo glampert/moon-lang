@@ -4,7 +4,7 @@
 // File: vm.hpp
 // Author: Guilherme R. Lampert
 // Created on: 06/07/15
-// Brief: The Virtual Machine class and Garbage Collector helper.
+// Brief: The Virtual Machine class and Garbage Collection helpers.
 // ================================================================================================
 
 #ifndef MOON_VM_HPP
@@ -23,31 +23,42 @@ using DataVector = std::vector<Variant>;
 using CodeVector = std::vector<Instruction>;
 
 // ========================================================
-// class GC:
+// Running object pools used by the GC:
 // ========================================================
-
-//TODO
-/*
-#ifndef MOON_RT_OBJECT_POOL_GRANULARITY
-    #define MOON_RT_OBJECT_POOL_GRANULARITY 256
-#endif // MOON_RT_OBJECT_POOL_GRANULARITY
 
 template<typename... Objects>
 struct RtObjMemoryBlobImpl final
 {
-    static constexpr UInt32 LargestSize  = ct::maxOfN(sizeof(Objects)...);
-    static constexpr UInt32 LargestAlign = ct::maxOfN(alignof(Objects)...);
+    static constexpr std::size_t Size  = ct::maxOfN(sizeof(Objects)...);
+    static constexpr std::size_t Align = ct::maxOfN(alignof(Objects)...);
 
-    alignas(LargestAlign) UInt8 blob[LargestSize];
+    alignas(Align) UInt8 blob[Size];
 };
 
+// NOTE: This has to be kept up-to-date if new runtime object types are added!
 using RtObjMemoryBlobSmall   = RtObjMemoryBlobImpl<Object, Struct, Enum>;
 using RtObjMemoryBlobBig     = RtObjMemoryBlobImpl<Str, Array>;
 
 using SmallRuntimeObjectPool = Pool<RtObjMemoryBlobSmall, MOON_RT_OBJECT_POOL_GRANULARITY>;
 using BigRuntimeObjectPool   = Pool<RtObjMemoryBlobBig,   MOON_RT_OBJECT_POOL_GRANULARITY>;
-*/
 
+// ========================================================
+// class GC:
+// ========================================================
+
+// Simple mark-and-seep style Garbage Collector.
+//
+// The GC is only run at the end of script functions
+// if there's a minimum number of alive objects, so it
+// does not interfere with the cost of every allocation.
+// It uses a pair of memory pools, one for small objects
+// (up to 64 bytes) and one for big objects (up to 128 bytes),
+// so allocation and deallocation costs are amortized constant.
+//
+// You can manually run the GC in the C++ code by calling
+// GC::collectGarbage() and via script with gc_collect().
+//
+// All objects are always reclaimed when the GC instance dies.
 class GC final
 {
 public:
@@ -61,47 +72,76 @@ public:
     template<typename T, typename... Args>
     T * alloc(Args&&... args)
     {
-        //TODO temp. we'll use a pool later on
-        T * newObj = (T*) ::operator new(sizeof(T));
+        T * newObj;
+        bool isSmall;
+
+        if (sizeof(T) <= smallObjPool.getObjectSize())
+        {
+            newObj  = (T *)smallObjPool.allocate();
+            isSmall = true;
+        }
+        else if (sizeof(T) <= bigObjPool.getObjectSize())
+        {
+            newObj  = (T *)bigObjPool.allocate();
+            isSmall = false;
+        }
+        else
+        {
+            MOON_RUNTIME_EXCEPTION("bad GC allocation size request!");
+        }
 
         ::new(newObj) T(std::forward<Args>(args)...);
-        linkObject(newObj);
+
+        newObj->isSmall = isSmall;
+        newObj->gcNext  = gcListHead;
+        gcListHead      = newObj;
+        ++gcAliveCount;
+
         return newObj;
     }
 
-    Object * linkObject(Object * obj)
+    void free(Object * obj)
     {
         MOON_ASSERT(obj != nullptr);
-        obj->gcNext = gcListHead;
-        gcListHead  = obj;
-        return obj;
-    }
 
-    const Object * getGCListHead() const noexcept { return gcListHead; }
+        const bool isSmall = obj->isSmall;
+        obj->~Object();
+        --gcAliveCount;
 
-    void print(std::ostream & os) const
-    {
-        //TODO
-        (void)os;
-        /*
-        logStream() << "----------------------------------\n";
-        logStream() << "GC OBJECTS:\n\n";
-        for (const Object * obj = vm.gc.getGCListHead(); obj != nullptr; obj = obj->getGCLink())
+        if (isSmall)
         {
-            obj->print(logStream());
-            logStream() << "\n";
+            smallObjPool.deallocate(obj);
         }
-        logStream() << "----------------------------------\n";
-        //*/
+        else
+        {
+            bigObjPool.deallocate(obj);
+        }
     }
+
+    void collectGarbage(VM & vm);
+    void print(std::ostream & os) const;
+
+    const Object * getGCListHead() const noexcept { return gcListHead;   }
+    int  getAliveObjectsCount()    const noexcept { return gcAliveCount; }
+    bool needToCollectGarbage()    const noexcept { return gcAliveCount >= gcMaxCount; }
 
 private:
 
-    Object * gcListHead = nullptr;
+    void markAll(VM & vm);
+    void sweep();
+
+    Object * gcListHead   = nullptr;
+    int      gcAliveCount = 0;  // # alive objects at the moment (linked in the above list).
+    int      gcMaxCount   = 16; // The number of objects required to trigger a garbage collection.
+
+    // Depending on the size of allocations, the best size-matching pool is used.
+    SmallRuntimeObjectPool smallObjPool; // <= 64  bytes
+    BigRuntimeObjectPool   bigObjPool;   // <= 128 bytes
 };
 
 inline std::ostream & operator << (std::ostream & os, const GC & gc)
 {
+    // Prints a list of alive GC objects.
     gc.print(os);
     return os;
 }

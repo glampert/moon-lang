@@ -47,6 +47,7 @@ int main()
         path + "enums.ml",
         path + "fibonacci.ml",
         path + "functions.ml",
+        path + "gc.ml",
         path + "globals.ml",
         path + "if-else.ml",
         path + "imports.ml",
@@ -56,7 +57,7 @@ int main()
         path + "structs.ml",
         path + "test-import-1.ml",
         path + "test-import-2.ml",
-        path + "unused-expr.ml"
+        path + "unused-expr.ml",
     };
 
     for (const auto & s : scripts)

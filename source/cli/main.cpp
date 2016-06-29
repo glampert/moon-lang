@@ -12,21 +12,6 @@
 
 using namespace moon;
 
-/*
-=================================================
-TODO LIST:
-
-- Should test this on a tool like Valgrind or Clang Mem Sanitizer to check for possible leaks!!!
-
-- Add the generated files to the repo, in case trying to compile without bison&flex.
-
-- GC
-
-- Add small sample gallery to the README.
-
-=================================================
-*/
-
 struct CmdLineFlags final
 {
     // Interpreter flags:
@@ -249,10 +234,6 @@ int main(const int argc, const char * argv[])
         {
             logStream() << vm.code << "\n";
         }
-        if (flags.dumpGlobalData)
-        {
-            logStream() << vm.data << "\n";
-        }
 
         // Exec:
         if (flags.run)
@@ -261,7 +242,11 @@ int main(const int argc, const char * argv[])
             vm.execute();
         }
 
-        // Garbage Collector dump:
+        // Post execution memory dumps:
+        if (flags.dumpGlobalData)
+        {
+            logStream() << vm.data << "\n";
+        }
         if (flags.dumpGCObjs)
         {
             logStream() << vm.gc << "\n";

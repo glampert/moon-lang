@@ -413,6 +413,11 @@ static IntermediateInstr * emitIfThen(Compiler & compiler, CodeGenContext & code
         IntermediateInstr * noopEnd       = newInstruction(compiler, OpCode::NoOp);
         IntermediateInstr * jumpIfFalse   = newInstruction(compiler, OpCode::JmpIfFalse, noopEnd);
 
+        if (root->getChild(0)->nodeType == SyntaxTreeNode::Type::ExprFuncCall)
+        {
+            condition = linkInstructions(condition, newInstruction(compiler, OpCode::LoadRVR));
+        }
+
         // if-cond => jump-end-if-false => if-body => noop[jump-target/end]
         return linkInstructions(condition, jumpIfFalse, thenStatement, noopEnd);
     }
@@ -422,6 +427,11 @@ static IntermediateInstr * emitIfThen(Compiler & compiler, CodeGenContext & code
         IntermediateInstr * condition   = traverseTreeRecursive(compiler, codeGen, root->getChild(0));
         IntermediateInstr * noopEnd     = newInstruction(compiler, OpCode::NoOp);
         IntermediateInstr * jumpIfFalse = newInstruction(compiler, OpCode::JmpIfFalse, noopEnd);
+
+        if (root->getChild(0)->nodeType == SyntaxTreeNode::Type::ExprFuncCall)
+        {
+            condition = linkInstructions(condition, newInstruction(compiler, OpCode::LoadRVR));
+        }
 
         // if-cond => jump-end-if-false => noop[jump-target/end]
         return linkInstructions(condition, jumpIfFalse, noopEnd);
@@ -437,6 +447,11 @@ static IntermediateInstr * emitIfThenElse(Compiler & compiler, CodeGenContext & 
     // Must have a condition part:
     EXPECT_CHILD_AT_INDEX(root, 0);
     IntermediateInstr * condition = traverseTreeRecursive(compiler, codeGen, root->getChild(0));
+
+    if (root->getChild(0)->nodeType == SyntaxTreeNode::Type::ExprFuncCall)
+    {
+        condition = linkInstructions(condition, newInstruction(compiler, OpCode::LoadRVR));
+    }
 
     // If the then-statement body and else-statement body are not empty, resolve them:
     IntermediateInstr * thenStatement = (root->getChild(1) ? traverseTreeRecursive(compiler, codeGen, root->getChild(1)) : nullptr);
@@ -490,6 +505,11 @@ static IntermediateInstr * emitIfThenElseIf(Compiler & compiler, CodeGenContext 
     // Must have a condition part:
     EXPECT_CHILD_AT_INDEX(root, 0);
     IntermediateInstr * condition = traverseTreeRecursive(compiler, codeGen, root->getChild(0));
+
+    if (root->getChild(0)->nodeType == SyntaxTreeNode::Type::ExprFuncCall)
+    {
+        condition = linkInstructions(condition, newInstruction(compiler, OpCode::LoadRVR));
+    }
 
     // If the then-statement body and elseif body are not empty, resolve them:
     IntermediateInstr * thenStatement = (root->getChild(1) ? traverseTreeRecursive(compiler, codeGen, root->getChild(1)) : nullptr);

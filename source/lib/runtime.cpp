@@ -462,16 +462,17 @@ void TypeTable::print(std::ostream & os) const
 // ========================================================
 
 #if MOON_PRINT_RT_OBJECT_FLAGS
-static void appendObjFlags(const Object::BitFlags flags, std::string & strOut)
+static void appendObjFlags(const Object & obj, std::string & strOut)
 {
     strOut += "  flags => '";
-    if (flags.isAlive)       { strOut += "A"; }
-    else                     { strOut += "D"; }
-    if (flags.isPersistent)  { strOut += "P"; }
-    if (flags.isTemplateObj) { strOut += "T"; }
-    if (flags.isBuiltInType) { strOut += "B"; }
-    if (flags.isStructType)  { strOut += "S"; }
-    if (flags.isEnumType)    { strOut += "E"; }
+    if (obj.isAlive)       { strOut += "A"; }
+    else                   { strOut += "D"; }
+    if (obj.isPersistent)  { strOut += "P"; }
+    if (obj.isTemplateObj) { strOut += "T"; }
+    if (obj.isBuiltInType) { strOut += "B"; }
+    if (obj.isStructType)  { strOut += "S"; }
+    if (obj.isEnumType)    { strOut += "E"; }
+    if (obj.isReachable)   { strOut += "R"; }
     strOut += "',\n";
 }
 #endif // MOON_PRINT_RT_OBJECT_FLAGS
@@ -481,15 +482,17 @@ static void appendObjFlags(const Object::BitFlags flags, std::string & strOut)
 // ========================================================
 
 Object::Object(const TypeId * tid) noexcept
-    : typeId { tid     }
-    , gcNext { nullptr }
+    : isAlive       { true    }
+    , isPersistent  { false   }
+    , isTemplateObj { false   }
+    , isBuiltInType { false   }
+    , isStructType  { false   }
+    , isEnumType    { false   }
+    , isReachable   { false   }
+    , isSmall       { false   }
+    , typeId        { tid     }
+    , gcNext        { nullptr }
 {
-    flags.isAlive       = true;
-    flags.isPersistent  = false;
-    flags.isTemplateObj = false;
-    flags.isBuiltInType = false;
-    flags.isStructType  = false;
-    flags.isEnumType    = false;
 }
 
 Object::~Object()
@@ -597,7 +600,7 @@ std::string Object::getStringRepresentation() const
     }
 
     #if MOON_PRINT_RT_OBJECT_FLAGS
-    appendObjFlags(flags, finalStr);
+    appendObjFlags(*this, finalStr);
     #endif // MOON_PRINT_RT_OBJECT_FLAGS
 
     finalStr += "}\n";
@@ -677,12 +680,16 @@ Object * newRuntimeObject(VM & vm, const TypeId * tid, const Stack::Slice constr
     return inst;
 }
 
-void freeRuntimeObject(VM & vm, Object * obj)
+void freeRuntimeObject(VM &, Object * obj)
 {
-    (void)vm;
-    obj->flags.isAlive = false;
-    //TODO actually return it to the CG
-    //remember to call the object destructor!
+    if (obj == nullptr)
+    {
+        return;
+    }
+
+    // Not actually freed now. Next run of the GC will reclaim it.
+    obj->isAlive     = false;
+    obj->isReachable = false;
 }
 
 // ========================================================
@@ -692,14 +699,14 @@ void freeRuntimeObject(VM & vm, Object * obj)
 Object * Struct::newInstance(VM & vm, const TypeId * tid)
 {
     auto obj = vm.gc.alloc<Struct>(tid);
-    obj->flags.isStructType = true;
+    obj->isStructType = true;
     return obj;
 }
 
 Object * Enum::newInstance(VM & vm, const TypeId * tid)
 {
     auto obj = vm.gc.alloc<Enum>(tid);
-    obj->flags.isEnumType = true;
+    obj->isEnumType = true;
     return obj;
 }
 
@@ -710,7 +717,7 @@ Object * Enum::newInstance(VM & vm, const TypeId * tid)
 Object * Str::newInstance(VM & vm, const TypeId * tid)
 {
     auto obj = vm.gc.alloc<Str>(tid);
-    obj->flags.isBuiltInType = true;
+    obj->isBuiltInType = true;
     return obj;
 }
 
@@ -865,7 +872,7 @@ std::string Str::getStringRepresentation() const
     finalStr += "  chars => \"" + unescapeString(c_str()) + "\",\n";
 
     #if MOON_PRINT_RT_OBJECT_FLAGS
-    appendObjFlags(flags, finalStr);
+    appendObjFlags(*this, finalStr);
     #endif // MOON_PRINT_RT_OBJECT_FLAGS
 
     finalStr += "}\n";
@@ -1034,7 +1041,7 @@ static inline void unpackVar(UInt8 * ptr, const UInt32 dataSize, const Variant s
 Object * Array::newInstance(VM & vm, const TypeId * tid)
 {
     auto obj = vm.gc.alloc<Array>(tid);
-    obj->flags.isBuiltInType = true;
+    obj->isBuiltInType = true;
     return obj;
 }
 
@@ -1283,7 +1290,7 @@ std::string Array::getStringRepresentation() const
     finalStr += "  mem_bytes => " + toString(capBytes) + ",\n";
 
     #if MOON_PRINT_RT_OBJECT_FLAGS
-    appendObjFlags(flags, finalStr);
+    appendObjFlags(*this, finalStr);
     #endif // MOON_PRINT_RT_OBJECT_FLAGS
 
     finalStr += "}\n";

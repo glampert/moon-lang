@@ -327,6 +327,14 @@ static void opFuncEnd(VM & vm, const UInt32 operandIndex)
     #if MOON_SAVE_SCRIPT_CALLSTACK
     vm.callstack.pop();
     #endif // MOON_SAVE_SCRIPT_CALLSTACK
+
+    // Proactive GC tries to reclaim memory at the end of every function.
+    // This approach keeps the allocation cost more balanced, since there's
+    // not risk a GC run will be triggered when allocating a new object.
+    if (vm.gc.needToCollectGarbage())
+    {
+        vm.gc.collectGarbage(vm);
+    }
 }
 
 static void opNewVar(VM & vm, const UInt32 operandIndex)
@@ -380,7 +388,7 @@ static void opEnumDynInit(VM & vm, const UInt32 operandIndex)
     }
 
     const TypeId * tid = tidVar.getAsTypeId();
-    if (tid->templateObject == nullptr || !tid->templateObject->flags.isEnumType)
+    if (tid->templateObject == nullptr || !tid->templateObject->isEnumType)
     {
         MOON_RUNTIME_EXCEPTION("opEnumDynInit: invalid enum TypeId!");
     }
@@ -865,12 +873,160 @@ void VM::printStackTrace(std::ostream & os) const
     int index = 0;
     auto s = callstack.slice(0, callstack.getCurrSize());
 
-    for (auto var = s.first(); var != nullptr; var = s.next(), ++index)
+    for (const Variant * var = s.first(); var != nullptr; var = s.next(), ++index)
     {
         os << std::setw(3) << index << ": " << var->getAsFunction()->name->chars << "\n";
     }
 }
 #endif // MOON_SAVE_SCRIPT_CALLSTACK
+
+// ========================================================
+// GC class methods and helpers:
+// ========================================================
+
+static void markVar(const Variant var);
+static void markObject(Object * obj);
+static void markArray(Array * array);
+
+static void markVar(const Variant var)
+{
+    switch (var.type)
+    {
+    case Variant::Type::Str    : markObject(var.getAsString()); break;
+    case Variant::Type::Object : markObject(var.getAsObject()); break;
+    case Variant::Type::Array  : markArray(var.getAsArray());   break;
+    case Variant::Type::Any    : markVar(var.unwrapAny());      break;
+    default : break; // Not a GC object.
+    } // switch (var.type)
+}
+
+static void markObject(Object * obj)
+{
+    if (obj == nullptr)
+    {
+        return;
+    }
+
+    // If already marked, we're done. Check this first
+    // to avoid recursing on cycles in the object graph.
+    if (obj->isReachable)
+    {
+        return;
+    }
+    obj->isReachable = true;
+
+    // Member sub-objects must also be marked:
+    const int memberCount = obj->getMemberCount();
+    for (int m = 0; m < memberCount; ++m)
+    {
+        Object::Member member = obj->getMemberAt(m);
+        markVar(member.data);
+    }
+}
+
+static void markArray(Array * array)
+{
+    if (array == nullptr)
+    {
+        return;
+    }
+    if (array->isReachable)
+    {
+        return;
+    }
+    array->isReachable = true;
+
+    // Arrays must mark each index if the array is storing GC'd objects.
+    const Variant::Type type = array->getDataType();
+    if (type == Variant::Type::Str    ||
+        type == Variant::Type::Object ||
+        type == Variant::Type::Array  ||
+        type == Variant::Type::Any)
+    {
+        const int count = array->getArrayLength();
+        for (int i = 0; i < count; ++i)
+        {
+            markVar(array->getIndex(i));
+        }
+    }
+}
+
+void GC::markAll(VM & vm)
+{
+    // Globals are always reachable.
+    for (Variant var : vm.data)
+    {
+        markVar(var);
+    }
+
+    // Mark the stack variables:
+    if (!vm.stack.isEmpty())
+    {
+        auto s = vm.stack.slice(0, vm.stack.getCurrSize());
+        for (const Variant * var = s.first(); var != nullptr; var = s.next())
+        {
+            markVar(*var);
+        }
+    }
+    if (!vm.locals.isEmpty())
+    {
+        auto s = vm.locals.slice(0, vm.locals.getCurrSize());
+        for (const Variant * var = s.first(); var != nullptr; var = s.next())
+        {
+            markVar(*var);
+        }
+    }
+}
+
+void GC::sweep()
+{
+    Object ** object = &gcListHead;
+    while (*object)
+    {
+        if (!(*object)->isReachable && !(*object)->isPersistent)
+        {
+            // This object wasn't reached, so remove it from the list and free it.
+            Object * unreachable = *object;
+            *object = unreachable->gcNext;
+            GC::free(unreachable);
+        }
+        else
+        {
+            // This object was reached, so unmark it (for the next GC) and move on to the next.
+            (*object)->isReachable = false;
+            object = &(*object)->gcNext;
+        }
+    }
+}
+
+void GC::collectGarbage(VM & vm)
+{
+    #if MOON_DEBUG
+    const int savedNumAlive = gcAliveCount;
+    #endif // MOON_DEBUG
+
+    markAll(vm);
+    sweep();
+
+    // Next GC will take longer.
+    gcMaxCount = std::max(1, gcAliveCount * 2);
+
+    #if MOON_DEBUG
+    logStream() << "Moon: GC collected " << savedNumAlive - gcAliveCount << " objects. "
+                << gcAliveCount << " remaining, " << gcMaxCount << " new max alive count.\n";
+    #endif // MOON_DEBUG
+}
+
+void GC::print(std::ostream & os) const
+{
+    os << color::white() << "[[ alive GC objects ]]" << color::restore() << "\n\n";
+    for (const Object * obj = gcListHead; obj != nullptr; obj = obj->gcNext)
+    {
+        obj->print(os);
+        os << "\n";
+    }
+    os << color::white() << "----------------------------------" << color::restore() << "\n";
+}
 
 // ========================================================
 // Debug printing helpers:
@@ -918,7 +1074,7 @@ void printDataVector(const DataVector & data, std::ostream & os)
     os << color::white() << "[[ begin data vector dump ]]" << color::restore() << "\n";
 
     int index = 0;
-    for (auto var : data)
+    for (Variant var : data)
     {
         dumpVariant(var, index++, os);
     }
@@ -941,7 +1097,7 @@ void VM::print(std::ostream & os) const
     {
         int index = 0;
         auto s = stack.slice(0, stack.getCurrSize());
-        for (auto var = s.first(); var != nullptr; var = s.next())
+        for (const Variant * var = s.first(); var != nullptr; var = s.next())
         {
             dumpVariant(*var, index++, os);
         }

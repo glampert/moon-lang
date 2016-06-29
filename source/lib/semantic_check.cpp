@@ -825,7 +825,7 @@ SyntaxTreeNode * newBinaryOpNode(ParseContext & ctx, const STNode type,
         {
             if (ctx.varInfo->lastRhsParentTypeId != nullptr && ctx.varInfo->lastRhsParentTypeId->templateObject != nullptr)
             {
-                if (ctx.varInfo->lastRhsParentTypeId->templateObject->flags.isEnumType)
+                if (ctx.varInfo->lastRhsParentTypeId->templateObject->isEnumType)
                 {
                     parserError(ctx, "assigning to enum constant");
                 }
@@ -1139,6 +1139,16 @@ SyntaxTreeNode * newStatementNode(ParseContext & ctx, const SyntaxTreeNode * lef
     return ctx.syntTree->newNode(STNode::Statement, left, right, nullptr, STEval::Void);
 }
 
+static const Symbol * isEnumType(ParseContext & ctx, const Symbol * typeNameSymbol)
+{
+    const Symbol * mangleNameSymbol = mangleEnumTypeName(*ctx.symTable, typeNameSymbol, ctx.lexer->lineno());
+    if (!ctx.vm->types.findTypeId(mangleNameSymbol->name))
+    {
+        return nullptr;
+    }
+    return mangleNameSymbol;
+}
+
 SyntaxTreeNode * newUDTNode(ParseContext & ctx, const Symbol * typeNameSymbol)
 {
     if (!ctx.vm->types.findTypeId(typeNameSymbol->name))
@@ -1148,11 +1158,16 @@ SyntaxTreeNode * newUDTNode(ParseContext & ctx, const Symbol * typeNameSymbol)
         {
             parserError(ctx, "expected type identifier, not function '" + tname + "'");
         }
+        else if (const Symbol * mangleNameSymbol = isEnumType(ctx, typeNameSymbol)) // Possible enum name?
+        {
+            typeNameSymbol = mangleNameSymbol;
+        }
         else
         {
             parserError(ctx, "referencing undefined type identifier '" + tname + "'");
         }
     }
+
     return newTypeIdNode(ctx, STEval::UDT, typeNameSymbol);
 }
 
@@ -1577,7 +1592,7 @@ static void initEnumMembers(ParseContext & ctx, const SyntaxTreeNode * root,
                 // Enum strings have program lifetime.
                 if (data.type == Variant::Type::Str)
                 {
-                    data.getAsString()->flags.isPersistent = true;
+                    data.getAsString()->isPersistent = true;
                 }
             }
         }

@@ -159,7 +159,7 @@ asan: common_rule
 	@echo "Note: Built with address sanitizer enabled and debug settings."
 
 # Static lib + CLI + tests, in debug mode.
-test: CXXFLAGS += $(DEBUG_FLAGS)
+test: CXXFLAGS += $(DEBUG_FLAGS) $(ASAN_FLAGS)
 test: common_rule $(TEST_OBJ_FILES)
 
 $(TEST_OBJ_FILES): $(OBJ_DIR)/%.o: %.cpp

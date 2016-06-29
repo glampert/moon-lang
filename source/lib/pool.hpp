@@ -67,8 +67,10 @@ public:
     int getTotalAllocs()  const noexcept;
     int getTotalFrees()   const noexcept;
     int getObjectsAlive() const noexcept;
-    int getGranularity()  const noexcept;
     int getSize()         const noexcept;
+
+    static std::size_t getGranularity() noexcept;
+    static std::size_t getObjectSize()  noexcept;
 
 private:
 
@@ -213,15 +215,21 @@ int Pool<T, Granularity>::getObjectsAlive() const noexcept
 }
 
 template<typename T, int Granularity>
-int Pool<T, Granularity>::getGranularity() const noexcept
+int Pool<T, Granularity>::getSize() const noexcept
+{
+    return poolBlockCount;
+}
+
+template<typename T, int Granularity>
+std::size_t Pool<T, Granularity>::getGranularity() noexcept
 {
     return Granularity;
 }
 
 template<typename T, int Granularity>
-int Pool<T, Granularity>::getSize() const noexcept
+std::size_t Pool<T, Granularity>::getObjectSize() noexcept
 {
-    return poolBlockCount;
+    return sizeof(T);
 }
 
 // ========================================================

@@ -7,6 +7,7 @@
 [Lua](http://www.lua.org/) and [Rust](https://www.rust-lang.org/).
 
 This is mainly a toy/hobby project to learn more about compiler design, Virtual Machines and interpreters.
+I also use this project as sample for [a series of tutorials](http://glampert.com/tutorials/custom-scripting-language/).
 
 The name is just a play on the meaning of Lua (Moon in Portuguese). I chose the name on purpose
 to leave it clear this is a lame rip-off on the syntax of the popular scripting language.
@@ -66,7 +67,7 @@ type Foo struct
 end
 
 // Declaring an instance of a structure:
-let foo = Foo{ 1, 2.2, "4" };
+let foo = Foo{ 1, 2.2, "3" };
 
 type Colors enum
     Red,

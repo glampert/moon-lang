@@ -51,6 +51,13 @@
 #endif // MOON_AST_NODE_POOL_GRANULARITY
 
 //
+// Block size of the Object pools used by the Garbage Collector.
+//
+#ifndef MOON_RT_OBJECT_POOL_GRANULARITY
+    #define MOON_RT_OBJECT_POOL_GRANULARITY 256
+#endif // MOON_RT_OBJECT_POOL_GRANULARITY
+
+//
 // If this is enabled, the VM class will have a GlobalsTable member
 // that allows accessing all the program globals by name. Functions
 // are also considered globals, so they can be accessed via the

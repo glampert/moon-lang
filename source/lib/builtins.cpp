@@ -35,10 +35,6 @@ namespace moon
 namespace native
 {
 
-// ========================================================
-// Miscellaneous printing and error reporting functions:
-// ========================================================
-
 [[noreturn]] static void scriptError(const Int64 lineNum,
                                      const char * srcFileName,
                                      const char * callerName,
@@ -273,6 +269,18 @@ void to_string(VM & vm, Stack::Slice args) // (varargs) -> string
     vm.setReturnValue(result);
 }
 
+void gc_need_to_collect(VM & vm, Stack::Slice) // () -> bool
+{
+    Variant result{ Variant::Type::Integer };
+    result.value.asInteger = vm.gc.needToCollectGarbage();
+    vm.setReturnValue(result);
+}
+
+void gc_collect(VM & vm, Stack::Slice) // () -> void
+{
+    vm.gc.collectGarbage(vm);
+}
+
 } // namespace native {}
 
 // ========================================================
@@ -281,13 +289,16 @@ void to_string(VM & vm, Stack::Slice args) // (varargs) -> string
 
 void registerNativeBuiltInFunctions(FunctionTable & funcTable)
 {
-    const auto retString = Variant::Type::Str;
+    const auto retStr = Variant::Type::Str;
+    const auto retInt = Variant::Type::Integer;
 
-    ADD_VARARGS_FUNC( funcTable, nullptr,    assert,    Function::VarArgs | Function::AddCallerInfo | Function::DebugOnly );
-    ADD_VARARGS_FUNC( funcTable, nullptr,    panic,     Function::VarArgs | Function::AddCallerInfo );
-    ADD_VARARGS_FUNC( funcTable, nullptr,    print,     Function::VarArgs );
-    ADD_VARARGS_FUNC( funcTable, nullptr,    println,   Function::VarArgs );
-    ADD_VARARGS_FUNC( funcTable, &retString, to_string, Function::VarArgs );
+    ADD_VARARGS_FUNC( funcTable, nullptr, assert,     Function::VarArgs | Function::AddCallerInfo | Function::DebugOnly );
+    ADD_VARARGS_FUNC( funcTable, nullptr, panic,      Function::VarArgs | Function::AddCallerInfo );
+    ADD_VARARGS_FUNC( funcTable, nullptr, print,      Function::VarArgs );
+    ADD_VARARGS_FUNC( funcTable, nullptr, println,    Function::VarArgs );
+    ADD_VARARGS_FUNC( funcTable, &retStr, to_string,  Function::VarArgs );
+    ADD_VARARGS_FUNC( funcTable, &retInt, gc_need_to_collect, 0 );
+    ADD_VARARGS_FUNC( funcTable, nullptr, gc_collect,         0 );
 }
 
 #undef ADD_VARARGS_FUNC

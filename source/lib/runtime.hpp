@@ -512,16 +512,15 @@ public:
 
     friend class GC;
 
-    // Miscellaneous flag bits:
-    struct BitFlags
-    {
-        bool isAlive       : 1;
-        bool isPersistent  : 1;
-        bool isTemplateObj : 1;
-        bool isBuiltInType : 1;
-        bool isStructType  : 1;
-        bool isEnumType    : 1;
-    } flags;
+    // Miscellaneous object flags:
+    bool isAlive;
+    bool isPersistent;
+    bool isTemplateObj;
+    bool isBuiltInType;
+    bool isStructType;
+    bool isEnumType;
+    bool isReachable; // GC reachability flag
+    bool isSmall;     // GC pool hint ('small' or 'large' object)
 
     // Member variable record (name ref is held by the object):
     struct Member
@@ -599,11 +598,12 @@ public:
         typeId = tid;
     }
 
-    void markTypeTemplate()
+    void markTypeTemplate() noexcept
     {
-        flags.isPersistent  = true;
-        flags.isTemplateObj = true;
+        isPersistent  = true;
+        isTemplateObj = true;
     }
+
     const Object * getGCLink() const noexcept { return gcNext; }
 
 protected:
@@ -758,6 +758,7 @@ public:
 
     std::string getStringRepresentation() const override;
     std::string getDataTypeString() const { return toString(varType); }
+    Variant::Type getDataType() const noexcept { return varType; }
 
     void push(Variant var);
     void push(const Array & other);
