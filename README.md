@@ -3,6 +3,8 @@
 
 [![Build Status](https://travis-ci.org/glampert/moon-lang.svg)](https://travis-ci.org/glampert/moon-lang)
 
+![Moon Lang - a custom scripting language](https://raw.githubusercontent.com/glampert/moon-lang/master/moon-logo.png)
+
 `Moon` is a custom scripting language that borrows some of its syntax from
 [Lua](http://www.lua.org/) and [Rust](https://www.rust-lang.org/).
 
@@ -130,8 +132,8 @@ C++ interface:
 
 int main()
 {
-    moon::Compiler compiler; // Script parsing and bytecode generation.
-    moon::VM       vm;       // Executes the bytecode generation by a Compiler.
+    moon::Compiler compiler; // Script parsing and bytecode output.
+    moon::VM       vm;       // Executes bytecode produced by a Compiler.
 
     try
     {
