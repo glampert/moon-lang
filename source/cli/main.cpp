@@ -189,8 +189,8 @@ int main(const int argc, const char * argv[])
         flags.print(logStream());
     }
 
-    Compiler compiler; // Script parsing and bytecode generation.
-    VM       vm;       // Executes the bytecode generation by a Compiler.
+    Compiler compiler; // Script parsing and bytecode output.
+    VM       vm;       // Executes bytecode produced by a Compiler.
 
     try
     {
