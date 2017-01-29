@@ -8,8 +8,7 @@
 `Moon` is a custom scripting language that borrows some of its syntax from
 [Lua](http://www.lua.org/) and [Rust](https://www.rust-lang.org/).
 
-This is mainly a toy/hobby project to learn more about compiler design, Virtual Machines and interpreters.
-I also use this project as sample for [a series of tutorials](http://glampert.com/tutorials/custom-scripting-language/).
+This is mainly a toy/hobby project to learn more about compiler design, Virtual Machines and Interpreters.
 
 The name is just a play on the meaning of Lua (Moon in Portuguese). I chose the name on purpose
 to leave it clear this is a lame rip-off on the syntax of the popular scripting language.
@@ -126,14 +125,14 @@ println("Fibonacci of 15 = ", fib);
 C++ interface:
 
 ```cpp
-// Minial sample of how to run a Moon Lang script from C++
+// Minimal sample of how to run a Moon Lang script from C++
 #include "compiler.hpp"
 #include "vm.hpp"
 
 int main()
 {
     moon::Compiler compiler; // Script parsing and bytecode output.
-    moon::VM       vm;       // Executes bytecode produced by a Compiler.
+    moon::VM       vm;       // Executes bytecode produced by a Moon Compiler.
 
     try
     {
