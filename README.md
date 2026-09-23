@@ -1,8 +1,6 @@
 
 ## Moon scripting language compiler and VM
 
-[![Build Status](https://travis-ci.org/glampert/moon-lang.svg)](https://travis-ci.org/glampert/moon-lang)
-
 ![Moon Lang - a custom scripting language](https://raw.githubusercontent.com/glampert/moon-lang/master/moon-logo.png)
 
 `Moon` is a custom scripting language that borrows some of its syntax from
